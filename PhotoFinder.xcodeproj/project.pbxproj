@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		5B8644D61EF19454E2E7A7C9 /* InfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F962A42FFE42E9D265DBB185 /* InfoView.swift */; };
 		7A7F0EDF1B38DAC62D5D7F39 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 170705017FFA024A44A1E319 /* ContentView.swift */; };
+		A9CA4FA564A57D5F6F81E1F5 /* AppleIntelligence.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE15974733F15EDF27140F3A /* AppleIntelligence.swift */; };
 		B2D00E12B15C856F2299208A /* LibraryModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53B9691BD0CAB914F0C1DC1D /* LibraryModel.swift */; };
 		C4EC578F2EBCB09796943221 /* PhotoFinderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB3735755490131783164280 /* PhotoFinderApp.swift */; };
 		EF79CD3D0CC14839DD90A521 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26A9C75AC716B3C5F32C33D8 /* Models.swift */; };
@@ -22,6 +23,7 @@
 		8A590FB9612BECCAB3538225 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A5B651592F31580AED97DEDE /* PhotoExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoExporter.swift; sourceTree = "<group>"; };
 		BD2BE4499F4E820DB49FC15E /* PhotoFinder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PhotoFinder.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		DE15974733F15EDF27140F3A /* AppleIntelligence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleIntelligence.swift; sourceTree = "<group>"; };
 		EB3735755490131783164280 /* PhotoFinderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoFinderApp.swift; sourceTree = "<group>"; };
 		F962A42FFE42E9D265DBB185 /* InfoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfoView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -30,6 +32,7 @@
 		656AC6F88195E21BC844C6ED /* PhotoFinder */ = {
 			isa = PBXGroup;
 			children = (
+				DE15974733F15EDF27140F3A /* AppleIntelligence.swift */,
 				170705017FFA024A44A1E319 /* ContentView.swift */,
 				8A590FB9612BECCAB3538225 /* Info.plist */,
 				F962A42FFE42E9D265DBB185 /* InfoView.swift */,
@@ -116,6 +119,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A9CA4FA564A57D5F6F81E1F5 /* AppleIntelligence.swift in Sources */,
 				7A7F0EDF1B38DAC62D5D7F39 /* ContentView.swift in Sources */,
 				5B8644D61EF19454E2E7A7C9 /* InfoView.swift in Sources */,
 				B2D00E12B15C856F2299208A /* LibraryModel.swift in Sources */,

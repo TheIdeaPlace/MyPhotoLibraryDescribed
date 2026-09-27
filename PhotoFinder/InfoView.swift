@@ -68,6 +68,9 @@ struct InfoView: View {
     }
 
     @ViewBuilder private var contentsSection: some View {
+        if #available(macOS 27, *) {
+            AppleIntelligenceSection(imageData: imageData)
+        }
         if let contents {
             LabeledContent("Detected") {
                 Text(contents.labels.isEmpty ? "Nothing recognized" : contents.labels.joined(separator: ", "))
@@ -80,11 +83,11 @@ struct InfoView: View {
                     .multilineTextAlignment(.trailing)
             }
         } else if describing {
-            ProgressView("Analyzing image…")
+            ProgressView("Finding objects and text…")
         } else {
-            Button("Describe Image") { Task { await describe() } }
+            Button("Find Objects and Text") { Task { await describe() } }
                 .disabled(imageData == nil)
-            Text("Uses on-device Vision to list objects and scenes and read any text in the photo.")
+            Text("Lists objects and scenes, and reads any text in the photo, using on-device Vision.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
