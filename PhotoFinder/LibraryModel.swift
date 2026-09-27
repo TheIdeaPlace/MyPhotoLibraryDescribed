@@ -1,0 +1,802 @@
+import AppKit
+import os
+import Photos
+import SwiftUI
+
+struct CaptionTarget: Identifiable {
+    let id = UUID()
+    let assetIDs: [String]
+    let initialText: String
+}
+
+enum ViewMode: String {
+    case list, gallery
+}
+
+struct ColumnInfo: Identifiable {
+    let id: String
+    let title: String
+    let visibleByDefault: Bool
+}
+
+struct InfoTarget: Identifiable {
+    let id: String
+    let asset: PHAsset
+    let name: String
+}
+
+@MainActor
+@Observable
+final class LibraryModel {
+    enum AuthState { case unknown, authorized, denied }
+
+    var authState: AuthState = .unknown
+    private(set) var sections: [SidebarSection] = []
+    private(set) var itemsByID: [String: SidebarItem] = [:]
+    var expandedIDs: Set<String> = []
+
+    var selectedSourceID: String? {
+        didSet {
+            if oldValue != selectedSourceID { loadSelectedSource(keepSelection: false) }
+        }
+    }
+
+    private(set) var rows: [FileRow] = []
+    var sortOrder: [KeyPathComparator<FileRow>] = [KeyPathComparator(\FileRow.sortDate, order: .reverse)] {
+        didSet { rows.sort(using: sortOrder) }
+    }
+    var selection: Set<String> = []
+    var searchText = ""
+    var searchFocusRequest = 0
+    private(set) var isLoading = false
+    private(set) var activity: String?
+    private(set) var nameProgress: String?
+    var previewURL: URL?
+    private(set) var previewURLs: [URL] = []
+    var infoTarget: InfoTarget?
+    var captionTarget: CaptionTarget?
+    var viewMode: ViewMode = .list {
+        didSet {
+            UserDefaults.standard.set(viewMode.rawValue, forKey: "viewMode")
+            if viewMode == .gallery { ensureGallerySelection() }
+        }
+    }
+    var columnCustomization = TableColumnCustomization<FileRow>() {
+        didSet { saveColumnCustomization() }
+    }
+    var errorMessage: String?
+
+    @ObservationIgnored private var assetsByID: [String: PHAsset] = [:]
+    @ObservationIgnored private var currentFetch: PHFetchResult<PHAsset>?
+    @ObservationIgnored private var loadGeneration = 0
+    @ObservationIgnored private var pendingSelection: String?
+    @ObservationIgnored private var announceNextLoad = false
+    @ObservationIgnored private var observer: LibraryObserver?
+    @ObservationIgnored private var dateBuckets: [Int: [Int: Int]] = [:]
+    @ObservationIgnored private var allPhotosCount = 0
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private var nameFillTask: Task<Void, Never>?
+    private let names = NameCache()
+    private static let log = Logger(subsystem: "net.theideaplace.PhotoFinder", category: "library")
+    private let imageManager = PHCachingImageManager()
+    private let galleryImageSize = CGSize(width: 2400, height: 2400)
+    private let galleryImageOptions: PHImageRequestOptions = {
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.isNetworkAccessAllowed = true
+        return options
+    }()
+
+    init() {
+        if let raw = UserDefaults.standard.string(forKey: "viewMode"), let mode = ViewMode(rawValue: raw) {
+            viewMode = mode
+        }
+        if let data = UserDefaults.standard.data(forKey: "columns"),
+           let saved = try? JSONDecoder().decode(TableColumnCustomization<FileRow>.self, from: data) {
+            columnCustomization = saved
+        }
+    }
+
+    // MARK: - Columns
+
+    /// Every column except Name, which can't be hidden. Order matches the table.
+    static let optionalColumns: [ColumnInfo] = [
+        ColumnInfo(id: "date", title: "Date Taken", visibleByDefault: true),
+        ColumnInfo(id: "kind", title: "Kind", visibleByDefault: true),
+        ColumnInfo(id: "caption", title: "Caption", visibleByDefault: true),
+        ColumnInfo(id: "dimensions", title: "Dimensions", visibleByDefault: true),
+        ColumnInfo(id: "duration", title: "Duration", visibleByDefault: true),
+        ColumnInfo(id: "favorite", title: "Favorite", visibleByDefault: true),
+        ColumnInfo(id: "keywords", title: "Keywords", visibleByDefault: false),
+        ColumnInfo(id: "rating", title: "Rating", visibleByDefault: false),
+        ColumnInfo(id: "modified", title: "Date Modified", visibleByDefault: false),
+        ColumnInfo(id: "fileType", title: "File Type", visibleByDefault: false),
+        ColumnInfo(id: "orientation", title: "Orientation", visibleByDefault: false),
+        ColumnInfo(id: "megapixels", title: "Megapixels", visibleByDefault: false),
+        ColumnInfo(id: "location", title: "Location", visibleByDefault: false),
+        ColumnInfo(id: "source", title: "Source", visibleByDefault: false),
+    ]
+
+    func isColumnVisible(_ column: ColumnInfo) -> Bool {
+        switch columnCustomization[visibility: column.id] {
+        case .visible: true
+        case .hidden: false
+        default: column.visibleByDefault
+        }
+    }
+
+    func setColumn(_ column: ColumnInfo, visible: Bool) {
+        columnCustomization[visibility: column.id] = visible ? .visible : .hidden
+    }
+
+    private func saveColumnCustomization() {
+        if let data = try? JSONEncoder().encode(columnCustomization) {
+            UserDefaults.standard.set(data, forKey: "columns")
+        }
+    }
+
+    // MARK: - Derived state
+
+    var visibleRows: [FileRow] {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return rows }
+        return rows.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.kind.localizedCaseInsensitiveContains(query)
+                || $0.caption.localizedCaseInsensitiveContains(query)
+                || $0.keywords.localizedCaseInsensitiveContains(query)
+                || $0.dateText.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var currentItem: SidebarItem? { selectedSourceID.flatMap { itemsByID[$0] } }
+    var currentTitle: String { currentItem?.title ?? "Photo Finder" }
+
+    var statusText: String {
+        if isLoading { return "Loading…" }
+        let count = visibleRows.count
+        let items = count == 1 ? "1 item" : "\(count.formatted()) items"
+        return selection.isEmpty ? items : "\(selection.count.formatted()) of \(items) selected"
+    }
+
+    // MARK: - Startup
+
+    func start() async {
+        guard authState == .unknown else { return }
+        let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        guard status == .authorized || status == .limited else {
+            authState = .denied
+            return
+        }
+        authState = .authorized
+        try? FileManager.default.removeItem(at: PhotoExporter.temporaryRoot)
+
+        let observer = LibraryObserver { [weak self] change in
+            Task { @MainActor in self?.libraryDidChange(change.value) }
+        }
+        self.observer = observer
+        PHPhotoLibrary.shared().register(observer)
+
+        rebuildSidebar()
+        selectedSourceID = SidebarID.allPhotos
+        await refreshDateBuckets()
+        rebuildSidebar()
+        warmNameCache()
+    }
+
+    // MARK: - Sidebar
+
+    private static let hiddenSmartAlbums: Set<Int> = [
+        PHAssetCollectionSubtype.smartAlbumUserLibrary.rawValue,
+        PHAssetCollectionSubtype.smartAlbumAllHidden.rawValue,
+        1_000_000_201, // Recently Deleted
+    ]
+
+    private static let smartAlbumOrder: [PHAssetCollectionSubtype] = [
+        .smartAlbumFavorites, .smartAlbumRecentlyAdded, .smartAlbumVideos, .smartAlbumLivePhotos,
+        .smartAlbumScreenshots, .smartAlbumSelfPortraits, .smartAlbumDepthEffect, .smartAlbumPanoramas,
+        .smartAlbumBursts, .smartAlbumSlomoVideos, .smartAlbumTimelapses, .smartAlbumCinematic,
+        .smartAlbumLongExposures, .smartAlbumAnimated, .smartAlbumRAW,
+    ]
+
+    private static func symbol(for subtype: PHAssetCollectionSubtype) -> String {
+        switch subtype {
+        case .smartAlbumFavorites: "heart"
+        case .smartAlbumRecentlyAdded: "clock"
+        case .smartAlbumVideos, .smartAlbumCinematic: "video"
+        case .smartAlbumLivePhotos: "livephoto"
+        case .smartAlbumScreenshots: "camera.viewfinder"
+        case .smartAlbumSelfPortraits: "person.crop.square"
+        case .smartAlbumDepthEffect: "cube"
+        case .smartAlbumPanoramas: "pano"
+        case .smartAlbumBursts: "square.stack.3d.down.right"
+        case .smartAlbumSlomoVideos: "slowmo"
+        case .smartAlbumTimelapses: "timelapse"
+        default: "rectangle.stack"
+        }
+    }
+
+    private func rebuildSidebar() {
+        let previousItem = currentItem
+
+        allPhotosCount = PHAsset.fetchAssets(with: nil).count
+        var library = [SidebarItem(id: SidebarID.allPhotos, title: "All Photos", kind: .allPhotos,
+                                   systemImage: "photo.on.rectangle", count: allPhotosCount,
+                                   children: nil, parentID: nil, containerKind: "Library")]
+
+        let smart = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .any, options: nil)
+        var ranked: [(rank: Int, item: SidebarItem)] = []
+        for i in 0..<smart.count {
+            let collection = smart.object(at: i)
+            let subtype = collection.assetCollectionSubtype
+            guard !Self.hiddenSmartAlbums.contains(subtype.rawValue) else { continue }
+            let count = PHAsset.fetchAssets(in: collection, options: nil).count
+            guard count > 0 else { continue }
+            let rank = Self.smartAlbumOrder.firstIndex(of: subtype) ?? Int.max
+            ranked.append((rank, albumItem(collection, count: count, parentID: nil, symbol: Self.symbol(for: subtype))))
+        }
+        library += ranked.sorted { ($0.rank, $0.item.title) < ($1.rank, $1.item.title) }.map(\.item)
+
+        var dates: [SidebarItem] = []
+        for year in dateBuckets.keys.sorted(by: >) {
+            let months = dateBuckets[year] ?? [:]
+            let yearID = "year:\(year)"
+            let children = months.keys.sorted(by: >).map { month in
+                SidebarItem(id: "month:\(year)-\(month)", title: Self.monthTitle(year: year, month: month),
+                            kind: .month(year: year, month: month), systemImage: "calendar",
+                            count: months[month] ?? 0, children: nil, parentID: yearID, containerKind: "Month")
+            }
+            dates.append(SidebarItem(id: yearID, title: String(year), kind: .year(year), systemImage: "folder",
+                                     count: months.values.reduce(0, +), children: children, parentID: nil,
+                                     containerKind: "Year"))
+        }
+
+        let albums = collectionItems(PHCollectionList.fetchTopLevelUserCollections(with: nil), parentID: nil)
+
+        let sharedResult = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .albumCloudShared, options: nil)
+        var shared: [SidebarItem] = []
+        for i in 0..<sharedResult.count {
+            let collection = sharedResult.object(at: i)
+            let count = PHAsset.fetchAssets(in: collection, options: nil).count
+            shared.append(albumItem(collection, count: count, parentID: nil, symbol: "person.2"))
+        }
+
+        var newSections = [SidebarSection(id: "library", title: "Library", items: library)]
+        if !dates.isEmpty { newSections.append(SidebarSection(id: "dates", title: "Dates", items: dates)) }
+        if !albums.isEmpty { newSections.append(SidebarSection(id: "albums", title: "My Albums", items: albums)) }
+        if !shared.isEmpty { newSections.append(SidebarSection(id: "shared", title: "Shared Albums", items: shared)) }
+
+        guard newSections != sections else { return }
+        sections = newSections
+
+        var index: [String: SidebarItem] = [:]
+        func add(_ items: [SidebarItem]) {
+            for item in items {
+                index[item.id] = item
+                if let children = item.children { add(children) }
+            }
+        }
+        newSections.forEach { add($0.items) }
+        itemsByID = index
+
+        if let id = selectedSourceID, index[id] == nil {
+            selectedSourceID = SidebarID.allPhotos
+        } else if let item = currentItem, item.children != nil, item != previousItem {
+            // A folder's contents changed while it was showing.
+            loadSelectedSource(keepSelection: true)
+        }
+    }
+
+    private func albumItem(_ collection: PHAssetCollection, count: Int, parentID: String?, symbol: String) -> SidebarItem {
+        SidebarItem(id: "album:" + collection.localIdentifier, title: collection.localizedTitle ?? "Untitled Album",
+                    kind: .assetCollection(collection.localIdentifier), systemImage: symbol, count: count,
+                    children: nil, parentID: parentID, containerKind: "Album")
+    }
+
+    private func collectionItems(_ result: PHFetchResult<PHCollection>, parentID: String?) -> [SidebarItem] {
+        var items: [SidebarItem] = []
+        for i in 0..<result.count {
+            let collection = result.object(at: i)
+            if let album = collection as? PHAssetCollection {
+                let count = PHAsset.fetchAssets(in: album, options: nil).count
+                items.append(albumItem(album, count: count, parentID: parentID, symbol: "rectangle.stack"))
+            } else if let list = collection as? PHCollectionList {
+                let id = "folder:" + list.localIdentifier
+                let children = collectionItems(PHCollection.fetchCollections(in: list, options: nil), parentID: id)
+                items.append(SidebarItem(id: id, title: list.localizedTitle ?? "Untitled Folder",
+                                         kind: .collectionList(list.localIdentifier), systemImage: "folder",
+                                         count: children.count, children: children, parentID: parentID,
+                                         containerKind: "Folder"))
+            }
+        }
+        return items
+    }
+
+    private static func monthTitle(year: Int, month: Int) -> String {
+        guard let date = Calendar.current.date(from: DateComponents(year: year, month: month, day: 1)) else {
+            return "\(month)/\(year)"
+        }
+        return date.formatted(.dateTime.month(.wide).year())
+    }
+
+    private func refreshDateBuckets() async {
+        let buckets = await Task.detached(priority: .utility) { () -> [Int: [Int: Int]] in
+            let result = PHAsset.fetchAssets(with: nil)
+            let assets = result.objects(at: IndexSet(integersIn: 0..<result.count))
+            let calendar = Calendar.current
+            var buckets: [Int: [Int: Int]] = [:]
+            for asset in assets {
+                guard let date = asset.creationDate else { continue }
+                let parts = calendar.dateComponents([.year, .month], from: date)
+                guard let year = parts.year, let month = parts.month else { continue }
+                buckets[year, default: [:]][month, default: 0] += 1
+            }
+            return buckets
+        }.value
+        dateBuckets = buckets
+    }
+
+    /// Looks up every original file name in the background so large albums open quickly later.
+    private func warmNameCache() {
+        // macOS 27 hands out file names in bulk, so there's nothing to warm.
+        if #available(macOS 27, *) { return }
+        let names = self.names
+        Task.detached(priority: .background) {
+            let result = PHAsset.fetchAssets(with: nil)
+            var looked = 0
+            for i in 0..<result.count {
+                let asset = result.object(at: i)
+                guard names.cachedName(for: asset.localIdentifier) == nil else { continue }
+                _ = names.name(for: asset)
+                looked += 1
+                if looked % 500 == 0 { names.save() }
+            }
+            names.save()
+        }
+    }
+
+    // MARK: - Loading the file list
+
+    private func fetchResult(for kind: SourceKind) -> PHFetchResult<PHAsset>? {
+        let options = RowBuilder.fetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+        switch kind {
+        case .allPhotos:
+            return PHAsset.fetchAssets(with: options)
+        case .assetCollection(let id):
+            guard let collection = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil).firstObject else {
+                return nil
+            }
+            return PHAsset.fetchAssets(in: collection, options: options)
+        case .month(let year, let month):
+            let calendar = Calendar.current
+            guard let start = calendar.date(from: DateComponents(year: year, month: month, day: 1)),
+                  let end = calendar.date(byAdding: .month, value: 1, to: start) else { return nil }
+            options.predicate = NSPredicate(format: "creationDate >= %@ AND creationDate < %@", start as NSDate, end as NSDate)
+            return PHAsset.fetchAssets(with: options)
+        case .collectionList, .year:
+            return nil
+        }
+    }
+
+    private func loadSelectedSource(keepSelection: Bool) {
+        loadGeneration += 1
+        let generation = loadGeneration
+        nameFillTask?.cancel()
+        nameProgress = nil
+        let previousSelection = keepSelection ? selection : []
+        if !keepSelection {
+            selection = []
+            searchText = ""
+        }
+
+        guard let item = currentItem else {
+            rows = []
+            currentFetch = nil
+            assetsByID = [:]
+            isLoading = false
+            return
+        }
+
+        if let children = item.children {
+            currentFetch = nil
+            assetsByID = [:]
+            isLoading = false
+            rows = children.map { FileRow(container: $0) }.sorted(using: sortOrder)
+            finishLoad(previousSelection: previousSelection, item: item, slow: false)
+            if viewMode == .gallery { ensureGallerySelection() }
+            return
+        }
+
+        guard let fetch = fetchResult(for: item.kind) else {
+            rows = []
+            isLoading = false
+            return
+        }
+        currentFetch = fetch
+        isLoading = true
+        if !keepSelection { rows = [] }
+
+        let started = Date()
+        let box = UncheckedBox(value: fetch)
+        let names = self.names
+        Task {
+            let built = await Task.detached(priority: .userInitiated) {
+                RowBuilder.build(box.value, names: names)
+            }.value
+            guard generation == self.loadGeneration else { return }
+            Self.log.info("Loaded \(built.value.rows.count) items for \(item.title, privacy: .public) in \(Date().timeIntervalSince(started), format: .fixed(precision: 2))s; \(built.value.needingDetails.count) need details")
+            self.assetsByID = built.value.assets
+            self.rows = built.value.rows.sorted(using: self.sortOrder)
+            self.isLoading = false
+            self.finishLoad(previousSelection: previousSelection, item: item,
+                            slow: Date().timeIntervalSince(started) > 1)
+            if self.viewMode == .gallery { self.ensureGallerySelection() }
+            // Fill details in the order they're listed, so the rows people reach first are done first.
+            let pending = Set(built.value.needingDetails.map(\.localIdentifier))
+            let ordered = self.rows.compactMap { pending.contains($0.id) ? self.assetsByID[$0.id] : nil }
+            self.fillDetails(ordered, generation: generation)
+        }
+    }
+
+    /// Reads names, captions and keywords a batch at a time, updating rows in place.
+    private func fillDetails(_ assets: [PHAsset], generation: Int) {
+        nameFillTask?.cancel()
+        nameProgress = nil
+        guard !assets.isEmpty else { return }
+        let names = self.names
+        nameFillTask = Task {
+            let began = Date()
+            var start = 0
+            while start < assets.count {
+                let end = min(start + 200, assets.count)
+                let batch = UncheckedBox(value: Array(assets[start..<end]))
+                let found = await Task.detached(priority: .userInitiated) {
+                    batch.value.map { ($0.localIdentifier, AssetDetails.load(for: $0, names: names)) }
+                }.value
+                guard !Task.isCancelled, generation == self.loadGeneration else { return }
+                let lookup = Dictionary(found, uniquingKeysWith: { first, _ in first })
+                self.rows = self.rows.map { row in lookup[row.id].map { row.withDetails($0) } ?? row }
+                self.nameProgress = "Reading names and captions, \(end.formatted()) of \(assets.count.formatted())…"
+                start = end
+            }
+            self.nameProgress = nil
+            Self.log.info("Read details for \(assets.count) items in \(Date().timeIntervalSince(began), format: .fixed(precision: 2))s")
+            let detailColumns: [PartialKeyPath<FileRow>] = [\FileRow.name, \FileRow.caption, \FileRow.keywords, \FileRow.fileType]
+            if let key = self.sortOrder.first?.keyPath, detailColumns.contains(key) {
+                self.rows.sort(using: self.sortOrder)
+            }
+            names.save()
+        }
+    }
+
+    private func finishLoad(previousSelection: Set<String>, item: SidebarItem, slow: Bool) {
+        let ids = Set(rows.map(\.id))
+        if let pending = pendingSelection {
+            pendingSelection = nil
+            selection = ids.contains(pending) ? [pending] : []
+        } else {
+            selection = previousSelection.intersection(ids)
+        }
+        if announceNextLoad || slow {
+            announceNextLoad = false
+            announce("\(item.title), \(rows.count == 1 ? "1 item" : "\(rows.count.formatted()) items")")
+        }
+    }
+
+    private func libraryDidChange(_ change: PHChange) {
+        if let fetch = currentFetch, let details = change.changeDetails(for: fetch) {
+            currentFetch = details.fetchResultAfterChanges
+            if details.hasIncrementalChanges, details.insertedObjects.isEmpty, details.removedObjects.isEmpty {
+                for asset in details.changedObjects {
+                    assetsByID[asset.localIdentifier] = asset
+                    if let index = rows.firstIndex(where: { $0.id == asset.localIdentifier }) {
+                        rows[index] = FileRow(asset: asset, name: nil).withDetails(AssetDetails.load(for: asset, names: names))
+                    }
+                }
+            } else {
+                loadSelectedSource(keepSelection: true)
+            }
+        }
+
+        refreshTask?.cancel()
+        refreshTask = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            let oldCount = allPhotosCount
+            rebuildSidebar()
+            if allPhotosCount != oldCount {
+                await refreshDateBuckets()
+                rebuildSidebar()
+            }
+        }
+    }
+
+    // MARK: - Navigation
+
+    func navigate(to id: String, selecting childID: String? = nil) {
+        guard itemsByID[id] != nil else { return }
+        var parent = itemsByID[id]?.parentID
+        while let p = parent {
+            expandedIDs.insert(p)
+            parent = itemsByID[p]?.parentID
+        }
+        pendingSelection = childID
+        announceNextLoad = true
+        if selectedSourceID == id {
+            loadSelectedSource(keepSelection: false)
+        } else {
+            selectedSourceID = id
+        }
+    }
+
+    func goToEnclosingFolder() {
+        guard let item = currentItem, let parentID = item.parentID else {
+            NSSound.beep()
+            return
+        }
+        navigate(to: parentID, selecting: item.id)
+    }
+
+    // MARK: - Actions
+
+    /// Selected photos in the order they are listed.
+    private func assets(for ids: Set<String>) -> [PHAsset] {
+        rows.filter { ids.contains($0.id) }.compactMap { assetsByID[$0.id] }
+    }
+
+    func open(_ ids: Set<String>? = nil) {
+        let ids = ids ?? selection
+        let chosen = rows.filter { ids.contains($0.id) }
+        if let container = chosen.first(where: \.isContainer), chosen.allSatisfy(\.isContainer) {
+            navigate(to: container.id)
+            return
+        }
+        let assets = assets(for: ids)
+        guard !assets.isEmpty else { NSSound.beep(); return }
+        perform("Opening…") {
+            let urls = try await self.exportTemporary(assets)
+            let workspace = NSWorkspace.shared
+            var byApp: [URL: [URL]] = [:]
+            for url in urls {
+                if let app = workspace.urlForApplication(toOpen: url) { byApp[app, default: []].append(url) }
+            }
+            for (app, files) in byApp {
+                workspace.open(files, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+            }
+        }
+    }
+
+    func quickLook(_ ids: Set<String>? = nil) {
+        if previewURL != nil {
+            previewURL = nil
+            return
+        }
+        let assets = Array(assets(for: ids ?? selection).prefix(200))
+        guard !assets.isEmpty else { NSSound.beep(); return }
+        perform("Preparing preview…") {
+            let urls = try await self.exportTemporary(assets)
+            self.previewURLs = urls
+            self.previewURL = urls.first
+        }
+    }
+
+    func exportSelection(_ ids: Set<String>? = nil) {
+        let assets = assets(for: ids ?? selection)
+        guard !assets.isEmpty else { NSSound.beep(); return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Export"
+        panel.message = assets.count == 1 ? "Choose a folder to export 1 item to." : "Choose a folder to export \(assets.count) items to."
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        perform("Exporting…") {
+            var done = 0
+            for asset in assets {
+                self.activity = "Exporting \(done + 1) of \(assets.count)…"
+                _ = try await PhotoExporter.export(asset, into: folder)
+                done += 1
+            }
+            self.announce("Exported \(done == 1 ? "1 item" : "\(done) items") to \(folder.lastPathComponent)")
+        }
+    }
+
+    func copySelection(_ ids: Set<String>? = nil) {
+        let assets = assets(for: ids ?? selection)
+        guard !assets.isEmpty else { NSSound.beep(); return }
+        perform("Copying…") {
+            let urls = try await self.exportTemporary(assets)
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.writeObjects(urls as [NSURL])
+            self.announce(urls.count == 1 ? "Copied \(urls[0].lastPathComponent)" : "Copied \(urls.count) items")
+        }
+    }
+
+    func toggleFavorite(_ ids: Set<String>? = nil) {
+        let assets = assets(for: ids ?? selection)
+        guard !assets.isEmpty else { NSSound.beep(); return }
+        let makeFavorite = !assets.allSatisfy(\.isFavorite)
+        let box = UncheckedBox(value: assets)
+        perform("Updating favorites…") {
+            try await PHPhotoLibrary.shared().performChanges {
+                for asset in box.value {
+                    PHAssetChangeRequest(for: asset).isFavorite = makeFavorite
+                }
+            }
+            self.announce(makeFavorite ? "Added to Favorites" : "Removed from Favorites")
+        }
+    }
+
+    func showInfo(_ ids: Set<String>? = nil) {
+        let ids = ids ?? selection
+        guard let row = rows.first(where: { ids.contains($0.id) && !$0.isContainer }),
+              let asset = assetsByID[row.id] else {
+            NSSound.beep()
+            return
+        }
+        infoTarget = InfoTarget(id: row.id, asset: asset, name: row.name)
+    }
+
+    private func exportTemporary(_ assets: [PHAsset]) async throws -> [URL] {
+        var urls: [URL] = []
+        for (index, asset) in assets.enumerated() {
+            if assets.count > 1 { activity = "Preparing \(index + 1) of \(assets.count)…" }
+            urls.append(try await PhotoExporter.exportToTemporary(asset))
+        }
+        return urls
+    }
+
+    private func perform(_ label: String, _ work: @escaping () async throws -> Void) {
+        Task {
+            activity = label
+            do {
+                try await work()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            activity = nil
+        }
+    }
+
+    // MARK: - Captions
+
+    var canEditCaptions: Bool {
+        if #available(macOS 27, *) { return true }
+        return false
+    }
+
+    func editCaption(_ ids: Set<String>? = nil) {
+        guard canEditCaptions else {
+            errorMessage = "Editing captions requires macOS 27 or later."
+            return
+        }
+        let ids = ids ?? selection
+        let chosen = rows.filter { ids.contains($0.id) && !$0.isContainer }
+        guard !chosen.isEmpty else { NSSound.beep(); return }
+        captionTarget = CaptionTarget(assetIDs: chosen.map(\.id),
+                                      initialText: chosen.count == 1 ? chosen[0].caption : "")
+    }
+
+    func saveCaption(_ text: String, for target: CaptionTarget) {
+        let assets = target.assetIDs.compactMap { assetsByID[$0] }
+        guard !assets.isEmpty else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let box = UncheckedBox(value: assets)
+        perform("Saving caption…") {
+            try await PHPhotoLibrary.shared().performChanges {
+                if #available(macOS 27, *) {
+                    for asset in box.value {
+                        PHAssetChangeRequest(for: asset).caption = trimmed.isEmpty ? nil : trimmed
+                    }
+                }
+            }
+            self.announce(trimmed.isEmpty ? "Caption removed" : "Caption saved")
+        }
+    }
+
+    // MARK: - Gallery
+
+    /// The item the gallery shows: the first selected row in list order.
+    var focusedRow: FileRow? {
+        guard !selection.isEmpty else { return nil }
+        return visibleRows.first { selection.contains($0.id) }
+    }
+
+    var galleryPosition: (index: Int, count: Int)? {
+        let rows = visibleRows
+        guard let index = rows.firstIndex(where: { selection.contains($0.id) }) else { return nil }
+        return (index, rows.count)
+    }
+
+    func ensureGallerySelection() {
+        guard focusedRow == nil, let first = visibleRows.first else { return }
+        selection = [first.id]
+        cacheNeighbors(of: 0, in: visibleRows)
+    }
+
+    func moveSelection(by delta: Int) {
+        let rows = visibleRows
+        guard !rows.isEmpty else { NSSound.beep(); return }
+        let current = rows.firstIndex { selection.contains($0.id) }
+        let next = current.map { $0 + delta } ?? 0
+        guard rows.indices.contains(next) else { NSSound.beep(); return }
+        selection = [rows[next].id]
+        cacheNeighbors(of: next, in: rows)
+        announce("\(rows[next].name), \(next + 1) of \(rows.count)")
+    }
+
+    /// Starts loading the images on either side so moving through the gallery feels instant.
+    private func cacheNeighbors(of index: Int, in rows: [FileRow]) {
+        let neighbors = [index - 1, index + 1, index + 2]
+            .filter { rows.indices.contains($0) }
+            .compactMap { assetsByID[rows[$0].id] }
+        guard !neighbors.isEmpty else { return }
+        imageManager.startCachingImages(for: neighbors, targetSize: galleryImageSize,
+                                        contentMode: .aspectFit, options: galleryImageOptions)
+    }
+
+    func fullImage(for id: String) async -> NSImage? {
+        guard let asset = assetsByID[id] else { return nil }
+        let box = UncheckedBox(value: asset)
+        return await withCheckedContinuation { continuation in
+            imageManager.requestImage(for: box.value, targetSize: galleryImageSize, contentMode: .aspectFit,
+                                      options: galleryImageOptions) { image, _ in
+                continuation.resume(returning: image)
+            }
+        }
+    }
+
+    // MARK: - Thumbnails and drag
+
+    func thumbnail(for id: String) async -> NSImage? {
+        guard let asset = assetsByID[id] else { return nil }
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.resizeMode = .fast
+        options.isNetworkAccessAllowed = false
+        let box = UncheckedBox(value: asset)
+        return await withCheckedContinuation { continuation in
+            imageManager.requestImage(for: box.value, targetSize: CGSize(width: 64, height: 64),
+                                      contentMode: .aspectFill, options: options) { image, _ in
+                continuation.resume(returning: image)
+            }
+        }
+    }
+
+    func itemProvider(for row: FileRow) -> NSItemProvider? {
+        guard !row.isContainer, let asset = assetsByID[row.id] else { return nil }
+        let provider = NSItemProvider()
+        provider.suggestedName = (row.name as NSString).deletingPathExtension
+        let box = UncheckedBox(value: asset)
+        provider.registerFileRepresentation(forTypeIdentifier: PhotoExporter.uniformType(for: asset).identifier,
+                                            fileOptions: [], visibility: .all) { completion in
+            Task {
+                do {
+                    completion(try await PhotoExporter.exportToTemporary(box.value), false, nil)
+                } catch {
+                    completion(nil, false, error)
+                }
+            }
+            return nil
+        }
+        return provider
+    }
+
+    private func announce(_ message: String) {
+        AccessibilityNotification.Announcement(message).post()
+    }
+}
+
+final class LibraryObserver: NSObject, PHPhotoLibraryChangeObserver, @unchecked Sendable {
+    private let handler: @Sendable (UncheckedBox<PHChange>) -> Void
+
+    init(handler: @escaping @Sendable (UncheckedBox<PHChange>) -> Void) {
+        self.handler = handler
+    }
+
+    func photoLibraryDidChange(_ changeInstance: PHChange) {
+        handler(UncheckedBox(value: changeInstance))
+    }
+}
