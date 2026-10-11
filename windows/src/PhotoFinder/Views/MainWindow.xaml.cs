@@ -29,6 +29,9 @@ public partial class MainWindow : Window
     /// <summary>Speaks Windows AI descriptions of photos as they're arrowed to. Null where there's no helper (tests).</summary>
     public AutoDescriber? AutoDescriber { get; init; }
 
+    /// <summary>Describes the photos in added folders behind the scenes. Null where there's no helper (tests).</summary>
+    public BackgroundDescriber? BackgroundDescriber { get; init; }
+
     private static readonly Dictionary<string, string> ColumnProperties = new()
     {
         ["date"] = nameof(FileRow.DateText),
@@ -91,6 +94,7 @@ public partial class MainWindow : Window
                 return;
             }
             AutoDescriber?.Dispose();
+            BackgroundDescriber?.Dispose();
             model.Dispose();
         };
     }
@@ -136,8 +140,16 @@ public partial class MainWindow : Window
             AutoDescriber.Enabled = !AutoDescriber.Enabled;
             AutoDescribeItem.IsChecked = AutoDescriber.Enabled;
         }, () => AutoDescriber is not null);
+        Bind(AppCommands.DescribeInBackground, () =>
+        {
+            if (BackgroundDescriber is null) return;
+            BackgroundDescriber.Enabled = !BackgroundDescriber.Enabled;
+            BackgroundDescribeItem.IsChecked = BackgroundDescriber.Enabled;
+        }, () => BackgroundDescriber is not null);
+        Bind(AppCommands.StopBackground, () => BackgroundDescriber?.Stop(), () => BackgroundDescriber?.IsRunning == true);
         Loaded += (_, _) =>
         {
+            BackgroundDescribeItem.IsChecked = BackgroundDescriber?.Enabled ?? false;
             AutoDescribeItem.IsChecked = AutoDescriber?.Enabled ?? false;
             if (AutoDescriber is null) return;
             // Descriptions are for the photo you're on: the list or gallery has focus, and this window is in front
