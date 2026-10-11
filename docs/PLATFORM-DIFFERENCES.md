@@ -35,7 +35,6 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 
 ### On the Mac, from Windows
 
-- **Automatic descriptions.** Windows describes the photo you arrow to and speaks the description, with a setting to turn it off. The Mac describes when you press Describe Photo (Shift-Command-D) or Describe Image in Get Info.
 - **Setting ratings.** Windows sets ratings from Photo > Rating. PhotoKit may not allow apps to write ratings; check before building.
 - **Sort By menu.** Windows has View > Sort By for sorting without a column header. On the Mac, sorting is only by clicking column headers.
 - **Search result count.** Windows speaks how many results a search found. The Mac doesn't announce it.
@@ -59,5 +58,6 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 
 - **Columns dialog:** View > Columns… on both, with the same lists, buttons, keys (Alt on Windows, Option on the Mac) and announcements. Column order sets the order each row is read in.
 - **Saved descriptions:** both save descriptions, so a photo is described once.
+- **Describe Photos Automatically:** Photo > Describe Photos Automatically on both, on by default. The photo you arrow to in the list or gallery is described after a short pause (700 ms) and the description is spoken behind other speech, only while you're still on that photo. Saved descriptions are spoken the same way.
 - **Describe Photo:** Ctrl+Shift+D on Windows (list, gallery and Preview), Shift-Command-D on the Mac (list and gallery), describing the photo you're on and speaking it.
 - **Choosing how photos are described:** Windows has Photo > Description Type, with Windows AI's four kinds (Accessible, Detailed, Brief, Diagram). The Mac's Settings has the prompt itself, since Apple Intelligence takes any prompt.

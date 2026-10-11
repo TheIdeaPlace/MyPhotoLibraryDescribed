@@ -39,7 +39,9 @@ final class LibraryModel {
     var sortOrder: [KeyPathComparator<FileRow>] = [KeyPathComparator(\FileRow.sortDate, order: .reverse)] {
         didSet { rows.sort(using: sortOrder) }
     }
-    var selection: Set<String> = []
+    var selection: Set<String> = [] {
+        didSet { if selection != oldValue { autoDescriber.moved(to: autoDescribeCandidate) } }
+    }
     var searchText = ""
     var searchFocusRequest = 0
     /// Go > Next Pane and Previous Pane; the browser moves focus when this changes.
@@ -86,6 +88,11 @@ final class LibraryModel {
     /// Describe Photo in progress; a newer one replaces it.
     @ObservationIgnored private var describeTask: Task<Void, Never>?
     @ObservationIgnored private var terminationObserver: NSObjectProtocol?
+    /// Photo > Describe Photos Automatically; on unless turned off.
+    var describeAutomatically: Bool = UserDefaults.standard.object(forKey: "describeAutomatically") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(describeAutomatically, forKey: "describeAutomatically") }
+    }
+    @ObservationIgnored private lazy var autoDescriber = makeAutoDescriber()
 
     /// Describe photos added to the Photos library behind the scenes, so their descriptions are ready in Get Info.
     var describeInBackground: Bool = UserDefaults.standard.bool(forKey: "describeInBackground") {
@@ -116,6 +123,47 @@ final class LibraryModel {
         let cache = descriptions
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in cache.save() }
+    }
+
+    // MARK: - Describe Photos Automatically
+
+    /// Photo > Describe Photos Automatically.
+    func setDescribeAutomatically(_ on: Bool) {
+        describeAutomatically = on
+        if on {
+            autoDescriber.turnedOn(currentID: autoDescribeCandidate)
+        } else {
+            autoDescriber.isEnabled = false
+            announce("Photos won't be described automatically")
+        }
+    }
+
+    /// The photo automatic describing is about: the one photo selected. Nothing for folders, videos or several items.
+    private var autoDescribeCandidate: String? {
+        guard selection.count == 1, let id = selection.first, let row = rows.first(where: { $0.id == id }),
+              !row.isContainer, assetsByID[id]?.mediaType == .image else { return nil }
+        return id
+    }
+
+    private func makeAutoDescriber() -> AutoDescriber {
+        let describer = AutoDescriber(isEnabled: describeAutomatically)
+        describer.saved = { [weak self] id in
+            guard let self, let asset = self.assetsByID[id] else { return nil }
+            return self.descriptions.description(for: asset)
+        }
+        describer.unavailableReason = { [weak self] in self?.describeUnavailableReason }
+        describer.describe = { [weak self] id in
+            guard let self, let asset = self.assetsByID[id] else { return nil }
+            return await self.describeAndRemember(asset)
+        }
+        describer.isStillOn = { [weak self] id in
+            // Not while another app, Get Info or a sheet is in front: you've moved on from the photo for now.
+            guard let self, NSApplication.shared.isActive, NSApplication.shared.keyWindow?.isSheet == false,
+                  self.infoTarget == nil, self.captionTarget == nil, !self.columnsSheetShown else { return false }
+            return self.autoDescribeCandidate == id
+        }
+        describer.speak = { [weak self] text in self?.announce(text, queued: true) }
+        return describer
     }
 
     // MARK: - Columns
@@ -774,37 +822,53 @@ final class LibraryModel {
             announce(saved)
             return
         }
-#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
-        if #available(macOS 27, *) {
-            if let reason = ImageConversation.unavailableReason {
-                announce(reason)
-                return
-            }
-            describeTask?.cancel()
-            announce("Describing \(row.name)")
-            let id = row.id
-            let box = UncheckedBox(value: asset)
-            describeTask = Task { [weak self] in
-                // Downloaded from iCloud if need be, since you asked for it.
-                guard let data = await PhotoData.request(box.value, allowNetwork: true)?.data else {
-                    self?.say("This photo couldn't be loaded", ifStillOn: id)
-                    return
-                }
-                do {
-                    guard let text = try await PhotoDescriber.describe(data), !text.isEmpty else {
-                        self?.say("Apple Intelligence returned an empty description", ifStillOn: id)
-                        return
-                    }
-                    self?.descriptions.remember(text, for: box.value)
-                    self?.say(text, ifStillOn: id)
-                } catch {
-                    self?.say(ImageConversation.message(for: error), ifStillOn: id)
-                }
-            }
+        if let reason = describeUnavailableReason {
+            announce(reason)
             return
         }
+        // Already being described automatically: its description is spoken when it's ready.
+        if autoDescriber.describingID == row.id {
+            announce("Describing \(row.name)")
+            return
+        }
+        describeTask?.cancel()
+        announce("Describing \(row.name)")
+        let id = row.id
+        describeTask = Task { [weak self] in
+            guard let text = await self?.describeAndRemember(asset) else { return }
+            self?.say(text, ifStillOn: id)
+        }
+    }
+
+    /// Why photos can't be described on this Mac right now, or nil when they can. Never sets anything up.
+    private var describeUnavailableReason: String? {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        if #available(macOS 27, *) { return ImageConversation.unavailableReason }
 #endif
-        announce("Describing photos needs Apple Intelligence on macOS 27 or later.")
+        return "Describing photos needs Apple Intelligence on macOS 27 or later."
+    }
+
+    /// Describes the photo with Apple Intelligence and saves the description. Returns what to say: the description,
+    /// or why there isn't one. Downloads the photo from iCloud if need be, since you're on it.
+    private func describeAndRemember(_ asset: PHAsset) async -> String {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        if #available(macOS 27, *) {
+            let box = UncheckedBox(value: asset)
+            guard let data = await PhotoData.request(box.value, allowNetwork: true)?.data else {
+                return "This photo couldn't be loaded"
+            }
+            do {
+                guard let text = try await PhotoDescriber.describe(data), !text.isEmpty else {
+                    return "Apple Intelligence returned an empty description"
+                }
+                descriptions.remember(text, for: box.value)
+                return text
+            } catch {
+                return ImageConversation.message(for: error)
+            }
+        }
+#endif
+        return "Describing photos needs Apple Intelligence on macOS 27 or later."
     }
 
     /// Spoken only if you're still on that photo and haven't asked about another since.
@@ -906,8 +970,15 @@ final class LibraryModel {
         paneRequest = PaneRequest(direction: direction, serial: paneRequest.serial + 1)
     }
 
-    private func announce(_ message: String) {
-        AccessibilityNotification.Announcement(message).post()
+    private func announce(_ message: String, queued: Bool = false) {
+        guard queued else {
+            AccessibilityNotification.Announcement(message).post()
+            return
+        }
+        // Low priority waits for VoiceOver to finish what it's saying (the row you moved to) instead of cutting it off.
+        var text = AttributedString(message)
+        text.accessibilitySpeechAnnouncementPriority = .low
+        AccessibilityNotification.Announcement(text).post()
     }
 }
 
