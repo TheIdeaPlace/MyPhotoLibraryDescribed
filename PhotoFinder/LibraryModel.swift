@@ -785,21 +785,20 @@ final class LibraryModel {
             let id = row.id
             let box = UncheckedBox(value: asset)
             describeTask = Task { [weak self] in
-                guard let data = await Self.imageData(for: box.value) else {
-                    self?.announce("This photo couldn't be loaded")
+                // Downloaded from iCloud if need be, since you asked for it.
+                guard let data = await PhotoData.request(box.value, allowNetwork: true)?.data else {
+                    self?.say("This photo couldn't be loaded", ifStillOn: id)
                     return
                 }
                 do {
                     guard let text = try await PhotoDescriber.describe(data), !text.isEmpty else {
-                        if !Task.isCancelled { self?.announce("Apple Intelligence returned an empty description") }
+                        self?.say("Apple Intelligence returned an empty description", ifStillOn: id)
                         return
                     }
                     self?.descriptions.remember(text, for: box.value)
-                    // Spoken only if you're still on that photo.
-                    guard let self, !Task.isCancelled, focusedRow?.id == id else { return }
-                    announce(text)
+                    self?.say(text, ifStillOn: id)
                 } catch {
-                    if !Task.isCancelled { self?.announce(ImageConversation.message(for: error)) }
+                    self?.say(ImageConversation.message(for: error), ifStillOn: id)
                 }
             }
             return
@@ -808,19 +807,12 @@ final class LibraryModel {
         announce("Describing photos needs Apple Intelligence on macOS 27 or later.")
     }
 
-    /// The photo's data for describing; one only in iCloud is downloaded, since you asked for it.
-    private static func imageData(for asset: PHAsset) async -> Data? {
-        let options = PHImageRequestOptions()
-        options.isNetworkAccessAllowed = true
-        options.version = .current
-        options.deliveryMode = .highQualityFormat
-        let box = UncheckedBox(value: asset)
-        return await withCheckedContinuation { continuation in
-            PHImageManager.default().requestImageDataAndOrientation(for: box.value, options: options) { data, _, _, _ in
-                continuation.resume(returning: data)
-            }
-        }
+    /// Spoken only if you're still on that photo and haven't asked about another since.
+    private func say(_ text: String, ifStillOn id: String) {
+        guard !Task.isCancelled, focusedRow?.id == id else { return }
+        announce(text)
     }
+
 
     // MARK: - Gallery
 

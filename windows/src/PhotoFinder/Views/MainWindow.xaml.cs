@@ -114,8 +114,9 @@ public partial class MainWindow : Window
         Bind(AppCommands.OpenItem, () => _model.Open(), HasSelection);
         Bind(AppCommands.OpenSelected, () => _model.Open(), HasSelection);
         Bind(AppCommands.Preview, ShowPreview, HasFiles);
-        Bind(AppCommands.GetInfo, () => ShowInfo(describe: false), HasFiles);
-        Bind(AppCommands.DescribePhoto, DescribePhoto, () => _model.FocusedRow?.Item is not null);
+        Bind(AppCommands.GetInfo, ShowInfo, HasFiles);
+        // Available on any row, so the shortcut on a folder or video says why it can't, rather than nothing.
+        Bind(AppCommands.DescribePhoto, DescribePhoto, () => _model.FocusedRow is not null);
         Bind(AppCommands.ShowInExplorer, () => _model.ShowInExplorer(), () => _model.SelectedRows.Any(r => r.Item is not null || r.Container?.FolderPath is not null));
         Bind(AppCommands.Export, ExportSelection, HasFiles);
         Bind(AppCommands.AddFolder, AddFolder);
@@ -261,7 +262,9 @@ public partial class MainWindow : Window
     {
         foreach (var (id, title) in Services.WindowsAI.Kinds)
         {
-            var item = new AppMenuItem { Header = $"_{title}", IsCheckable = true, Tag = id };
+            // Detailed and Diagram share a first letter, so Diagram uses G.
+            var header = id == "diagram" ? "Dia_gram" : $"_{title}";
+            var item = new AppMenuItem { Header = header, IsCheckable = true, Tag = id };
             item.Click += (_, _) => SetDescriptionKind(id, title);
             KindMenu.Items.Add(item);
         }
@@ -737,15 +740,14 @@ public partial class MainWindow : Window
             Services.Announcer.Announce("Describing photos isn't available.");
             return;
         }
-        var path = row.Item?.Path;
-        _ = AutoDescriber.DescribeNowAsync(row, () => IsActive && _model.FocusedRow?.Item?.Path == path);
+        _ = AutoDescriber.DescribeNowAsync(row, () => IsActive && _model.FocusedRow == row);
     }
 
-    private void ShowInfo(bool describe)
+    private void ShowInfo()
     {
-        var row = _model.SelectedRows.FirstOrDefault(r => r.Item is not null && (!describe || !r.Item.IsVideo));
+        var row = _model.SelectedRows.FirstOrDefault(r => r.Item is not null);
         if (row?.Item is null) { System.Media.SystemSounds.Beep.Play(); return; }
-        new InfoWindow(row, _model.Settings, _model.SaveSettings, describe, _model.Descriptions) { Owner = this }.ShowDialog();
+        new InfoWindow(row, _model.Settings, _model.SaveSettings, describeNow: false, _model.Descriptions) { Owner = this }.ShowDialog();
         // The rows may have been rebuilt while it was open, so the element WPF would return to can be gone.
         FocusContent();
     }

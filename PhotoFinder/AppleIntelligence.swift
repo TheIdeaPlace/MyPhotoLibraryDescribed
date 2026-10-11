@@ -144,8 +144,10 @@ final class ImageConversation {
     }
 }
 
-/// Photo > Describe Photo: one description of one photo, with the prompt from Settings.
+/// Photo > Describe Photo: one description of one photo, with the prompt from Settings. On the main actor, like
+/// ImageConversation, whose instructions and prompt it uses; the decode is detached and the model call suspends.
 @available(macOS 27, *)
+@MainActor
 enum PhotoDescriber {
     static func describe(_ data: Data) async throws -> String? {
         // Decoded off the main actor: a 2048-pixel decode would stall the window.

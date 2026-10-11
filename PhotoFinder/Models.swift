@@ -211,6 +211,23 @@ struct FileRow: Identifiable, Hashable, Sendable {
 }
 
 /// Lets non-Sendable Photos objects cross into background tasks. PhotoKit objects are immutable snapshots.
+/// A photo's current version (with edits) as data, and its type.
+enum PhotoData {
+    /// - Parameter allowNetwork: whether a photo only in iCloud is downloaded. Background describing doesn't.
+    static func request(_ asset: PHAsset, allowNetwork: Bool) async -> (data: Data, uti: String?)? {
+        let options = PHImageRequestOptions()
+        options.isNetworkAccessAllowed = allowNetwork
+        options.version = .current
+        options.deliveryMode = .highQualityFormat
+        let box = UncheckedBox(value: asset)
+        return await withCheckedContinuation { continuation in
+            PHImageManager.default().requestImageDataAndOrientation(for: box.value, options: options) { data, uti, _, _ in
+                continuation.resume(returning: data.map { ($0, uti) })
+            }
+        }
+    }
+}
+
 struct UncheckedBox<Value>: @unchecked Sendable {
     let value: Value
 }

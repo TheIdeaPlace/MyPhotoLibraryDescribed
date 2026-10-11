@@ -37,6 +37,10 @@ public sealed class AutoDescriber : IDisposable
     private bool _unavailable;
     /// <summary>Describe Photo requests in progress.</summary>
     private int _manual;
+    /// <summary>The photo Describe Photo is working on, so pressing it again doesn't describe it twice.</summary>
+    private (string Path, Task Task)? _manualRun;
+    /// <summary>The photo automatic describing is asking Windows about right now.</summary>
+    private string? _describingPath;
     /// <summary>The photo last moved to. The selection is re-applied whenever the list refreshes; that isn't
     /// moving, and mustn't speak the description again.</summary>
     private string? _lastPath;
@@ -117,7 +121,13 @@ public sealed class AutoDescriber : IDisposable
     /// </summary>
     public Task DescribeNowAsync(FileRow row, Func<bool> stillOn)
     {
+        if (row.Item is { } item && _manualRun is { } run && run.Path == item.Path && !run.Task.IsCompleted)
+        {
+            Announcer.Announce($"Still describing {item.Name}");
+            return run.Task;
+        }
         var task = DescribeNowCoreAsync(row, stillOn);
+        if (row.Item is { } described) _manualRun = (described.Path, task);
         Busy(task);
         return task;
     }
@@ -170,7 +180,9 @@ public sealed class AutoDescriber : IDisposable
             }
             _unavailable = false;
             Announcer.Announce($"Describing {item.Name}");
-            var text = await _describe(item, kind, _closing.Token);
+            // Automatic describing is already asking about this photo: wait for that rather than asking twice.
+            while (_describingPath == item.Path) await Task.Delay(50, _closing.Token);
+            var text = _store.Get(item, kind) ?? await _describe(item, kind, _closing.Token);
             if (text.Length == 0)
             {
                 if (stillOn()) Announcer.Announce("Windows returned an empty description.");
@@ -265,7 +277,16 @@ public sealed class AutoDescriber : IDisposable
                 }
                 try
                 {
-                    var text = await _describe(item, kind, _closing.Token);
+                    _describingPath = path;
+                    string text;
+                    try
+                    {
+                        text = await _describe(item, kind, _closing.Token);
+                    }
+                    finally
+                    {
+                        _describingPath = null;
+                    }
                     if (text.Length > 0)
                     {
                         _store.Put(item, kind, text);

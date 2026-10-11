@@ -482,6 +482,44 @@ public sealed class AutoDescriberTests : IDisposable
     }
 
     [WpfFact]
+    public async Task DescribeNow_PressedTwice_DescribesOnce()
+    {
+        var release = new TaskCompletionSource();
+        var (model, auto, _) = await StartAsync(settings: ManualOnly, describe: async item => { await release.Task; return "Once."; });
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            var row = model.FocusedRow!;
+            var first = auto.DescribeNowAsync(row, () => true);
+            await WaitUntil(() => _described.Count == 1);
+            var second = auto.DescribeNowAsync(row, () => true);
+            Assert.Contains("Still describing a.jpg", _announced);
+            release.SetResult();
+            await Task.WhenAll(first, second);
+            Assert.Single(_described);
+            Assert.Single(_announced, a => a == "Once.");
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeNow_WhileAutomaticIsDescribingThatPhoto_WaitsForItAndSpeaksIt()
+    {
+        var release = new TaskCompletionSource();
+        var (model, auto, _) = await StartAsync(describe: async item => { await release.Task; return "Shared."; });
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await WaitUntil(() => _described.Count == 1);
+            var manual = auto.DescribeNowAsync(model.FocusedRow!, () => true);
+            release.SetResult();
+            await manual;
+            await Settle(auto);
+            Assert.Single(_described);
+            Assert.Single(_announced, a => a == "Shared.");
+        }
+    }
+
+    [WpfFact]
     public async Task DescribeNow_ACaughtFailureIsSpoken()
     {
         var (model, auto, _) = await StartAsync(settings: ManualOnly,

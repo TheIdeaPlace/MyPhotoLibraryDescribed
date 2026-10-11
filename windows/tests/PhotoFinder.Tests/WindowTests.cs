@@ -415,11 +415,25 @@ public sealed class WindowTests : IDisposable
 
             // Photo > Description Type: the four kinds, and choosing one is saved.
             var kinds = items.Single(m => m.Name == "KindMenu").Items.OfType<AppMenuItem>().ToList();
-            Assert.Equal(["Accessible", "Detailed", "Brief", "Diagram"], kinds.Select(k => ((string)k.Header).TrimStart('_')));
+            Assert.Equal(["Accessible", "Detailed", "Brief", "Diagram"], kinds.Select(k => ((string)k.Header).Replace("_", "")));
             window.SetDescriptionKind("brief", "Brief");
             Assert.Equal("brief", Settings.Load(_lib.PathOf(@"data\Settings.json")).DescriptionKind);
 
             Assert.Contains(items, m => m.Command == AppCommands.DescribePhoto);
+
+            // No two items in one menu share an access key, so Alt+letter always chooses.
+            foreach (var menu in items.Where(m => m.Items.Count > 0).Cast<ItemsControl>().Append(window.MainMenu).Append(window.FileList.ContextMenu))
+            {
+                var keys = menu.Items.OfType<MenuItem>().Select(m => m.Header as string).OfType<string>()
+                    .Where(h => h.Contains('_')).Select(h => char.ToLowerInvariant(h[h.IndexOf('_') + 1])).ToList();
+                Assert.True(keys.Count == keys.Distinct().Count(), $"Repeated access key in {(menu as HeaderedItemsControl)?.Header ?? menu.Name}: {string.Join(",", keys)}");
+            }
+            Assert.All(window.FileList.ContextMenu.Items.OfType<MenuItem>(), m => Assert.IsType<AppMenuItem>(m));
+
+            // Describe Photo on a folder row is available, so it can say why it can't describe a folder.
+            model.Navigate(model.Sections[2].Children[0].Id);
+            model.SelectedRows = [model.Rows.Single(r => r.Name == "Trip")];
+            Assert.True(AppCommands.DescribePhoto.CanExecute(null, window));
         }
         finally
         {

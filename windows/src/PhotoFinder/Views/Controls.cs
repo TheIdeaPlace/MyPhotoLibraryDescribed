@@ -24,6 +24,12 @@ public class AppMenuItem : MenuItem
     /// <summary>Whether its command can run now. Checked when its menu opens and whenever WPF re-checks commands.</summary>
     public bool IsAvailable => (bool)GetValue(IsAvailableProperty);
 
+    public AppMenuItem()
+    {
+        // A context menu opening (or a submenu shown) is checked as it appears.
+        IsVisibleChanged += (_, e) => { if (e.NewValue is true) UpdateAvailability(); };
+    }
+
     /// <summary>Kept here because commands hold their CanExecuteChanged handlers weakly.</summary>
     private EventHandler? _canExecuteChanged;
 
@@ -36,7 +42,9 @@ public class AppMenuItem : MenuItem
         if (e.Property == CommandProperty)
         {
             if (e.OldValue is ICommand old && _canExecuteChanged is not null) old.CanExecuteChanged -= _canExecuteChanged;
-            if (e.NewValue is ICommand command) command.CanExecuteChanged += _canExecuteChanged ??= (_, _) => UpdateAvailability();
+            // Only while it's showing: WPF re-checks commands after every key press, and MenuItem itself skips closed
+            // menus for the same reason. Opening its menu checks it again.
+            if (e.NewValue is ICommand command) command.CanExecuteChanged += _canExecuteChanged ??= (_, _) => { if (IsVisible) UpdateAvailability(); };
             UpdateAvailability();
         }
         else if (e.Property == CommandParameterProperty || e.Property == CommandTargetProperty)

@@ -77,7 +77,7 @@
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.DescribePhoto" />
                 <v:AppMenuItem x:Name="AutoDescribeItem" Command="v:AppCommands.AutoDescribe" IsCheckable="True" />
-                <v:AppMenuItem Header="Description _Type" x:Name="KindMenu" />
+                <v:AppMenuItem Header="Description T_ype" x:Name="KindMenu" />
                 <v:AppMenuItem x:Name="BackgroundDescribeItem" Command="v:AppCommands.DescribeInBackground" IsCheckable="True" />
                 <v:AppMenuItem Command="v:AppCommands.StopBackground" />
             </v:AppMenuItem>
