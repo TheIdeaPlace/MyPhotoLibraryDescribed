@@ -24,6 +24,8 @@ public sealed class Settings
     public string DescriptionKind { get; set; } = "accessible";
     /// <summary>Describe each photo with Windows AI when it's arrowed to, and speak the description.</summary>
     public bool AutoDescribe { get; set; } = true;
+    /// <summary>Describe the photos in a folder, behind the scenes, when it's added to the library.</summary>
+    public bool DescribeInBackground { get; set; }
 
     /// <summary>The columns shown, in order, always including Name.</summary>
     public List<string> ShownColumnIds()

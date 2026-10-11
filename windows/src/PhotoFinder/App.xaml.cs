@@ -27,7 +27,8 @@ public partial class App : Application
         var model = new LibraryModel(settings, Settings.DefaultPath, new MetadataCache(MetadataCache.DefaultPath),
             LibraryRoots.PicturesLibraryAsync) { Descriptions = descriptions };
         var autoDescriber = new AutoDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
-        MainWindow = new MainWindow(model) { AutoDescriber = autoDescriber };
+        var backgroundDescriber = new BackgroundDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
+        MainWindow = new MainWindow(model) { AutoDescriber = autoDescriber, BackgroundDescriber = backgroundDescriber };
         MainWindow.Show();
     }
 

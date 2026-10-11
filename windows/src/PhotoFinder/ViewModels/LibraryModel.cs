@@ -146,7 +146,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         private set { _detailProgress = value; OnPropertyChanged(); OnStatusChanged(); }
     }
 
-    public bool IsBusy => IsLoading || Activity is not null || DetailProgress is not null;
+    public bool IsBusy => IsLoading || Activity is not null || DetailProgress is not null || BackgroundProgress is not null;
 
     public string StatusText
     {
@@ -159,7 +159,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public string StatusBarText => Activity ?? DetailProgress ?? StatusText;
+    public string StatusBarText => Activity ?? DetailProgress ?? (BackgroundProgress is null ? StatusText : $"{StatusText}. {BackgroundProgress}");
 
     /// <summary>The view should select these rows (by id), and move keyboard focus to the first if asked.</summary>
     public event Action<IReadOnlyList<string>, bool>? SelectionRequested;
@@ -639,6 +639,19 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         SaveSettings();
         await RescanAsync();
         Announcer.Announce($"Added {Path.GetFileName(full)}");
+        FolderAdded?.Invoke(full, _items.Where(i => i.Path.StartsWith(full + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)).ToList());
+    }
+
+    /// <summary>A folder was added to the library, with the photos and videos found in it.</summary>
+    public event Action<string, IReadOnlyList<MediaItem>>? FolderAdded;
+
+    private string? _backgroundProgress;
+
+    /// <summary>What background describing is doing ("Describing photos in the background, 3 of 40"), shown in the status bar.</summary>
+    public string? BackgroundProgress
+    {
+        get => _backgroundProgress;
+        set { _backgroundProgress = value; OnPropertyChanged(); OnStatusChanged(); }
     }
 
     /// <summary>Takes a folder out of Photo Finder's library. Nothing on disk changes.</summary>

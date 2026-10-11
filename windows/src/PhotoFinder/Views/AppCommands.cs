@@ -42,6 +42,7 @@ public static class AppCommands
         new KeyGesture(Key.F2), new KeyGesture(Key.E, ModifierKeys.Control | ModifierKeys.Shift));
     public static readonly RoutedUICommand DescribeImage = Make("_Describe Image…", nameof(DescribeImage),
         new KeyGesture(Key.D, ModifierKeys.Control | ModifierKeys.Shift));
+    public static readonly RoutedUICommand DescribeInBackground = Make("Describe Added Folders in the Bac_kground", nameof(DescribeInBackground));
     public static readonly RoutedUICommand AutoDescribe = Make("Describe Photos _Automatically", nameof(AutoDescribe),
         new KeyGesture(Key.U, ModifierKeys.Control | ModifierKeys.Shift));
 

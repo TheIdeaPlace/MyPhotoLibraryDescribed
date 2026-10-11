@@ -75,6 +75,7 @@
                 <Separator />
                 <MenuItem Command="v:AppCommands.DescribeImage" />
                 <MenuItem x:Name="AutoDescribeItem" Command="v:AppCommands.AutoDescribe" IsCheckable="True" />
+                <MenuItem x:Name="BackgroundDescribeItem" Command="v:AppCommands.DescribeInBackground" IsCheckable="True" />
             </MenuItem>
             <MenuItem Header="_Help">
                 <MenuItem Command="v:AppCommands.About" />
