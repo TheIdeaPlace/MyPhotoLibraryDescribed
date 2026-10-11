@@ -261,6 +261,16 @@ public sealed class ColumnChoosingTests : IDisposable
             model.SetColumnOrder(["caption", "name", "rating"]);
             var headers = window.ListColumns.Columns.Select(c => (string)((GridViewColumnHeader)c.Header).Tag).ToList();
             Assert.Equal(["caption", "name", "rating"], headers);
+
+            // Columns are chosen in one place: View > Columns, a plain item with no submenu, and the same dialog from
+            // a column header's right-click menu.
+            var viewMenu = window.MainMenu.Items.OfType<MenuItem>().Single(m => (string)m.Header == "_View");
+            var columnsItem = Assert.Single(viewMenu.Items.OfType<MenuItem>(), m => m.Command == AppCommands.ChooseColumns);
+            Assert.Empty(columnsItem.Items);
+            Assert.DoesNotContain(viewMenu.Items.OfType<MenuItem>(), m => m.Command is null && (m.Header as string)?.Contains("Columns") == true);
+            var headerMenu = ((GridViewColumnHeader)window.ListColumns.Columns[0].Header).ContextMenu!;
+            var only = Assert.Single(headerMenu.Items.OfType<MenuItem>());
+            Assert.Equal(AppCommands.ChooseColumns, only.Command);
         }
         finally { window.Close(); }
     }

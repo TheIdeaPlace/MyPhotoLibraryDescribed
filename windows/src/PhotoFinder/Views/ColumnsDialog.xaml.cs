@@ -8,7 +8,7 @@ using PhotoFinder.Services;
 namespace PhotoFinder.Views;
 
 /// <summary>
-/// View, Choose Columns: which columns the list shows and in what order, which is also the order each photo is
+/// View, Columns: which columns the list shows and in what order, which is also the order each photo is
 /// read in. The same design as The Chat Place's and QuickMail's: the columns not shown, the ones shown in the
 /// order they're read, Add, Remove, Move Up, Move Down, Move to Top, Move to Bottom and Reset to Default, and a
 /// preview of the selected photo's line. OK keeps the choice; Cancel or Escape leaves it.
