@@ -42,6 +42,8 @@ final class LibraryModel {
     var selection: Set<String> = []
     var searchText = ""
     var searchFocusRequest = 0
+    /// Go > Next Pane and Previous Pane; the browser moves focus when this changes.
+    private(set) var paneRequest = PaneRequest()
     private(set) var isLoading = false
     private(set) var activity: String?
     private(set) var nameProgress: String?
@@ -839,6 +841,10 @@ final class LibraryModel {
             return nil
         }
         return provider
+    }
+
+    func movePane(by direction: Int) {
+        paneRequest = PaneRequest(direction: direction, serial: paneRequest.serial + 1)
     }
 
     private func announce(_ message: String) {

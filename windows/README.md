@@ -8,7 +8,8 @@ On Windows your photo library is ordinary files, so Photo Finder reads the **Pic
 
 - **Sidebar** with *Library* (All Photos, Favorites, Recently Added, Videos, Screenshots, Screen Recordings, Panoramas, RAW and Animated), *Dates* (a folder for each year, with a folder for each month inside) and *Folders* (the library's folders on disk, with their subfolders).
 - **List view** with Name, Date Taken, Kind, Caption, Dimensions, Duration and Favorite columns. Click a column header, or use View > Sort By, to sort. **View > Columns** (or right-clicking a column header) picks which columns are shown and in what order: Available and Shown lists, Add, Remove, Move Up, Move Down, Move to Top, Move to Bottom and Reset to Default, with a preview of how the selected photo will read. In it, Alt+Up, Alt+Down, Alt+Home and Alt+End move the selected column, Enter in Available adds one and Delete in Shown removes one, and each change is spoken. The order is also the order screen readers read each row in, so putting Caption or Date Taken first means hearing it before the file name. Name is always shown, but can be moved. The extra columns are Keywords, Rating, Date Modified, File Type, Size, Orientation, Megapixels, Location and Folder.
-- **Gallery view** (View > as Gallery) shows one full-size image at a time. The image has the same name as the list row, so a screen reader's image description (JAWS Picture Smart, NVDA's describers) looks at the whole picture instead of a thumbnail. Arrow keys move between items.
+- **Gallery view** (View > as Gallery) shows one full-size image at a time. The image is named with just the file name, so arrowing says which photo and its description follows, and a screen reader's image description (JAWS Picture Smart, NVDA's describers) looks at the whole picture instead of a thumbnail. Arrow keys move between items. Tab reaches the footer: the name, details, caption, description, Previous, the position ("3 of 10") and Next.
+- **Status bar**: the last stop in the F6 loop, as in QuickMail. F6 there says "Status bar" and what it shows; Left and Right Arrow move between its sections (the library summary, what's being done now, and background describing), and Tab, F6 or Escape leave. JAWS (Insert+Page Down) and NVDA (Insert+End) read it from anywhere.
 - **Preview** (Space) is Photo Finder's Quick Look: a large view of the photo, or the video playing, with the arrow keys moving through the list. Space or Escape closes it.
 - **Edit Caption** (F2) writes the caption into the file as its Title, the one File Explorer shows, so it goes wherever the file goes (and syncs with OneDrive).
 - **Favorites** are photos rated five stars, so they're the same in File Explorer and other apps that read ratings. Photo > Rating sets any rating.
@@ -40,7 +41,8 @@ On Windows your photo library is ordinary files, so Photo Finder reads the **Pic
 | Previous or next item in the gallery | Left or Right Arrow (Up or Down also work); Home and End go to the first and last |
 | Pause or play a video in Preview | K or P |
 | Search the current list | Ctrl+F or F3; Escape clears it, Enter or Down Arrow goes to the results |
-| Move between the sidebar, the list and search | F6 and Shift+F6 |
+| Move between the sidebar, the list or gallery, search and the status bar | F6 and Shift+F6 |
+| Move between status bar sections | Left and Right Arrow |
 | Go to All Photos | Ctrl+Shift+A |
 | Refresh | F5 |
 

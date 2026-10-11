@@ -8,6 +8,7 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <v:TextVisibilityConverter x:Key="TextVisibility" />
         <DataTemplate x:Key="NameCellTemplate" DataType="{x:Type m:FileRow}">
             <StackPanel Orientation="Horizontal" DataContextChanged="NameCell_DataContextChanged" Loaded="NameCell_Loaded"
                         AutomationProperties.Name="{Binding Name}">
@@ -98,13 +99,25 @@
             </DockPanel>
         </Border>
 
-        <!-- A real StatusBar, so JAWS (Insert+Page Down) and NVDA (Insert+End) can read it. -->
-        <StatusBar DockPanel.Dock="Bottom" Padding="6,2">
-            <StatusBarItem Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}">
-                <ProgressBar IsIndeterminate="True" Width="60" Height="10" AutomationProperties.Name="Working" />
+        <!-- A real StatusBar, so JAWS (Insert+Page Down) and NVDA (Insert+End) can read it. It's also the last
+             stop in the F6 loop, like QuickMail's: each section is its own focus stop, Left and Right move between
+             them (wrapping), and Tab, F6 or Escape leave. Sections with nothing to say are hidden and skipped. -->
+        <StatusBar x:Name="MainStatusBar" DockPanel.Dock="Bottom" Padding="6,2" AutomationProperties.Name="Status bar"
+                   KeyboardNavigation.TabNavigation="None" KeyboardNavigation.DirectionalNavigation="Contained"
+                   PreviewKeyDown="StatusBar_PreviewKeyDown">
+            <StatusBarItem Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" Focusable="False">
+                <ProgressBar IsIndeterminate="True" Width="60" Height="10" AutomationProperties.Name="Working" Focusable="False" />
             </StatusBarItem>
-            <StatusBarItem>
-                <TextBlock x:Name="StatusBarText" Text="{Binding StatusBarText}" />
+            <StatusBarItem Focusable="False">
+                <TextBlock x:Name="StatusBarText" Text="{Binding StatusText}" Focusable="True" />
+            </StatusBarItem>
+            <StatusBarItem x:Name="ActivityItem" Focusable="False"
+                           Visibility="{Binding CurrentActivity, Converter={StaticResource TextVisibility}}">
+                <TextBlock x:Name="ActivityText" Text="{Binding CurrentActivity}" Focusable="True" IsVisibleChanged="StatusSection_IsVisibleChanged" />
+            </StatusBarItem>
+            <StatusBarItem x:Name="BackgroundItem" Focusable="False"
+                           Visibility="{Binding BackgroundProgress, Converter={StaticResource TextVisibility}}">
+                <TextBlock x:Name="BackgroundText" Text="{Binding BackgroundProgress}" Focusable="True" IsVisibleChanged="StatusSection_IsVisibleChanged" />
             </StatusBarItem>
         </StatusBar>
 
@@ -206,18 +219,19 @@
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                                 <Button x:Name="PreviousButton" Content="◀ Previous" Padding="10,3" Click="PreviousButton_Click"
                                         AutomationProperties.Name="Previous" />
-                                <TextBlock x:Name="GalleryPositionText" Margin="10,0" VerticalAlignment="Center" />
+                                <TextBox x:Name="GalleryPositionText" Margin="10,0" VerticalAlignment="Center" IsReadOnly="True"
+                                         BorderThickness="0" Background="Transparent" AutomationProperties.Name="Position" />
                                 <Button x:Name="NextButton" Content="Next ▶" Padding="10,3" Click="NextButton_Click"
                                         AutomationProperties.Name="Next" />
                             </StackPanel>
                             <StackPanel>
                                 <TextBox x:Name="GalleryName" FontWeight="SemiBold" IsReadOnly="True" BorderThickness="0" Background="Transparent"
-                                         AutomationProperties.Name="Name" IsTabStop="False" />
-                                <TextBox x:Name="GalleryDetails" IsReadOnly="True" BorderThickness="0" Background="Transparent" IsTabStop="False"
+                                         AutomationProperties.Name="Name" />
+                                <TextBox x:Name="GalleryDetails" IsReadOnly="True" BorderThickness="0" Background="Transparent"
                                          Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" AutomationProperties.Name="Details" />
-                                <TextBox x:Name="GalleryCaption" IsReadOnly="True" BorderThickness="0" Background="Transparent" IsTabStop="False"
+                                <TextBox x:Name="GalleryCaption" IsReadOnly="True" BorderThickness="0" Background="Transparent"
                                          TextWrapping="Wrap" AutomationProperties.Name="Caption" />
-                                <TextBox x:Name="GalleryDescription" IsReadOnly="True" BorderThickness="0" Background="Transparent" IsTabStop="False"
+                                <TextBox x:Name="GalleryDescription" IsReadOnly="True" BorderThickness="0" Background="Transparent"
                                          TextWrapping="Wrap" MaxHeight="120" VerticalScrollBarVisibility="Auto"
                                          AutomationProperties.Name="Description" Visibility="Collapsed" />
                             </StackPanel>

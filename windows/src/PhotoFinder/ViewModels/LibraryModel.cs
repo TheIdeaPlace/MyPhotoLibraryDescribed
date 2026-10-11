@@ -161,6 +161,9 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     public string StatusBarText => Activity ?? DetailProgress ?? (BackgroundProgress is null ? StatusText : $"{StatusText}. {BackgroundProgress}");
 
+    /// <summary>What's being done right now (an export, reading details), its own status bar section.</summary>
+    public string? CurrentActivity => Activity ?? DetailProgress;
+
     /// <summary>The view should select these rows (by id), and move keyboard focus to the first if asked.</summary>
     public event Action<IReadOnlyList<string>, bool>? SelectionRequested;
     public event Action<string>? ErrorRaised;
@@ -798,6 +801,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     {
         OnPropertyChanged(nameof(StatusText));
         OnPropertyChanged(nameof(StatusBarText));
+        OnPropertyChanged(nameof(CurrentActivity));
         OnPropertyChanged(nameof(IsBusy));
     }
 

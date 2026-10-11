@@ -20,23 +20,37 @@ struct ContentView: View {
 struct BrowserView: View {
     @Environment(LibraryModel.self) private var model
     @FocusState private var searchFocused: Bool
+    @FocusState private var pane: Pane?
 
     var body: some View {
         @Bindable var model = model
         NavigationSplitView {
-            SidebarView()
+            SidebarView(pane: $pane)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 230)
         } detail: {
-            switch model.viewMode {
-            case .list: FileListView()
-            case .gallery: GalleryView()
+            Group {
+                switch model.viewMode {
+                case .list: FileListView(pane: $pane)
+                case .gallery: GalleryView(pane: $pane)
+                }
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar(pane: $pane) }
         }
         .navigationTitle(model.currentTitle)
         .navigationSubtitle(model.statusText)
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search names, kinds and dates")
         .searchFocused($searchFocused)
         .onChange(of: model.searchFocusRequest) { searchFocused = true }
+        // Go > Next Pane (F6) and Previous Pane (Shift-F6): sidebar, list or gallery, Search, status bar, and round.
+        .onChange(of: model.paneRequest) {
+            let target = Pane.next(from: searchFocused ? .search : pane, by: model.paneRequest.direction)
+            if target == .search {
+                searchFocused = true
+            } else {
+                searchFocused = false
+                pane = target
+            }
+        }
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .sheet(item: $model.infoTarget) { InfoView(target: $0) }
         .sheet(item: $model.captionTarget) { CaptionEditor(target: $0, model: model) }
@@ -54,6 +68,7 @@ struct BrowserView: View {
 
 struct SidebarView: View {
     @Environment(LibraryModel.self) private var model
+    var pane: FocusState<Pane?>.Binding
 
     var body: some View {
         @Bindable var model = model
@@ -65,6 +80,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .focused(pane, equals: .sidebar)
         .accessibilityLabel("Sidebar")
     }
 }
@@ -112,6 +128,7 @@ private struct SidebarNode: View {
 
 struct FileListView: View {
     @Environment(LibraryModel.self) private var model
+    var pane: FocusState<Pane?>.Binding
 
     var body: some View {
         @Bindable var model = model
@@ -154,9 +171,9 @@ struct FileListView: View {
             return .handled
         }
         .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
+        .focused(pane, equals: .content)
         .accessibilityLabel(model.currentTitle)
         .overlay { emptyState }
-        .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar() }
     }
 
     @ViewBuilder private func cell(_ column: String, _ row: FileRow) -> some View {
@@ -225,7 +242,7 @@ private struct ThumbnailView: View {
 
 struct GalleryView: View {
     @Environment(LibraryModel.self) private var model
-    @FocusState private var focused: Bool
+    var pane: FocusState<Pane?>.Binding
 
     var body: some View {
         VStack(spacing: 0) {
@@ -243,7 +260,7 @@ struct GalleryView: View {
             }
         }
         .focusable()
-        .focused($focused)
+        .focused(pane, equals: .content)
         .focusEffectDisabled()
         .onKeyPress(.leftArrow) { model.moveSelection(by: -1); return .handled }
         .onKeyPress(.upArrow) { model.moveSelection(by: -1); return .handled }
@@ -254,9 +271,8 @@ struct GalleryView: View {
         .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
         .onAppear {
             model.ensureGallerySelection()
-            focused = true
+            pane.wrappedValue = .content
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar() }
     }
 }
 
@@ -282,10 +298,10 @@ private struct GalleryImage: View {
                 ProgressView("Loading image…")
             }
         }
-        // One image element with the same name the list uses, so VoiceOver's
-        // image descriptions (VO-Shift-L) look at the full-size picture.
+        // One image element named just for the photo, so arrowing says which photo and its description follows,
+        // and VoiceOver's image descriptions (VO-Shift-L) look at the full-size picture. The rest is in the footer.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(row.spokenDescription)
+        .accessibilityLabel(row.name)
         .accessibilityAddTraits(.isImage)
         .task(id: row.id) {
             guard !row.isContainer else { return }
@@ -367,15 +383,33 @@ private struct CaptionEditor: View {
     }
 }
 
+/// The last stop in the F6 loop. Each section is its own focus stop, Left and Right Arrow move between them
+/// (wrapping), and Escape goes back to the list or gallery. Sections with nothing to say aren't shown.
 private struct StatusBar: View {
     @Environment(LibraryModel.self) private var model
+    var pane: FocusState<Pane?>.Binding
+
+    private func text(_ section: StatusSection) -> String? {
+        switch section {
+        case .status: model.statusText
+        case .activity: model.activity ?? model.nameProgress
+        case .background: model.backgroundProgress
+        }
+    }
+
+    private var shown: [StatusSection] { StatusSection.allCases.filter { text($0) != nil } }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             if model.isLoading || model.activity != nil || model.nameProgress != nil || model.backgroundProgress != nil {
                 ProgressView().controlSize(.small)
+                    .accessibilityHidden(true)
             }
-            Text(model.activity ?? model.nameProgress ?? model.backgroundProgress.map { "\(model.statusText). \($0)" } ?? model.statusText)
+            ForEach(shown, id: \.self) { section in
+                Text(text(section) ?? "")
+                    .focusable()
+                    .focused(pane, equals: .status(section))
+            }
             Spacer()
         }
         .font(.callout)
@@ -383,7 +417,25 @@ private struct StatusBar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .background(.bar)
-        .accessibilityElement(children: .combine)
+        .onKeyPress(.leftArrow) { move(-1) }
+        .onKeyPress(.rightArrow) { move(1) }
+        .onKeyPress(.escape) {
+            guard case .status = pane.wrappedValue else { return .ignored }
+            pane.wrappedValue = .content
+            return .handled
+        }
+        // The section you're on went away (an export finished): stay in the status bar.
+        .onChange(of: shown) {
+            if case let .status(section)? = pane.wrappedValue, !shown.contains(section) { pane.wrappedValue = .status(.status) }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Status bar")
+    }
+
+    private func move(_ direction: Int) -> KeyPress.Result {
+        guard case let .status(section)? = pane.wrappedValue else { return .ignored }
+        pane.wrappedValue = .status(StatusSection.next(from: section, by: direction, shown: shown))
+        return .handled
     }
 }
 
