@@ -3,3 +3,13 @@ build/
 DerivedData/
 *.xcodeproj/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Windows app
+windows/**/bin/
+windows/**/obj/
+windows/out/
+windows/artifacts/
+windows/TestResults/
+windows/**/TestResults/
+*.user
+.vs/

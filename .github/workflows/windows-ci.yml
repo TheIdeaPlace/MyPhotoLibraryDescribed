@@ -1,0 +1,53 @@
+name: Windows CI
+
+# Builds and tests the Windows app (windows/). The Mac app (PhotoFinder/) is built with Xcode and
+# isn't touched here.
+on:
+  push:
+    branches: [main]
+    paths: ['windows/**', '.github/workflows/windows-ci.yml']
+  pull_request:
+    branches: [main]
+    paths: ['windows/**', '.github/workflows/windows-ci.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    # WPF and the Windows SDK projection need a Windows runner.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: windows
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore PhotoFinder.sln
+
+      - name: Build
+        run: dotnet build PhotoFinder.sln --configuration Release --no-restore
+
+      # The window tests show real WPF windows without activating them, so they need no desktop in
+      # front of them. The Windows AI tests skip themselves here: the runner has no NPU and no helper.
+      - name: Test
+        run: dotnet test --solution PhotoFinder.sln --configuration Release --no-build --report-xunit-trx --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: windows/TestResults

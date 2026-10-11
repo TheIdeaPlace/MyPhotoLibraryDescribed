@@ -1,0 +1,19 @@
+<Window x:Class="PhotoFinder.Views.CaptionDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Edit Caption" Width="460" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <StackPanel Margin="14">
+        <Label x:Name="PromptLabel" Content="_Caption:" Target="{Binding ElementName=CaptionBox}" Padding="0,0,0,4" />
+        <TextBox x:Name="CaptionBox" TextWrapping="Wrap" MinHeight="60" MaxHeight="160" VerticalScrollBarVisibility="Auto"
+                 AcceptsReturn="False" Padding="3" />
+        <TextBlock x:Name="ManyNote" Margin="0,8,0,0" TextWrapping="Wrap" Visibility="Collapsed"
+                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+        <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                   Text="Captions are saved in the file, as its Title in File Explorer, so they go wherever the file goes." />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="_Save" IsDefault="True" MinWidth="80" Padding="10,3" Click="Save_Click" />
+            <Button Content="Cancel" IsCancel="True" MinWidth="80" Padding="10,3" Margin="8,0,0,0" />
+        </StackPanel>
+    </StackPanel>
+</Window>

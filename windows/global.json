@@ -1,0 +1,6 @@
+{
+  "//": "Microsoft.Testing.Platform runs the tests: xunit.v3 needs it on the .NET 10 SDK. No sdk pin, so any 10.0 SDK builds.",
+  "test": {
+    "runner": "Microsoft.Testing.Platform"
+  }
+}

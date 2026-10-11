@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- The Windows SDK projection gives the app the shell's property system (StorageFile), the
+         image decoder that reads HEIC, and Windows' OCR, none of which need package identity. -->
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>PhotoFinder</AssemblyName>
+    <RootNamespace>PhotoFinder</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PhotoFinder.Tests" />
+    <!-- WPF projects leave System.IO out of the implicit usings. -->
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+</Project>

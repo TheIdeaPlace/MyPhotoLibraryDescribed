@@ -2,6 +2,8 @@
 
 A Mac app for browsing your Photos library as if it were folders in Finder. It is built to work well with VoiceOver: the sidebar and a sortable list view replace the Photos app's image grid.
 
+There's also a separate native Windows version, built for JAWS, NVDA and Narrator, in [`windows/`](windows/README.md). It browses the Windows Pictures library the same way, and describes photos with Windows' on-device AI on Copilot+ PCs.
+
 ## What it does
 
 - **Sidebar** with *Library* (All Photos, Favorites, Videos, Screenshots and the other smart albums), *Dates* (a folder for each year, with a folder for each month inside), *My Albums* (including album folders) and *Shared Albums*.
