@@ -83,6 +83,8 @@ final class LibraryModel {
     @ObservationIgnored private var allPhotosFetch: PHFetchResult<PHAsset>?
     /// The background describer (macOS 27), kept untyped so this class builds with older SDKs too.
     @ObservationIgnored private var backgroundDescriber: AnyObject?
+    /// Describe Photo in progress; a newer one replaces it.
+    @ObservationIgnored private var describeTask: Task<Void, Never>?
     @ObservationIgnored private var terminationObserver: NSObjectProtocol?
 
     /// Describe photos added to the Photos library behind the scenes, so their descriptions are ready in Get Info.
@@ -754,6 +756,63 @@ final class LibraryModel {
         }
 #endif
     }
+
+    // MARK: - Describe Photo
+
+    /// Photo > Describe Photo (Shift-Command-D): describes the photo you're on with Apple Intelligence and speaks it,
+    /// in the list or gallery. A saved description is spoken at once.
+    func describeFocusedPhoto() {
+        guard let row = focusedRow, !row.isContainer, let asset = assetsByID[row.id] else {
+            announce("Select a photo to describe")
+            return
+        }
+        guard asset.mediaType == .image else {
+            announce("Videos can't be described")
+            return
+        }
+        if let saved = descriptions.description(for: asset) {
+            announce(saved)
+            return
+        }
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        if #available(macOS 27, *) {
+            if let reason = ImageConversation.unavailableReason {
+                announce(reason)
+                return
+            }
+            describeTask?.cancel()
+            announce("Describing \(row.name)")
+            let id = row.id
+            let box = UncheckedBox(value: asset)
+            describeTask = Task { [weak self] in
+                // Downloaded from iCloud if need be, since you asked for it.
+                guard let data = await PhotoData.request(box.value, allowNetwork: true)?.data else {
+                    self?.say("This photo couldn't be loaded", ifStillOn: id)
+                    return
+                }
+                do {
+                    guard let text = try await PhotoDescriber.describe(data), !text.isEmpty else {
+                        self?.say("Apple Intelligence returned an empty description", ifStillOn: id)
+                        return
+                    }
+                    self?.descriptions.remember(text, for: box.value)
+                    self?.say(text, ifStillOn: id)
+                } catch {
+                    self?.say(ImageConversation.message(for: error), ifStillOn: id)
+                }
+            }
+            return
+        }
+#endif
+        announce("Describing photos needs Apple Intelligence on macOS 27 or later.")
+    }
+
+    /// Spoken only if you're still on that photo and haven't asked about another since.
+    private func say(_ text: String, ifStillOn id: String) {
+        guard !Task.isCancelled, focusedRow?.id == id else { return }
+        announce(text)
+    }
+
 
     // MARK: - Gallery
 

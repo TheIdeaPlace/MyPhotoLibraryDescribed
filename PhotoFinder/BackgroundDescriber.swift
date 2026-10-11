@@ -64,7 +64,8 @@ final class BackgroundDescriber {
                 queue.finished(described: false)
                 continue
             }
-            guard let data = await Self.imageData(for: asset) else {
+            // Photos only in iCloud aren't downloaded for this.
+            guard let data = await PhotoData.request(asset, allowNetwork: false)?.data else {
                 queue.skippedNotOnThisMac()
                 continue
             }
@@ -103,20 +104,6 @@ final class BackgroundDescriber {
     private func announce(_ text: String) {
         guard NSApplication.shared.isActive else { return }
         AccessibilityNotification.Announcement(text).post()
-    }
-
-    /// The photo's data if it's on this Mac; photos only in iCloud aren't downloaded for this.
-    private static func imageData(for asset: PHAsset) async -> Data? {
-        let options = PHImageRequestOptions()
-        options.isNetworkAccessAllowed = false
-        options.version = .current
-        options.deliveryMode = .highQualityFormat
-        let box = UncheckedBox(value: asset)
-        return await withCheckedContinuation { continuation in
-            PHImageManager.default().requestImageDataAndOrientation(for: box.value, options: options) { data, _, _, _ in
-                continuation.resume(returning: data)
-            }
-        }
     }
 }
 

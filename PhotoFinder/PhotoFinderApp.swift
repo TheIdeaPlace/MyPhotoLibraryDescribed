@@ -17,6 +17,10 @@ struct PhotoFinderApp: App {
                 }
         }
         .commands { PhotoCommands(model: model) }
+
+        Settings {
+            SettingsView()
+        }
     }
 }
 
@@ -80,6 +84,8 @@ struct PhotoCommands: Commands {
             Button("Edit Caption…") { model.editCaption() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             Divider()
+            Button("Describe Photo") { model.describeFocusedPhoto() }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
             Toggle("Describe New Photos in the Background", isOn: Binding(
                 get: { model.describeInBackground },
                 set: { model.setDescribeInBackground($0) }

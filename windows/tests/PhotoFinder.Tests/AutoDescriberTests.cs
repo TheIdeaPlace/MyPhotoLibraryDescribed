@@ -386,6 +386,152 @@ public sealed class AutoDescriberTests : IDisposable
             Assert.Equal(["a.jpg:brief"], _described);
         }
     }
+
+    // MARK: Describe Photo (Ctrl+Shift+D)
+
+    private static readonly Settings ManualOnly = new() { AutoDescribe = false };
+
+    [WpfFact]
+    public async Task DescribeNow_WithAutomaticOff_DescribesSpeaksAndSaves_ThenSpeaksTheSavedOne()
+    {
+        var (model, auto, store) = await StartAsync(settings: ManualOnly);
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await Settle(auto);
+            Assert.Empty(_described);
+            var row = model.FocusedRow!;
+            await auto.DescribeNowAsync(row, () => true);
+            Assert.Equal(["a.jpg:accessible"], _described);
+            Assert.Contains("Describing a.jpg", _announced);
+            Assert.Equal("A picture called a.jpg.", _announced[^1]);
+            Assert.Equal("A picture called a.jpg.", row.Description);
+            Assert.Equal("A picture called a.jpg.", store.Get(row.Item!, "accessible"));
+
+            _announced.Clear();
+            await auto.DescribeNowAsync(row, () => true);
+            Assert.Single(_described);
+            Assert.Equal(["A picture called a.jpg."], _announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeNow_UsesTheChosenDescriptionType()
+    {
+        var (model, auto, _) = await StartAsync(settings: new Settings { AutoDescribe = false, DescriptionKind = "brief" });
+        using (model) using (auto)
+        {
+            Select(model, "b.jpg");
+            await auto.DescribeNowAsync(model.FocusedRow!, () => true);
+            Assert.Equal(["b.jpg:brief"], _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeNow_OnAVideo_SaysItCant()
+    {
+        var (model, auto, _) = await StartAsync(settings: ManualOnly);
+        using (model) using (auto)
+        {
+            Select(model, "clip.mp4");
+            await auto.DescribeNowAsync(model.FocusedRow!, () => true);
+            Assert.Empty(_described);
+            Assert.Contains("Videos can't be described.", _announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeNow_GetsTheModelReady_SinceYouAsked()
+    {
+        var (model, auto, _) = await StartAsync(new AIReadiness(false, "NotReady", "Needs downloading."), settings: ManualOnly);
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await auto.DescribeNowAsync(model.FocusedRow!, () => true);
+            Assert.Equal(1, _prepared);
+            Assert.Contains(_announced, a => a.StartsWith("Getting Windows' image description model ready"));
+            Assert.Equal(["a.jpg:accessible"], _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeNow_WithoutWindowsAI_SaysWhy()
+    {
+        var (model, auto, _) = await StartAsync(new AIReadiness(false, "NotSupportedOnCurrentSystem", "Needs a Copilot+ PC."), settings: ManualOnly);
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await auto.DescribeNowAsync(model.FocusedRow!, () => true);
+            Assert.Empty(_described);
+            Assert.Contains("This photo can't be described. Needs a Copilot+ PC.", _announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeNow_AfterYouMovedOn_SavesItButDoesntSpeakIt()
+    {
+        var (model, auto, store) = await StartAsync(settings: ManualOnly);
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            var row = model.FocusedRow!;
+            await auto.DescribeNowAsync(row, () => false);
+            Assert.DoesNotContain("A picture called a.jpg.", _announced);
+            Assert.Equal("A picture called a.jpg.", store.Get(row.Item!, "accessible"));
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeNow_PressedTwice_DescribesOnce()
+    {
+        var release = new TaskCompletionSource();
+        var (model, auto, _) = await StartAsync(settings: ManualOnly, describe: async item => { await release.Task; return "Once."; });
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            var row = model.FocusedRow!;
+            var first = auto.DescribeNowAsync(row, () => true);
+            await WaitUntil(() => _described.Count == 1);
+            var second = auto.DescribeNowAsync(row, () => true);
+            Assert.Contains("Still describing a.jpg", _announced);
+            release.SetResult();
+            await Task.WhenAll(first, second);
+            Assert.Single(_described);
+            Assert.Single(_announced, a => a == "Once.");
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeNow_WhileAutomaticIsDescribingThatPhoto_WaitsForItAndSpeaksIt()
+    {
+        var release = new TaskCompletionSource();
+        var (model, auto, _) = await StartAsync(describe: async item => { await release.Task; return "Shared."; });
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await WaitUntil(() => _described.Count == 1);
+            var manual = auto.DescribeNowAsync(model.FocusedRow!, () => true);
+            release.SetResult();
+            await manual;
+            await Settle(auto);
+            Assert.Single(_described);
+            Assert.Single(_announced, a => a == "Shared.");
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeNow_ACaughtFailureIsSpoken()
+    {
+        var (model, auto, _) = await StartAsync(settings: ManualOnly,
+            describe: _ => throw new DescriptionException("content_filtered", "Windows declined to describe this photo."));
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await auto.DescribeNowAsync(model.FocusedRow!, () => true);
+            Assert.Equal("Windows declined to describe this photo.", _announced[^1]);
+            Assert.False(auto.IsBusy);
+        }
+    }
 }
 
 public class DescriptionStoreTests

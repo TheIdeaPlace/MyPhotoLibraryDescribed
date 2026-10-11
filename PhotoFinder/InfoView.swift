@@ -166,10 +166,10 @@ enum PhotoMetadata {
         let asset = box.value
         var fields: [InfoField] = []
         if let location = asset.location, let place = await placeName(for: location) {
-            fields.append(InfoField(label: "Location", value: place))
+            fields.append(InfoField(label: "Place Taken", value: place))
         }
         var imageData: Data?
-        if asset.mediaType == .image, let (data, uti) = await requestImageData(box) {
+        if asset.mediaType == .image, let (data, uti) = await PhotoData.request(box.value, allowNetwork: true) {
             imageData = data
             if let uti, let type = UTType(uti) {
                 fields.append(InfoField(label: "File Type", value: type.localizedDescription ?? uti))
@@ -182,17 +182,6 @@ enum PhotoMetadata {
         return (fields, imageData)
     }
 
-    private static func requestImageData(_ box: UncheckedBox<PHAsset>) async -> (Data, String?)? {
-        let options = PHImageRequestOptions()
-        options.isNetworkAccessAllowed = true
-        options.version = .current
-        options.deliveryMode = .highQualityFormat
-        return await withCheckedContinuation { continuation in
-            PHImageManager.default().requestImageDataAndOrientation(for: box.value, options: options) { data, uti, _, _ in
-                continuation.resume(returning: data.map { ($0, uti) })
-            }
-        }
-    }
 
     private static func placeName(for location: CLLocation) async -> String? {
         guard let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }

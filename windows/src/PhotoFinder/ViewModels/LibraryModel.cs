@@ -662,8 +662,13 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         if (_settings.ExtraFolders.RemoveAll(f => f.Equals(root, StringComparison.OrdinalIgnoreCase)) == 0)
             _settings.RemovedFolders.Add(root);
         SaveSettings();
+        // Leave the folder first, so the rescan doesn't report it as having gone from the library by itself.
+        var inside = CurrentRoot is { } current && current.Equals(root, StringComparison.OrdinalIgnoreCase);
+        if (inside) Navigate(SidebarIds.AllPhotos, announce: false);
         await RescanAsync();
-        Announcer.Announce($"Removed {Path.GetFileName(root)} from Photo Finder");
+        Announcer.Announce(inside
+            ? $"Removed {Path.GetFileName(root)} from Photo Finder. Showing All Photos, {CountText(Rows.Count)}"
+            : $"Removed {Path.GetFileName(root)} from Photo Finder");
     }
 
     /// <summary>The library folder the current place is in, if it's a folder.</summary>
