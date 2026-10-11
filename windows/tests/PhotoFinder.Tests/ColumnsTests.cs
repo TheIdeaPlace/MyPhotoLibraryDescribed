@@ -282,3 +282,14 @@ public sealed class ColumnChoosingTests : IDisposable
         finally { window.Close(); }
     }
 }
+
+public class UpdatesTests
+{
+    [Fact]
+    public async Task WithoutThePackage_CheckingForUpdatesSaysItIsntInstalled()
+    {
+        // Tests run without package identity, as a development build does.
+        Assert.Null(Updates.PackageVersion);
+        Assert.Equal(Updates.State.NotInstalled, (await Updates.CheckAsync()).State);
+    }
+}

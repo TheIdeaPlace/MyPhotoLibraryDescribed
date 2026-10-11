@@ -135,6 +135,7 @@ public partial class MainWindow : Window
         Bind(AppCommands.ToggleFavorite, () => { if (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite")) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, EditCaption, HasFiles);
         Bind(AppCommands.About, ShowAbout);
+        Bind(AppCommands.CheckForUpdates, CheckForUpdates);
         Bind(AppCommands.ChooseColumns, ChooseColumns);
         Bind(AppCommands.AutoDescribe, () =>
         {
@@ -828,10 +829,44 @@ public partial class MainWindow : Window
 
     private void ShowAbout()
     {
-        var version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "";
+        var version = Services.Updates.PackageVersion ?? typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "";
         MessageBox.Show(this,
             $"Photo Finder {version}\n\nBrowse your Pictures library like folders in File Explorer, built to work well with screen readers.\n\nFolders in the library:\n{string.Join("\n", _model.Roots)}",
             "About Photo Finder", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private async void CheckForUpdates()
+    {
+        Services.Announcer.Announce("Checking for updates");
+        var result = await Services.Updates.CheckAsync();
+        switch (result.State)
+        {
+            case Services.Updates.State.NotInstalled:
+                MessageBox.Show(this, "This copy of Photo Finder wasn't installed with its installer, so it can't update itself.",
+                    "Check for Updates", MessageBoxButton.OK, MessageBoxImage.Information);
+                break;
+            case Services.Updates.State.UpToDate:
+                MessageBox.Show(this, $"Photo Finder is up to date (version {Services.Updates.PackageVersion}).",
+                    "Check for Updates", MessageBoxButton.OK, MessageBoxImage.Information);
+                break;
+            case Services.Updates.State.Failed:
+                ShowError($"Photo Finder couldn't check for updates. {result.Message}");
+                break;
+            case Services.Updates.State.Available:
+                if (MessageBox.Show(this, "A new version of Photo Finder is available. Install it now? Photo Finder closes while it updates.",
+                        "Check for Updates", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes) != MessageBoxResult.Yes)
+                    return;
+                // App Installer shows the update, closes Photo Finder, installs it and offers to open it again.
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(result.Source!.AbsoluteUri) { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    ShowError($"Photo Finder couldn't open the update. {ex.Message}");
+                }
+                break;
+        }
     }
 
     private void ShowError(string message) =>

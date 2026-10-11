@@ -40,7 +40,7 @@ These follow from what each operating system offers apps, and aren't gaps to clo
 - **Moving between panes.** Both have F6 and Shift+F6 (Go > Next Pane and Previous Pane on the Mac) for the sidebar, the list or gallery, search and the status bar, with Left and Right Arrow between status bar sections. On Windows the status bar is reached only with F6, not Tab, as in QuickMail; on the Mac, SwiftUI's focusable status sections may also be Tab stops.
 - **Gallery Home and End.** Windows' gallery goes to the first and last item with Home and End.
 - **Tests.** Windows has about 270 tests; the Mac has a handful (columns and the description cache). Mac CI can't compile the macOS 27 code until GitHub's runners have Xcode 27.
-- **Installer.** Windows has a test installer (`windows/scripts/package-test.ps1`). The Mac is built from Xcode.
+- **Installer.** Windows installs from a signed MSIX package through App Installer (`windows/scripts/build-msix.ps1`), with updates. The Mac is built from Xcode.
 
 ### On Windows, from the Mac
 

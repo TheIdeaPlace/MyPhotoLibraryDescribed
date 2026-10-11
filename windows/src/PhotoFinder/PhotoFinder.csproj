@@ -10,6 +10,8 @@
     <AssemblyName>PhotoFinder</AssemblyName>
     <RootNamespace>PhotoFinder</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The icon for the exe and its windows; the package's logos (packagingAssets) are drawn to match. -->
+    <ApplicationIcon>PhotoFinder.ico</ApplicationIcon>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 

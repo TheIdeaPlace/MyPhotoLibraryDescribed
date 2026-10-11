@@ -51,5 +51,6 @@ public static class AppCommands
     /// <summary>The number of stars is the command parameter. No shortcuts: Ctrl+digit belongs to the views.</summary>
     public static readonly RoutedUICommand Rate = Make("_Rating", nameof(Rate));
 
+    public static readonly RoutedUICommand CheckForUpdates = Make("Check for _Updates…", nameof(CheckForUpdates));
     public static readonly RoutedUICommand About = Make("_About Photo Finder", nameof(About));
 }

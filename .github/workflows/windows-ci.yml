@@ -22,7 +22,7 @@ jobs:
   build-and-test:
     # WPF and the Windows SDK projection need a Windows runner.
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: windows
@@ -51,3 +51,16 @@ jobs:
         with:
           name: test-results
           path: windows/TestResults
+
+      # The installer, unsigned: checks the package still builds and bundles for both architectures. Windows
+      # installs only signed packages, so this one is for looking at, not installing; signed builds are made
+      # with -Sign by an account that can use the kellyford-public certificate.
+      - name: Build the installer (unsigned)
+        shell: pwsh
+        run: ./scripts/build-msix.ps1 -Revision ${{ github.run_number }}
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-unsigned
+          path: windows/artifacts/msix
