@@ -485,7 +485,7 @@ public partial class MainWindow : Window
 
     // MARK: Panes
 
-    /// <summary>F6 and Shift+F6 move between the sidebar, the list or gallery, and search.</summary>
+    /// <summary>F6 and Shift+F6 move between the sidebar, the list or gallery, search and the status bar.</summary>
     private void MovePane(int direction)
     {
         var panes = new List<Action> { FocusSidebarSelection, FocusContent, () => SearchBox.Focus(), FocusStatusBar };

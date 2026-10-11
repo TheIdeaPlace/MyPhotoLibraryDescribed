@@ -305,9 +305,12 @@ public sealed class WindowTests : IDisposable
             Assert.True(await WaitFor(() => AutomationProperties.GetName(window.GalleryImage) == "a.jpg"));
             window.UpdateLayout();
 
+            // Tab from the photo goes through the footer in reading order: name, details, caption (no description
+            // yet), then Previous, the position and Next.
             var tabOrder = TabOrder(window);
-            foreach (var box in new Control[] { window.GalleryName, window.GalleryDetails, window.GalleryCaption, window.GalleryPositionText })
-                Assert.Contains(box, tabOrder);
+            var fromPhoto = tabOrder.SkipWhile(e => e != window.GalleryImage).Skip(1).Take(6).ToList();
+            Assert.Equal<DependencyObject>([window.GalleryName, window.GalleryDetails, window.GalleryCaption,
+                window.PreviousButton, window.GalleryPositionText, window.NextButton], fromPhoto);
             Assert.Equal("1 of 1", window.GalleryPositionText.Text);
             // The status bar is reached with F6, not Tab, as in QuickMail.
             Assert.DoesNotContain(tabOrder, e => e is TextBlock);
@@ -318,6 +321,10 @@ public sealed class WindowTests : IDisposable
             window.UpdateLayout();
             Assert.Equal([window.StatusBarText, window.BackgroundText], window.StatusSections());
             Assert.Equal(model.StatusText, window.StatusBarText.Text);
+            SetActivity(model, "Exporting…");
+            window.UpdateLayout();
+            Assert.Equal([window.StatusBarText, window.ActivityText, window.BackgroundText], window.StatusSections());
+            Assert.Equal("Exporting…", window.ActivityText.Text);
 
             // F6 from the gallery goes Search, then the status bar, then round to the sidebar.
             Assert.True(window.GalleryImage.Focus());
@@ -329,15 +336,20 @@ public sealed class WindowTests : IDisposable
 
             // Right and Left wrap through the sections.
             window.StatusBar_PreviewKeyDown(window.MainStatusBar, Press(System.Windows.Input.Key.Right));
+            Assert.True(window.ActivityText.IsKeyboardFocused);
+            window.StatusBar_PreviewKeyDown(window.MainStatusBar, Press(System.Windows.Input.Key.Right));
             Assert.True(window.BackgroundText.IsKeyboardFocused);
             window.StatusBar_PreviewKeyDown(window.MainStatusBar, Press(System.Windows.Input.Key.Right));
             Assert.True(window.StatusBarText.IsKeyboardFocused);
             window.StatusBar_PreviewKeyDown(window.MainStatusBar, Press(System.Windows.Input.Key.Left));
             Assert.True(window.BackgroundText.IsKeyboardFocused);
+            window.StatusBar_PreviewKeyDown(window.MainStatusBar, Press(System.Windows.Input.Key.Left));
+            Assert.True(window.ActivityText.IsKeyboardFocused);
 
-            // The section you're on going away leaves you in the status bar.
-            model.BackgroundProgress = null;
+            // The section you're on going away (the export finished) leaves you in the status bar.
+            SetActivity(model, null);
             Assert.True(await WaitFor(() => window.StatusBarText.IsKeyboardFocused));
+            model.BackgroundProgress = null;
 
             AppCommands.NextPane.Execute(null, window);
             Assert.True(window.Sidebar.IsKeyboardFocusWithin);
@@ -354,6 +366,9 @@ public sealed class WindowTests : IDisposable
             window.Close();
         }
     }
+
+    private static void SetActivity(LibraryModel model, string? activity) =>
+        typeof(LibraryModel).GetProperty(nameof(LibraryModel.Activity))!.SetValue(model, activity);
 
     /// <summary>A key press as WPF would deliver it to the focused element.</summary>
     private static KeyEventArgs Press(Key key) =>

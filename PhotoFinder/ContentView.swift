@@ -397,7 +397,7 @@ private struct StatusBar: View {
         }
     }
 
-    private var shown: [StatusSection] { StatusSection.allCases.filter { text($0) != nil } }
+    private var shown: [StatusSection] { StatusSection.allCases.filter { !(text($0) ?? "").isEmpty } }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -424,9 +424,13 @@ private struct StatusBar: View {
             pane.wrappedValue = .content
             return .handled
         }
-        // The section you're on went away (an export finished): stay in the status bar.
+        // The section you're on went away (an export finished): stay in the status bar. SwiftUI may clear focus
+        // before `shown` changes, so this watches focus too.
         .onChange(of: shown) {
             if case let .status(section)? = pane.wrappedValue, !shown.contains(section) { pane.wrappedValue = .status(.status) }
+        }
+        .onChange(of: pane.wrappedValue) { old, new in
+            if new == nil, case let .status(section)? = old, !shown.contains(section) { pane.wrappedValue = .status(.status) }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status bar")

@@ -137,10 +137,11 @@ public sealed class BackgroundDescriberTests : IDisposable
         {
             await model.AddFolderAsync(_added.Root);
             Assert.Equal("Describing photos in the background, 1 of 2", model.BackgroundProgress);
-            Assert.Contains("Describing photos in the background, 1 of 2", model.StatusBarText);
+            Assert.True(model.IsBusy);
             release.SetResult();
             await background.WhenIdleAsync();
-            Assert.DoesNotContain("background", model.StatusBarText);
+            Assert.Null(model.BackgroundProgress);
+            Assert.False(model.IsBusy);
         }
     }
 
