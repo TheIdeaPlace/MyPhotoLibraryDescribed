@@ -29,6 +29,14 @@ public partial class ColumnsDialog : Window
         _shown = Columns.Clean(shown);
         _sample = sample;
         InitializeComponent();
+        // Focus opens in the lists, past the explanation, so the lists carry it as their help text.
+        System.Windows.Automation.AutomationProperties.SetHelpText(ShownList, Explanation.Text);
+        System.Windows.Automation.AutomationProperties.SetHelpText(AvailableList, Explanation.Text);
+        // Alt+S and Alt+V focus the list itself, which WPF doesn't pass on to an item: put it on the selected one.
+        // Afterwards, not during: focus also lands on the list while it's rebuilding, and laying it out
+        // then crashes WPF.
+        ShownList.GotKeyboardFocus += (_, e) => { if (e.NewFocus == ShownList) Later(() => { if (ShownList.IsKeyboardFocused) FocusShown(); }); };
+        AvailableList.GotKeyboardFocus += (_, e) => { if (e.NewFocus == AvailableList) Later(() => { if (AvailableList.IsKeyboardFocused) FocusAvailable(); }); };
         Fill(shownIndex: 0, availableIndex: 0);
         Loaded += (_, _) => FocusShown();
     }
@@ -62,6 +70,8 @@ public partial class ColumnsDialog : Window
 
     private void ShowPreview() =>
         PreviewBox.Text = _sample is null ? "There's no photo here to preview." : _sample.SpokenWith(_shown);
+
+    private void Later(Action action) => Dispatcher.BeginInvoke(action, System.Windows.Threading.DispatcherPriority.Input);
 
     /// <summary>Keyboard focus on the selected row of Shown, so a screen reader reads where the column is now.</summary>
     private void FocusShown()

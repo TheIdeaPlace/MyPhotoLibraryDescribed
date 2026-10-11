@@ -19,6 +19,16 @@ public class ColumnOrderTests
     }
 
     [Fact]
+    public void OldSettings_EmptyGiveTheDefaults_AndNameCantBeTurnedOff()
+    {
+        Assert.Equal(Columns.DefaultOrder, new Settings().ShownColumnIds());
+        var old = new Settings();
+        old.Columns["name"] = false;
+        Assert.Contains("name", old.ShownColumnIds());
+        Assert.Equal(["name"], Columns.Clean(["name"]));
+    }
+
+    [Fact]
     public void DefaultOrder_IsNameThenTheDefaultColumns()
     {
         Assert.Equal(["name", "date", "kind", "caption", "dimensions", "duration", "favorite"], Columns.DefaultOrder);
@@ -192,6 +202,23 @@ public sealed class ColumnChoosingTests : IDisposable
             Assert.Contains($"Columns reset to the default: {Columns.DefaultOrder.Count} shown, Name first.", _announced);
         }
         finally { d.Close(); }
+    }
+
+    [WpfFact]
+    public async Task ColumnWidths_SurviveAReorder()
+    {
+        var model = await StartAsync();
+        var window = new MainWindow(model) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            var caption = window.ListColumns.Columns.Single(c => (string)((GridViewColumnHeader)c.Header).Tag == "caption");
+            caption.Width = 333;
+            model.SetColumnOrder(["caption", "name"]);
+            var moved = window.ListColumns.Columns.Single(c => (string)((GridViewColumnHeader)c.Header).Tag == "caption");
+            Assert.Equal(333, moved.Width);
+        }
+        finally { window.Close(); }
     }
 
     [WpfFact]

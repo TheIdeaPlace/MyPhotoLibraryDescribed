@@ -458,6 +458,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     public void SetColumnOrder(IEnumerable<string> ids)
     {
         _settings.ColumnOrder = Columns.Clean(ids);
+        _settings.Columns.Clear();   // the old on/off choices, now carried by ColumnOrder
         SaveSettings();
         FileRow.SpokenColumns = _settings.ColumnOrder;
         foreach (var row in Rows) row.NotifyAccessibleName();

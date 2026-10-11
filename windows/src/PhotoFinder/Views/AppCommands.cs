@@ -24,8 +24,8 @@ public static class AppCommands
     public static readonly RoutedUICommand Find = Make("_Find", nameof(Find), new KeyGesture(Key.F, ModifierKeys.Control), new KeyGesture(Key.F3));
 
     public static readonly RoutedUICommand AsList = Make("as _List", nameof(AsList), new KeyGesture(Key.D2, ModifierKeys.Control));
-    public static readonly RoutedUICommand ChooseColumns = Make("C_hoose Columns…", nameof(ChooseColumns));
     public static readonly RoutedUICommand AsGallery = Make("as _Gallery", nameof(AsGallery), new KeyGesture(Key.D4, ModifierKeys.Control));
+    public static readonly RoutedUICommand ChooseColumns = Make("C_hoose Columns…", nameof(ChooseColumns));
 
     public static readonly RoutedUICommand EnclosingFolder = Make("_Enclosing Folder", nameof(EnclosingFolder),
         new KeyGesture(Key.Up, ModifierKeys.Alt));

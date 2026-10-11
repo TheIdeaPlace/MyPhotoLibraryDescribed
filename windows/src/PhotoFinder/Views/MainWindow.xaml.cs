@@ -60,7 +60,7 @@ public partial class MainWindow : Window
         model.PropertyChanged += Model_PropertyChanged;
         model.SelectionRequested += Model_SelectionRequested;
         model.ErrorRaised += message => ShowError(message);
-        model.ColumnsChanged += () => { BuildColumns(); BuildColumnsMenu(); };
+        model.ColumnsChanged += BuildColumns;
         model.SidebarRebuilding += () => _sidebarHadFocus = Sidebar.IsKeyboardFocusWithin;
         model.SidebarRebuilt += () => { if (_sidebarHadFocus) Dispatcher.BeginInvoke(FocusSidebarSelection, System.Windows.Threading.DispatcherPriority.Loaded); };
 
@@ -223,17 +223,14 @@ public partial class MainWindow : Window
     {
         var sample = _model.FocusedRow is { IsContainer: false } focused ? focused : _model.Rows.FirstOrDefault(r => !r.IsContainer);
         var before = _model.ShownColumns.Select(c => c.Id).ToList();
+        var returnTo = Keyboard.FocusedElement as IInputElement;
         var dialog = new ColumnsDialog(before, sample) { Owner = this };
-        var ok = dialog.ShowDialog() == true;
+        // The new order first, then focus back: the focused row reading in its new order is the confirmation,
+        // rather than the old order, a name change and an announcement all at once.
+        if (dialog.ShowDialog() == true && !dialog.ShownColumns.SequenceEqual(before)) _model.SetColumnOrder(dialog.ShownColumns);
+        // Back where it was (it can be opened from the sidebar or search); the list if that's gone.
+        if (returnTo is UIElement { IsVisible: true } element && element.Focus()) return;
         FocusContent();
-        if (!ok) return;
-        if (dialog.ShownColumns.SequenceEqual(before))
-        {
-            Services.Announcer.Announce("Columns unchanged");
-            return;
-        }
-        _model.SetColumnOrder(dialog.ShownColumns);
-        Services.Announcer.Announce($"Columns changed: {string.Join(", ", _model.ShownColumns.Select(c => c.Title))}");
     }
 
     private IEnumerable<MenuItem> ColumnToggleItems() => Columns.Optional.Select(column =>

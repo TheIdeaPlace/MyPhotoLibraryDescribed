@@ -4,7 +4,7 @@
         Title="Choose Columns" Width="660" Height="580" MinWidth="520" MinHeight="460"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False" PreviewKeyDown="Window_PreviewKeyDown">
     <DockPanel Margin="12">
-        <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,10"
+        <TextBlock x:Name="Explanation" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,10"
                    Text="Choose which columns the list shows, and in what order. Each photo is read in this order too: put Caption or Date Taken first to hear it before the file name." />
 
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
