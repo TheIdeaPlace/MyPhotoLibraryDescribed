@@ -58,7 +58,7 @@ It needs:
 
 - A Copilot+ PC (with an NPU) and a recent Windows 11.
 - The Windows App Runtime 1.8.
-- The helper installed. For development, in Developer Mode: `scripts\build-ai-helper.ps1 -Register`, then `photofinder-ai --check` should report `"state":"Ready"`.
+- The helper, which the installer puts in Photo Finder's own package. For development, in Developer Mode: `scripts\build-ai-helper.ps1 -Register`, then `photofinder-ai --check` should report `"state":"Ready"`.
 
 Without the helper, Get Info says why Describe Image isn't available, and everything else, Read Text included, works as usual.
 
@@ -77,14 +77,27 @@ dotnet test --solution PhotoFinder.sln
 
 Run the tests from PowerShell or cmd, not Git Bash: started from Git Bash, the AI helper answers every picture with an internal error (found in Image Description Toolkit; the cause isn't known). The Describe Image tests run only where the helper is installed and Windows' model is ready, and report themselves skipped everywhere else.
 
-## Test builds
+## Installing
 
-`scripts\package-test.ps1 -Destination <folder>` makes a test install for arm64 and x64: a folder, and a zip of it, with `Install.cmd` and `Uninstall.cmd`. Install puts Photo Finder in `%LOCALAPPDATA%\Programs\Photo Finder` for the current user (no admin), adds it to the Start menu, registers the AI helper on a Copilot+ PC with Developer Mode on (the helper isn't signed yet), and starts it. Running Install again updates it.
+Photo Finder installs as an MSIX package, Windows' own app format. Open **PhotoFinder.appinstaller** and Windows' App Installer shows Photo Finder with an Install button. It installs the Windows App Runtime first if the PC needs it, then Photo Finder for the PC's architecture (x64 or Arm64). Photo Finder is then in the Start menu, uninstalls from Settings > Apps like any app, and updates itself: Windows checks every few hours and installs a new build while Photo Finder isn't running, and Help > Check for Updates checks now. No admin rights or Developer Mode are needed, and the AI helper is part of the same package, so Describe Photo works on a Copilot+ PC straight away.
+
+To build it:
+
+```powershell
+cd windows
+.\scripts\build-msix.ps1 -Sign -Destination <folder> [-BaseUri https://...]
+```
+
+This writes `PhotoFinder.appinstaller`, `PhotoFinder_<version>.msixbundle` (x64 and Arm64) and `Dependencies\Microsoft.WindowsAppRuntime.1.8_<arch>.msix` (Microsoft's own, from the Windows App SDK). `-BaseUri` is where those files will be downloaded from and where updates are looked for. By default it's the destination folder itself, written into the .appinstaller as that exact path, so it works only on PCs where the same path exists (a OneDrive folder on your own PCs); to share Photo Finder with other people, give it an https address. `-Sign` signs the executables and the bundle with Kelly Ford's Azure Artifact Signing certificate (`scripts\sign-files.ps1`; it needs `az login` and the Artifact Signing client tools), which every Windows PC trusts. Windows won't install an unsigned package, so Windows CI builds one unsigned only to check the packaging. The version is `windows\VERSION` plus a fourth number from the git history (ten times the commit count, plus 1 to 9 for a build with uncommitted changes), so builds of main made here and by a workflow agree and count up. Testers should get builds of main.
+
+The package is laid out from `packaging\AppxManifest.xml` and `packaging\Assets` (the logos, drawn to match `src\PhotoFinder\PhotoFinder.ico`). The .appinstaller doesn't ask Windows to check for updates at every launch: that check stopped the helper's `photofinder-ai.exe` alias from starting. The installed app starts the helper from its own package folder instead of through the alias, so an older test install's helper or a development registration can't stand in for it.
+
+If you used the earlier test installer (Install.cmd), remove it once, from PowerShell: `Get-AppxPackage TheIdeaPlace.PhotoFinder.WindowsAI | Remove-AppxPackage`, then delete `%LOCALAPPDATA%\Programs\Photo Finder` and the Photo Finder shortcut in the Start menu's Programs folder. Your settings and descriptions in `%LOCALAPPDATA%\PhotoFinder` are kept and used by the installed app.
 
 ## Notes
 
 - Online-only OneDrive files keep their file dates in the list: reading their details would download them. Opening, previewing or Get Info downloads that one file; its details fill in the next time the library is refreshed (F5). Changing many files, or any online-only ones, asks first.
 - Captions and ratings are written through Windows' property handlers, so they work for the formats Windows can write: JPEG, PNG, HEIC, MP4 and MOV were tested. Photo Finder reads each change back and says which files it couldn't change, rather than claiming a save that didn't happen.
 - Writing a caption or rating keeps the file's modified date, so a photo without a Date Taken doesn't jump to today.
-- Photo details are saved to `%LOCALAPPDATA%\PhotoFinder` after the first read, so the library opens with its details already filled in. Settings are saved there too.
+- Photo details are saved to `%LOCALAPPDATA%\PhotoFinder` after the first read, so the library opens with its details already filled in. Settings and saved descriptions are kept there too. On a PC that didn't have that folder before, Windows keeps it inside Photo Finder's package data instead, and removes it when Photo Finder is uninstalled, saved descriptions included.
 - People and Windows Photos albums aren't available: Windows doesn't offer them to other apps.

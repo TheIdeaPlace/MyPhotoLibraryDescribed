@@ -135,6 +135,7 @@ public partial class MainWindow : Window
         Bind(AppCommands.ToggleFavorite, () => { if (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite")) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, EditCaption, HasFiles);
         Bind(AppCommands.About, ShowAbout);
+        Bind(AppCommands.CheckForUpdates, CheckForUpdates);
         Bind(AppCommands.ChooseColumns, ChooseColumns);
         Bind(AppCommands.AutoDescribe, () =>
         {
@@ -828,10 +829,69 @@ public partial class MainWindow : Window
 
     private void ShowAbout()
     {
-        var version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "";
+        var version = Services.Updates.PackageVersion ?? typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "";
         MessageBox.Show(this,
             $"Photo Finder {version}\n\nBrowse your Pictures library like folders in File Explorer, built to work well with screen readers.\n\nFolders in the library:\n{string.Join("\n", _model.Roots)}",
             "About Photo Finder", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private bool _updating;
+
+    private async void CheckForUpdates()
+    {
+        if (_updating)
+        {
+            Services.Announcer.Announce("Still checking for updates");
+            return;
+        }
+        _updating = true;
+        try
+        {
+            Services.Announcer.Announce("Checking for updates");
+            var result = await Services.Updates.CheckAsync();
+            switch (result.State)
+            {
+                case Services.Updates.State.NoIdentity:
+                    Inform("This copy of Photo Finder isn't installed, so it can't update itself.");
+                    break;
+                case Services.Updates.State.NotFromAppInstaller:
+                    Inform("Photo Finder was installed without PhotoFinder.appinstaller, so Windows doesn't know where its updates are. " +
+                           "Open PhotoFinder.appinstaller to install it again; your settings are kept.");
+                    break;
+                case Services.Updates.State.UpToDate:
+                    Inform($"Photo Finder is up to date (version {Services.Updates.PackageVersion}).");
+                    break;
+                case Services.Updates.State.Failed:
+                    ShowError($"Photo Finder couldn't check for updates. {result.Message}");
+                    break;
+                case Services.Updates.State.Available:
+                    await InstallUpdateAsync(result.Source!);
+                    break;
+            }
+        }
+        finally
+        {
+            _updating = false;
+        }
+
+        void Inform(string message) => MessageBox.Show(this, message, "Check for Updates", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private async Task InstallUpdateAsync(Uri source)
+    {
+        if (MessageBox.Show(this, "A new version of Photo Finder is available. Install it now? Photo Finder closes, updates, and opens again.",
+                "Check for Updates", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes) != MessageBoxResult.Yes)
+            return;
+        // Windows closes Photo Finder itself to install, without the usual closing steps, so nothing may be half written.
+        if (_model.IsWriting)
+        {
+            MessageBox.Show(this, "Photo Finder is still saving changes to your photos. Check for updates again when it's finished.",
+                "Check for Updates", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        _model.SaveCaches();
+        Services.Announcer.Announce("Downloading the update. Photo Finder will close and open again when it's ready.");
+        if (await Services.Updates.InstallAsync(source) is { } error) ShowError($"The update couldn't be installed. {error}");
     }
 
     private void ShowError(string message) =>

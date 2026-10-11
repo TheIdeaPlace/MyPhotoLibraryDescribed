@@ -82,6 +82,7 @@
                 <v:AppMenuItem Command="v:AppCommands.StopBackground" />
             </v:AppMenuItem>
             <v:AppMenuItem Header="_Help">
+                <v:AppMenuItem Command="v:AppCommands.CheckForUpdates" />
                 <v:AppMenuItem Command="v:AppCommands.About" />
             </v:AppMenuItem>
         </Menu>

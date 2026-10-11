@@ -282,3 +282,33 @@ public sealed class ColumnChoosingTests : IDisposable
         finally { window.Close(); }
     }
 }
+
+public class UpdatesTests
+{
+    [Fact]
+    public async Task WithoutThePackage_CheckingForUpdatesSaysItIsntInstalled()
+    {
+        // Tests run without package identity, as a development build does.
+        Assert.Null(Updates.PackageVersion);
+        Assert.Equal(Updates.State.NoIdentity, (await Updates.CheckAsync()).State);
+    }
+
+    [Fact]
+    public void WhatWindowsSays_BecomesWhatPhotoFinderSays()
+    {
+        var source = new Uri("https://example.com/PhotoFinder.appinstaller");
+        Assert.Equal(Updates.State.Available, Updates.FromAvailability(Windows.ApplicationModel.PackageUpdateAvailability.Available, null, source).State);
+        Assert.Equal(Updates.State.Available, Updates.FromAvailability(Windows.ApplicationModel.PackageUpdateAvailability.Required, null, source).State);
+        Assert.Equal(Updates.State.UpToDate, Updates.FromAvailability(Windows.ApplicationModel.PackageUpdateAvailability.NoUpdates, null, source).State);
+        var failed = Updates.FromAvailability(Windows.ApplicationModel.PackageUpdateAvailability.Unknown, null, source);
+        Assert.Equal(Updates.State.Failed, failed.State);
+        Assert.False(string.IsNullOrWhiteSpace(failed.Message));
+        Assert.Equal("Offline.", Updates.FromAvailability(Windows.ApplicationModel.PackageUpdateAvailability.Error, "Offline.", source).Message);
+    }
+
+    [Fact]
+    public void WithoutThePackage_TheHelperIsTheDevelopmentAlias()
+    {
+        Assert.Equal(WindowsAI.AliasPath, WindowsAI.HelperPath);
+    }
+}
