@@ -61,6 +61,9 @@ public sealed class AutoDescriber : IDisposable
     /// Set by the window; descriptions aren't made or spoken while it's false.</summary>
     public Func<bool> CanSpeak { get; set; } = () => true;
 
+    /// <summary>Describing, or about to (the pause after arrowing): background describing waits for this.</summary>
+    public bool IsBusy => _waiting || _running;
+
     public bool Enabled
     {
         get => _model.Settings.AutoDescribe;
