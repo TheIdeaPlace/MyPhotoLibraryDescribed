@@ -88,10 +88,11 @@ final class ImageConversation {
                 self.session = session
                 let image = self.image
                 // A question about a saved description starts a new conversation that knows what was said.
-                let prompt = if let question, let saved {
-                    "Earlier you described this photo like this: \(saved)\n\nNow answer this question about it: \(question)"
+                let prompt: String
+                if let question, let saved {
+                    prompt = "Earlier you described this photo like this: \(saved)\n\nNow answer this question about it: \(question)"
                 } else {
-                    question ?? Self.describePrompt
+                    prompt = question ?? Self.describePrompt
                 }
                 answer = try await session.respond {
                     prompt
