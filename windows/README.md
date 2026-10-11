@@ -72,6 +72,10 @@ dotnet test --solution PhotoFinder.sln
 
 Run the tests from PowerShell or cmd, not Git Bash: started from Git Bash, the AI helper answers every picture with an internal error (found in Image Description Toolkit; the cause isn't known). The Describe Image tests run only where the helper is installed and Windows' model is ready, and report themselves skipped everywhere else.
 
+## Test builds
+
+`scripts\package-test.ps1 -Destination <folder>` makes a test install for arm64 and x64: a folder, and a zip of it, with `Install.cmd` and `Uninstall.cmd`. Install puts Photo Finder in `%LOCALAPPDATA%\Programs\Photo Finder` for the current user (no admin), adds it to the Start menu, registers the AI helper on a Copilot+ PC with Developer Mode on (the helper isn't signed yet), and starts it. Running Install again updates it.
+
 ## Notes
 
 - Online-only OneDrive files keep their file dates in the list: reading their details would download them. Opening, previewing or Get Info downloads that one file; its details fill in the next time the library is refreshed (F5). Changing many files, or any online-only ones, asks first.
