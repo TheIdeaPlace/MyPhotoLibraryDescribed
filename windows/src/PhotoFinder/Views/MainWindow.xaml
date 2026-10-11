@@ -22,13 +22,10 @@
     </Window.Resources>
 
     <DockPanel>
-        <!-- Not in the Tab order: menu bars are reached with Alt or F10, as in every Windows app. -->
-        <Menu DockPanel.Dock="Top" x:Name="MainMenu" KeyboardNavigation.TabNavigation="None" Focusable="False">
-            <Menu.ItemContainerStyle>
-                <Style TargetType="MenuItem">
-                    <Setter Property="IsTabStop" Value="False" />
-                </Style>
-            </Menu.ItemContainerStyle>
+        <!-- Not in the Tab order: menu bars are reached with Alt or F10, as in every Windows app. Set on the
+             Menu only: marking its menus IsTabStop="False" as well stops the arrow keys moving between them,
+             because WPF's arrow navigation looks for tab stops too. -->
+        <Menu DockPanel.Dock="Top" x:Name="MainMenu" IsTabStop="False" KeyboardNavigation.TabNavigation="None">
             <MenuItem Header="_File">
                 <MenuItem Command="v:AppCommands.OpenItem" />
                 <MenuItem Command="v:AppCommands.Preview" InputGestureText="Space" />
@@ -75,6 +72,7 @@
                 </MenuItem>
                 <Separator />
                 <MenuItem Command="v:AppCommands.DescribeImage" />
+                <MenuItem x:Name="AutoDescribeItem" Command="v:AppCommands.AutoDescribe" IsCheckable="True" />
             </MenuItem>
             <MenuItem Header="_Help">
                 <MenuItem Command="v:AppCommands.About" />
@@ -161,6 +159,7 @@
 
             <Grid Grid.Column="2">
                 <v:FileListView x:Name="FileList" ItemsSource="{Binding Rows}" SelectionMode="Extended"
+                                KeyboardNavigation.TabNavigation="Once"
                                 AutomationProperties.Name="{Binding Title}"
                                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                 VirtualizingPanel.ScrollUnit="Item" BorderThickness="0"
@@ -214,6 +213,9 @@
                                          Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" AutomationProperties.Name="Details" />
                                 <TextBox x:Name="GalleryCaption" IsReadOnly="True" BorderThickness="0" Background="Transparent" IsTabStop="False"
                                          TextWrapping="Wrap" AutomationProperties.Name="Caption" />
+                                <TextBox x:Name="GalleryDescription" IsReadOnly="True" BorderThickness="0" Background="Transparent" IsTabStop="False"
+                                         TextWrapping="Wrap" MaxHeight="120" VerticalScrollBarVisibility="Auto"
+                                         AutomationProperties.Name="Description" Visibility="Collapsed" />
                             </StackPanel>
                         </DockPanel>
                     </Border>

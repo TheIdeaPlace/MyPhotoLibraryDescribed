@@ -9,6 +9,7 @@ namespace PhotoFinder.Models;
 public sealed class FileRow : INotifyPropertyChanged
 {
     private ImageSource? _thumbnail;
+    private string _description = "";
 
     /// <summary>The optional columns the list is showing, in order. Screen readers hear a row as its
     /// name followed by these, so what they hear matches what's on screen.</summary>
@@ -63,6 +64,13 @@ public sealed class FileRow : INotifyPropertyChanged
     {
         get => _thumbnail;
         set { _thumbnail = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Thumbnail))); }
+    }
+
+    /// <summary>Windows AI's description of the photo, once one has been made.</summary>
+    public string Description
+    {
+        get => _description;
+        set { _description = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Description))); }
     }
 
     /// <summary>What a screen reader hears for the row in the list.</summary>

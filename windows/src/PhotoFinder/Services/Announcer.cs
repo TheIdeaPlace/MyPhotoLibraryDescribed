@@ -16,7 +16,9 @@ public static class Announcer
     {
         if (string.IsNullOrWhiteSpace(text)) return;
         Observer?.Invoke(text);
-        var element = Application.Current?.MainWindow;
+        // From the window in front (Get Info, Preview or the main window): screen readers can ignore
+        // notifications from a window that isn't the active one.
+        var element = Application.Current?.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? Application.Current?.MainWindow;
         if (element is null) return;
         var peer = UIElementAutomationPeer.FromElement(element) ?? UIElementAutomationPeer.CreatePeerForElement(element);
         try

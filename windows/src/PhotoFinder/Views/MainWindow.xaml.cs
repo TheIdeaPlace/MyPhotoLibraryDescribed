@@ -24,6 +24,10 @@ public partial class MainWindow : Window
     private Point _dragStart;
     private bool _dragArmed;
     private string? _galleryShownId;
+    private FileRow? _galleryRow;
+
+    /// <summary>Speaks Windows AI descriptions of photos as they're arrowed to. Null where there's no helper (tests).</summary>
+    public AutoDescriber? AutoDescriber { get; init; }
 
     private static readonly Dictionary<string, string> ColumnProperties = new()
     {
@@ -124,6 +128,13 @@ public partial class MainWindow : Window
         Bind(AppCommands.ToggleFavorite, () => { if (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite")) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, EditCaption, HasFiles);
         Bind(AppCommands.About, ShowAbout);
+        Bind(AppCommands.AutoDescribe, () =>
+        {
+            if (AutoDescriber is null) return;
+            AutoDescriber.Enabled = !AutoDescriber.Enabled;
+            AutoDescribeItem.IsChecked = AutoDescriber.Enabled;
+        }, () => AutoDescriber is not null);
+        Loaded += (_, _) => AutoDescribeItem.IsChecked = AutoDescriber?.Enabled ?? false;
         CommandBindings.Add(new CommandBinding(AppCommands.Rate,
             (_, e) =>
             {
@@ -508,6 +519,14 @@ public partial class MainWindow : Window
         GalleryDetails.Text = string.Join(" · ", new[] { row.Kind, row.DateText, row.Dimensions }.Where(s => s.Length > 0));
         GalleryCaption.Text = row.Caption;
         GalleryCaption.Visibility = row.Caption.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // The description arrives a few seconds later, from automatic descriptions.
+        if (_galleryRow != row)
+        {
+            if (_galleryRow is not null) _galleryRow.PropertyChanged -= GalleryRow_PropertyChanged;
+            _galleryRow = row;
+            row.PropertyChanged += GalleryRow_PropertyChanged;
+        }
+        ShowGalleryDescription(row);
         AutomationProperties.SetName(GalleryImage, row.SpokenDescription);
         if (_galleryShownId == row.Id) return;
         _galleryShownId = row.Id;
@@ -522,6 +541,17 @@ public partial class MainWindow : Window
         if (_galleryShownId != row.Id) return;
         GalleryImage.Show(image, "This picture can't be shown.");
         CacheNeighbors();
+    }
+
+    private void GalleryRow_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(FileRow.Description) && sender is FileRow row && row == _galleryRow) ShowGalleryDescription(row);
+    }
+
+    private void ShowGalleryDescription(FileRow row)
+    {
+        GalleryDescription.Text = row.Description;
+        GalleryDescription.Visibility = row.Description.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private Task<ImageSource?> GalleryImageFor(MediaItem item)
@@ -596,7 +626,7 @@ public partial class MainWindow : Window
     {
         var row = _model.SelectedRows.FirstOrDefault(r => r.Item is not null && (!describe || !r.Item.IsVideo));
         if (row?.Item is null) { System.Media.SystemSounds.Beep.Play(); return; }
-        new InfoWindow(row, _model.Settings, _model.SaveSettings, describe) { Owner = this }.ShowDialog();
+        new InfoWindow(row, _model.Settings, _model.SaveSettings, describe, _model.Descriptions) { Owner = this }.ShowDialog();
         // The rows may have been rebuilt while it was open, so the element WPF would return to can be gone.
         FocusContent();
     }

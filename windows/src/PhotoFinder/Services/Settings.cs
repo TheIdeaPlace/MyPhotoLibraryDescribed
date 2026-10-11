@@ -18,6 +18,8 @@ public sealed class Settings
     /// <summary>Pictures library folders taken out of the app's library.</summary>
     public List<string> RemovedFolders { get; set; } = [];
     public string DescriptionKind { get; set; } = "accessible";
+    /// <summary>Describe each photo with Windows AI when it's arrowed to, and speak the description.</summary>
+    public bool AutoDescribe { get; set; } = true;
 
     public bool IsColumnVisible(ColumnInfo column) =>
         column.Id == Models.Columns.Name || (Columns.TryGetValue(column.Id, out var visible) ? visible : column.VisibleByDefault);

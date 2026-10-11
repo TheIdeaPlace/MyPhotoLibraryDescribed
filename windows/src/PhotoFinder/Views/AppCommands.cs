@@ -41,6 +41,8 @@ public static class AppCommands
         new KeyGesture(Key.F2), new KeyGesture(Key.E, ModifierKeys.Control | ModifierKeys.Shift));
     public static readonly RoutedUICommand DescribeImage = Make("_Describe Image…", nameof(DescribeImage),
         new KeyGesture(Key.D, ModifierKeys.Control | ModifierKeys.Shift));
+    public static readonly RoutedUICommand AutoDescribe = Make("Describe Photos _Automatically", nameof(AutoDescribe),
+        new KeyGesture(Key.U, ModifierKeys.Control | ModifierKeys.Shift));
 
     /// <summary>The number of stars is the command parameter. No shortcuts: Ctrl+digit belongs to the views.</summary>
     public static readonly RoutedUICommand Rate = Make("_Rating", nameof(Rate));

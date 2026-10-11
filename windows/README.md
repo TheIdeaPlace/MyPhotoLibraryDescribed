@@ -15,6 +15,7 @@ On Windows your photo library is ordinary files, so Photo Finder reads the **Pic
 - **Get Info** shows the date, location coordinates, camera, lens and exposure details. Its *Image Contents* section has:
   - **Describe Image**, which describes the photo with Windows' on-device AI on Copilot+ PCs (`Microsoft.Windows.AI.Imaging`). Choose Accessible, Detailed, Brief or Diagram descriptions. The photo isn't sent anywhere.
   - **Read Text in Image**, which reads any text in the photo with Windows' built-in text recognition, on any Windows 10 or 11 PC.
+- **Automatic descriptions**: on a Copilot+ PC, arrow to a photo and pause, and Photo Finder describes it with Windows AI and speaks the description (a UIA notification, so JAWS, NVDA and Narrator read it without moving focus). Descriptions are saved, so going back to a photo speaks at once, and arrowing quickly past photos only describes the one you stop on. The description also shows in the gallery and in Get Info. It uses the description type last chosen in Get Info; Brief keeps it short. Turn it off with Photo > Describe Photos Automatically (Ctrl+Shift+U).
 - **Open, Copy, Export, Show in File Explorer and drag** work on the files themselves. Export never overwrites: a second copy of `IMG_1.JPG` becomes `IMG_1 2.JPG`.
 - Folders, years and months also appear as rows in the list, so you can move through the library like File Explorer.
 - Screen readers hear the results of navigation, sorting, exports, copies and favorite changes.
@@ -28,6 +29,7 @@ On Windows your photo library is ordinary files, so Photo Finder reads the **Pic
 | Preview | Space or Ctrl+Y |
 | Get Info | Ctrl+I or Alt+Enter |
 | Describe Image (opens Get Info and starts describing) | Ctrl+Shift+D |
+| Turn automatic descriptions on or off | Ctrl+Shift+U |
 | Copy the files (paste them into File Explorer, Mail and so on) | Ctrl+C |
 | Export to a folder | Ctrl+E |
 | Show in File Explorer | Ctrl+Shift+R |
@@ -41,7 +43,7 @@ On Windows your photo library is ordinary files, so Photo Finder reads the **Pic
 | Go to All Photos | Ctrl+Shift+A |
 | Refresh | F5 |
 
-In the sidebar, Enter moves to the list.
+In the sidebar, Enter moves to the list. The menu bar isn't in the Tab order: Alt or F10 opens it, then the arrow keys move along it.
 
 ## Describe Image and the AI helper
 

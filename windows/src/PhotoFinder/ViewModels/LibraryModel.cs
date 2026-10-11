@@ -61,6 +61,9 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     public IReadOnlyList<MediaItem> AllItems => _items;
     public Settings Settings => _settings;
 
+    /// <summary>Saved Windows AI descriptions, shared by automatic descriptions and Get Info.</summary>
+    public DescriptionStore? Descriptions { get; init; }
+
     public SidebarItem? CurrentSource
     {
         get => _currentSource;
