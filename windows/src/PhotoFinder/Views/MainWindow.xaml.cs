@@ -146,6 +146,7 @@ public partial class MainWindow : Window
             BackgroundDescriber.Enabled = !BackgroundDescriber.Enabled;
             BackgroundDescribeItem.IsChecked = BackgroundDescriber.Enabled;
         }, () => BackgroundDescriber is not null);
+        Bind(AppCommands.StopBackground, () => BackgroundDescriber?.Stop(), () => BackgroundDescriber?.IsRunning == true);
         Loaded += (_, _) =>
         {
             BackgroundDescribeItem.IsChecked = BackgroundDescriber?.Enabled ?? false;

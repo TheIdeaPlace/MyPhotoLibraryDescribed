@@ -41,7 +41,7 @@ These follow from what each operating system offers apps, and aren't gaps to clo
 - **Search result count.** Windows speaks how many results a search found. The Mac doesn't announce it.
 - **Moving between panes.** Windows has F6 and Shift+F6 for sidebar, list and search. The Mac relies on Tab and VoiceOver.
 - **Gallery Home and End.** Windows' gallery goes to the first and last item with Home and End.
-- **Tests and CI.** Windows has about 255 tests and a CI build. The Mac has none.
+- **Tests and CI.** Windows has about 270 tests and a CI build. The Mac has none.
 - **Installer.** Windows has a test installer (`windows/scripts/package-test.ps1`). The Mac is built from Xcode.
 
 ### On Windows, from the Mac

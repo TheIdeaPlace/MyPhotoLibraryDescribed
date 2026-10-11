@@ -28,6 +28,7 @@ public partial class App : Application
             LibraryRoots.PicturesLibraryAsync) { Descriptions = descriptions };
         var autoDescriber = new AutoDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
         var backgroundDescriber = new BackgroundDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
+        backgroundDescriber.ForegroundBusy = () => autoDescriber.IsBusy;
         MainWindow = new MainWindow(model) { AutoDescriber = autoDescriber, BackgroundDescriber = backgroundDescriber };
         MainWindow.Show();
     }

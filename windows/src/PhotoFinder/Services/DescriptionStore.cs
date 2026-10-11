@@ -27,11 +27,32 @@ public sealed class DescriptionStore
         lock (_lock) return Entries.TryGetValue(Key(item, kind), out var text) ? text : null;
     }
 
+    private bool _saveScheduled;
+
     public void Put(MediaItem item, string kind, string text)
     {
         lock (_lock) Entries[Key(item, kind)] = text;
-        Task.Run(Save);
+        ScheduleSave();
     }
+
+    /// <summary>Saves a couple of seconds after the last change, not after every one: background describing adds
+    /// descriptions one after another, and rewriting the whole file each time adds up fast.</summary>
+    private void ScheduleSave()
+    {
+        lock (_lock)
+        {
+            if (_saveScheduled) return;
+            _saveScheduled = true;
+        }
+        Task.Delay(SaveDelay).ContinueWith(_ =>
+        {
+            lock (_lock) _saveScheduled = false;
+            Save();
+        });
+    }
+
+    /// <summary>How long after a change it's saved. Short in tests.</summary>
+    internal TimeSpan SaveDelay { get; init; } = TimeSpan.FromSeconds(2);
 
     /// <summary>Keeps a file's descriptions when Photo Finder itself changes the file (a caption, rating or
     /// favorite), which changes its size and date but not the picture.</summary>
@@ -47,7 +68,7 @@ public sealed class DescriptionStore
                 moved = true;
             }
         }
-        if (moved) Task.Run(Save);
+        if (moved) ScheduleSave();
     }
 
     public void Save()

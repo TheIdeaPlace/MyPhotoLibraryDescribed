@@ -5,12 +5,15 @@ namespace PhotoFinder.ViewModels;
 
 /// <summary>
 /// Describes the photos in a folder behind the scenes when the folder is added to the library (a setting, off
-/// until turned on), so their descriptions are ready, and spoken at once, when you arrow to them.
+/// until turned on), so their descriptions are ready when you arrow to them, spoken after the usual short pause
+/// without waiting for Windows AI.
 ///
-/// One photo at a time, saving each to the same store automatic descriptions and Get Info use. Photos already
-/// described, videos, and online-only cloud photos (describing would download them) are skipped. Progress is in
-/// the status bar, and finishing is announced. It stops when the app closes; the photos it hadn't reached are
-/// described when you arrow to them, as usual.
+/// - One photo at a time, into the same store automatic descriptions and Get Info use.
+/// - Photos are queued by path and looked up again when their turn comes, so a folder removed meanwhile is
+///   skipped and a photo Photo Finder edited is described under its current details.
+/// - Arrowing comes first: a photo isn't started while automatic descriptions are describing or about to.
+/// - Already described photos, videos, and online-only cloud photos (describing would download them) are skipped.
+/// - Progress is in the status bar, finishing a folder is announced, and Photo > Stop Background Describing stops it.
 /// </summary>
 public sealed class BackgroundDescriber : IDisposable
 {
@@ -19,12 +22,13 @@ public sealed class BackgroundDescriber : IDisposable
     private readonly AutoDescriber.DescribeFunc _describe;
     private readonly Func<CancellationToken, Task<AIReadiness>> _check;
     private readonly Func<CancellationToken, Task<AIReadiness>> _prepare;
-    private readonly Queue<(MediaItem Item, string Folder)> _queue = new();
+    private readonly Queue<(string Path, string Folder)> _queue = new();
+    private readonly HashSet<string> _queued = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _perFolder = new(StringComparer.OrdinalIgnoreCase);
     private readonly CancellationTokenSource _closing = new();
     private Task _running = Task.CompletedTask;
     private int _total;
     private int _done;
-    private readonly Dictionary<string, int> _perFolder = new(StringComparer.OrdinalIgnoreCase);
 
     public BackgroundDescriber(LibraryModel model, DescriptionStore store, AutoDescriber.DescribeFunc describe,
         Func<CancellationToken, Task<AIReadiness>> check, Func<CancellationToken, Task<AIReadiness>> prepare)
@@ -34,11 +38,28 @@ public sealed class BackgroundDescriber : IDisposable
         _describe = describe;
         _check = check;
         _prepare = prepare;
-        _model.FolderAdded += FolderAdded;
+        _model.FolderAdded += (folder, paths) => Busy(FolderAddedAsync(folder, paths));
     }
 
-    /// <summary>For tests: finishes when the queue is empty.</summary>
-    internal Task Idle => _running;
+    /// <summary>True while automatic descriptions are describing, or about to: arrowing comes first.</summary>
+    public Func<bool> ForegroundBusy { get; set; } = () => false;
+
+    public bool IsRunning => !_running.IsCompleted;
+
+    private readonly List<Task> _busy = [];
+
+    private void Busy(Task task)
+    {
+        _busy.RemoveAll(t => t.IsCompleted);
+        _busy.Add(task);
+    }
+
+    /// <summary>For tests: finishes once nothing is being checked, queued or described.</summary>
+    internal async Task WhenIdleAsync()
+    {
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while ((IsRunning || _busy.Any(t => !t.IsCompleted)) && DateTime.UtcNow < until) await Task.Delay(10);
+    }
 
     public bool Enabled
     {
@@ -49,13 +70,33 @@ public sealed class BackgroundDescriber : IDisposable
             _model.SaveSettings();
             if (!value)
             {
-                _queue.Clear();
-                Announcer.Announce("Added folders won't be described in the background");
+                var stopped = StopQueue();
+                Announcer.Announce(stopped > 0
+                    ? $"Background describing off. Stopped with {Plural(stopped)} not described."
+                    : "Added folders won't be described in the background");
                 return;
             }
             Announcer.Announce("Folders you add will be described in the background");
-            _ = CheckWhenTurnedOnAsync();
+            Busy(CheckWhenTurnedOnAsync());
         }
+    }
+
+    /// <summary>Photo > Stop Background Describing: stops this run, leaving the setting on for folders added later.</summary>
+    public void Stop()
+    {
+        var stopped = StopQueue();
+        Announcer.Announce(stopped > 0 ? $"Stopped describing in the background. {Plural(stopped)} not described." : "Nothing is being described in the background");
+    }
+
+    /// <summary>Empties the queue (the photo being described finishes) and returns how many were left.</summary>
+    private int StopQueue()
+    {
+        var left = _queue.Count;
+        _queue.Clear();
+        _queued.Clear();
+        _perFolder.Clear();
+        if (!IsRunning) Finish();
+        return left;
     }
 
     /// <summary>Turned on by the person: say now if it can't work, or get the model ready if that's all it needs.</summary>
@@ -72,91 +113,105 @@ public sealed class BackgroundDescriber : IDisposable
             if (readiness.State != "Ready")
                 Announcer.Announce($"Photos can't be described in the background. {readiness.Message}");
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (_closing.IsCancellationRequested)
         {
             // Closing.
         }
+        catch (Exception ex)
+        {
+            Announcer.Announce($"Photos can't be described in the background. {ex.Message}");
+        }
     }
 
-    private void FolderAdded(string folder, IReadOnlyList<MediaItem> items)
+    private async Task FolderAddedAsync(string folder, IReadOnlyList<string> paths)
     {
         if (!Enabled) return;
+        AIReadiness readiness;
+        try { readiness = await _check(_closing.Token); }
+        catch (Exception) { return; }
+        // Turning the setting on already said why it can't work; adding a folder shouldn't promise anything.
+        if (readiness.State != "Ready") return;
+
         var kind = _model.Settings.DescriptionKind;
-        var name = Path.GetFileName(folder);
-        var todo = items.Where(i => !i.IsVideo && !i.IsOnlineOnly && _store.Get(i, kind) is null).ToList();
+        var items = _model.AllItems.ToDictionary(i => i.Path, StringComparer.OrdinalIgnoreCase);
+        var todo = paths
+            .Where(p => MediaTypes.KindOf(p) == MediaKind.Image && !_queued.Contains(p))
+            .Where(p => !items.TryGetValue(p, out var item) || (!item.IsOnlineOnly && _store.Get(item, kind) is null))
+            .ToList();
         if (todo.Count == 0) return;
-        foreach (var item in todo) _queue.Enqueue((item, name));
-        _perFolder[name] = _perFolder.GetValueOrDefault(name) + todo.Count;
+        foreach (var path in todo)
+        {
+            _queue.Enqueue((path, folder));
+            _queued.Add(path);
+        }
+        _perFolder[folder] = _perFolder.GetValueOrDefault(folder) + todo.Count;
         _total += todo.Count;
-        Announcer.AnnounceAfter($"Describing {Plural(todo.Count)} from {name} in the background", "PhotoFinderBackground");
+        Announcer.AnnounceAfter($"Describing {Plural(todo.Count)} from {DisplayName(folder)} in the background", "PhotoFinderBackground");
         ShowProgress();
-        if (_running.IsCompleted) _running = RunAsync();
+        if (!IsRunning) _running = RunAsync();
     }
 
     private async Task RunAsync()
     {
-        try
+        while (_queue.Count > 0 && !_closing.IsCancellationRequested)
         {
-            var readiness = await _check(_closing.Token);
-            if (readiness.State != "Ready")
+            // Arrowing comes first: wait while automatic descriptions are describing or about to.
+            while (ForegroundBusy() && !_closing.IsCancellationRequested)
             {
-                // Turning the setting on already said why; adding a folder shouldn't keep saying it.
-                _queue.Clear();
-                Finish();
-                return;
+                try { await Task.Delay(250, _closing.Token); }
+                catch (OperationCanceledException) { return; }
             }
-            while (_queue.Count > 0 && !_closing.IsCancellationRequested)
+            if (_queue.Count == 0) break;
+            var (path, folder) = _queue.Dequeue();
+            _queued.Remove(path);
+            ShowProgress();
+            // Looked up now, not when queued: the folder may have been removed, or the photo edited.
+            var item = _model.AllItems.FirstOrDefault(i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
+            var kind = _model.Settings.DescriptionKind;
+            if (item is { IsVideo: false, IsOnlineOnly: false } && _store.Get(item, kind) is null)
             {
-                var (item, folder) = _queue.Dequeue();
-                var kind = _model.Settings.DescriptionKind;
-                if (_store.Get(item, kind) is null)
+                try
                 {
-                    try
-                    {
-                        var text = await _describe(item, kind, _closing.Token);
-                        if (text.Length > 0) _store.Put(item, kind, text);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        throw;
-                    }
-                    catch (Exception)
-                    {
-                        // One photo that can't be described (filtered, unreadable) doesn't stop the rest.
-                    }
+                    var text = await _describe(item, kind, _closing.Token);
+                    if (text.Length > 0) _store.Put(item, kind, text);
                 }
-                _done++;
-                ShowProgress();
-                if (_perFolder.ContainsKey(folder) && --_perFolder[folder] == 0)
+                catch (OperationCanceledException) when (_closing.IsCancellationRequested)
                 {
-                    _perFolder.Remove(folder);
-                    Announcer.AnnounceAfter($"Finished describing the photos in {folder}", "PhotoFinderBackground");
+                    return;
+                }
+                catch (Exception)
+                {
+                    // One photo that can't be described (filtered, unreadable, timed out) doesn't stop the rest.
                 }
             }
-        }
-        catch (OperationCanceledException)
-        {
-            return;
+            _done++;
+            if (_perFolder.ContainsKey(folder) && --_perFolder[folder] == 0)
+            {
+                _perFolder.Remove(folder);
+                if (_model.Roots.Any(r => r.Equals(folder, StringComparison.OrdinalIgnoreCase) || LibraryScanner.IsInside(folder, r)))
+                    Announcer.AnnounceAfter($"Finished describing the photos in {DisplayName(folder)}", "PhotoFinderBackground");
+            }
         }
         Finish();
     }
 
     private void ShowProgress() =>
-        _model.BackgroundProgress = $"Describing photos in the background, {Math.Min(_done + 1, _total):N0} of {_total:N0}";
+        _model.BackgroundProgress = $"Describing photos in the background, {Math.Min(_done + 1, Math.Max(_total, 1)):N0} of {_total:N0}";
 
     private void Finish()
     {
         _total = 0;
         _done = 0;
-        _perFolder.Clear();
         _model.BackgroundProgress = null;
     }
+
+    private static string DisplayName(string folder) => Path.GetFileName(Path.TrimEndingDirectorySeparator(folder)) is { Length: > 0 } name ? name : folder;
 
     private static string Plural(int count) => count == 1 ? "1 photo" : $"{count:N0} photos";
 
     public void Dispose()
     {
-        _model.FolderAdded -= FolderAdded;
         _closing.Cancel();
+        _store.Save();
     }
 }

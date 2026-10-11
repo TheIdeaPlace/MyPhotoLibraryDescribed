@@ -56,7 +56,7 @@ public sealed class BackgroundDescriberTests : IDisposable
         using (model) using (background)
         {
             await model.AddFolderAsync(_added.Root);
-            await background.Idle;
+            await background.WhenIdleAsync();
             Assert.Equal(["a.jpg", "b.jpg"], _described.Order());
             var a = model.AllItems.Single(i => i.Name == "a.jpg");
             Assert.Equal("About a.jpg", store.Get(a, "accessible"));
@@ -75,7 +75,7 @@ public sealed class BackgroundDescriberTests : IDisposable
         using (model) using (background)
         {
             await model.AddFolderAsync(_added.Root);
-            await background.Idle;
+            await background.WhenIdleAsync();
             Assert.Empty(_described);
         }
     }
@@ -89,7 +89,7 @@ public sealed class BackgroundDescriberTests : IDisposable
             var info = new FileInfo(_added.PathOf("a.jpg"));
             store.Put(new MediaItem(info.FullName, info.Length, info.CreationTime, info.LastWriteTime), "accessible", "Already");
             await model.AddFolderAsync(_added.Root);
-            await background.Idle;
+            await background.WhenIdleAsync();
             Assert.Equal(["b.jpg"], _described);
         }
     }
@@ -102,7 +102,7 @@ public sealed class BackgroundDescriberTests : IDisposable
         using (model) using (background)
         {
             await model.AddFolderAsync(_added.Root);
-            await background.Idle;
+            await background.WhenIdleAsync();
             Assert.Equal(2, _described.Count);
             Assert.Equal("Fine", store.Get(model.AllItems.Single(i => i.Name == "b.jpg"), "accessible"));
         }
@@ -115,13 +115,15 @@ public sealed class BackgroundDescriberTests : IDisposable
         using (model) using (background)
         {
             await model.AddFolderAsync(_added.Root);
-            await background.Idle;
+            await background.WhenIdleAsync();
             Assert.Empty(_described);
             Assert.DoesNotContain(_announced, s => s.Contains("Copilot+"));
             Assert.Null(model.BackgroundProgress);
 
+            Assert.DoesNotContain(_announced, s => s.StartsWith("Describing"));
+
             background.Enabled = true;
-            await Task.Delay(100);
+            await background.WhenIdleAsync();
             Assert.Contains(_announced, s => s.Contains("Needs a Copilot+ PC."));
         }
     }
@@ -137,9 +139,124 @@ public sealed class BackgroundDescriberTests : IDisposable
             Assert.Equal("Describing photos in the background, 1 of 2", model.BackgroundProgress);
             Assert.Contains("Describing photos in the background, 1 of 2", model.StatusBarText);
             release.SetResult();
-            await background.Idle;
+            await background.WhenIdleAsync();
             Assert.DoesNotContain("background", model.StatusBarText);
         }
+    }
+
+    [WpfFact]
+    public async Task RemovingTheFolderMidRun_SkipsTheRest()
+    {
+        var release = new TaskCompletionSource();
+        var (model, background, _) = await StartAsync(enabled: true, describe: async _ => { await release.Task; return "Done"; });
+        using (model) using (background)
+        {
+            await model.AddFolderAsync(_added.Root);
+            await WaitUntil(() => _described.Count == 1);
+            await model.RemoveFolderAsync(_added.Root);
+            release.SetResult();
+            await background.WhenIdleAsync();
+            Assert.Single(_described);
+            Assert.DoesNotContain(_announced, s => s.StartsWith("Finished describing"));
+            Assert.Null(model.BackgroundProgress);
+        }
+    }
+
+    [WpfFact]
+    public async Task Stop_EmptiesTheQueue_SaysHowManyWereLeft_AndKeepsTheSetting()
+    {
+        var release = new TaskCompletionSource();
+        var (model, background, _) = await StartAsync(enabled: true, describe: async _ => { await release.Task; return "Done"; });
+        using (model) using (background)
+        {
+            await model.AddFolderAsync(_added.Root);
+            await WaitUntil(() => _described.Count == 1);
+            Assert.True(background.IsRunning);
+            background.Stop();
+            Assert.Contains("Stopped describing in the background. 1 photo not described.", _announced);
+            release.SetResult();
+            await background.WhenIdleAsync();
+            Assert.Single(_described);
+            Assert.Null(model.BackgroundProgress);
+            Assert.True(background.Enabled);
+        }
+    }
+
+    [WpfFact]
+    public async Task TurningItOffMidRun_SaysItStopped()
+    {
+        var release = new TaskCompletionSource();
+        var (model, background, _) = await StartAsync(enabled: true, describe: async _ => { await release.Task; return "Done"; });
+        using (model) using (background)
+        {
+            await model.AddFolderAsync(_added.Root);
+            await WaitUntil(() => _described.Count == 1);
+            background.Enabled = false;
+            Assert.Contains("Background describing off. Stopped with 1 photo not described.", _announced);
+            release.SetResult();
+            await background.WhenIdleAsync();
+            Assert.Single(_described);
+        }
+    }
+
+    [WpfFact]
+    public async Task AddingTheSameFolderTwice_DoesntDescribeAnythingTwice()
+    {
+        var release = new TaskCompletionSource();
+        var (model, background, _) = await StartAsync(enabled: true, describe: async _ => { await release.Task; return "Done"; });
+        using (model) using (background)
+        {
+            await model.AddFolderAsync(_added.Root);
+            await WaitUntil(() => _described.Count == 1);
+            await model.AddFolderAsync(_added.Root);
+            release.SetResult();
+            await background.WhenIdleAsync();
+            Assert.Equal(2, _described.Count);
+            Assert.Equal(_described.Count, _described.Distinct().Count());
+        }
+    }
+
+    [WpfFact]
+    public async Task ASecondFolderAddedMidRun_IsDescribedToo_AndEachIsAnnounced()
+    {
+        using var second = new TestLibrary();
+        second.AddJpeg("c.jpg");
+        var release = new TaskCompletionSource();
+        var (model, background, _) = await StartAsync(enabled: true, describe: async _ => { await release.Task; return "Done"; });
+        using (model) using (background)
+        {
+            await model.AddFolderAsync(_added.Root);
+            await WaitUntil(() => _described.Count == 1);
+            await model.AddFolderAsync(second.Root);
+            Assert.Equal("Describing photos in the background, 1 of 3", model.BackgroundProgress);
+            release.SetResult();
+            await background.WhenIdleAsync();
+            Assert.Equal(["a.jpg", "b.jpg", "c.jpg"], _described.Order());
+            Assert.Equal(2, _announced.Count(s => s.StartsWith("Finished describing")));
+        }
+    }
+
+    [WpfFact]
+    public async Task ArrowingComesFirst_BackgroundWaitsWhileForegroundIsBusy()
+    {
+        var (model, background, _) = await StartAsync(enabled: true);
+        using (model) using (background)
+        {
+            var foreground = true;
+            background.ForegroundBusy = () => foreground;
+            await model.AddFolderAsync(_added.Root);
+            await Task.Delay(400);
+            Assert.Empty(_described);
+            foreground = false;
+            await background.WhenIdleAsync();
+            Assert.Equal(2, _described.Count);
+        }
+    }
+
+    private static async Task WaitUntil(Func<bool> done)
+    {
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (!done() && DateTime.UtcNow < until) await Task.Delay(10);
     }
 
     [WpfFact]

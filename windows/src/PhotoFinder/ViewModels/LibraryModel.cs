@@ -639,11 +639,13 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         SaveSettings();
         await RescanAsync();
         Announcer.Announce($"Added {Path.GetFileName(full)}");
-        FolderAdded?.Invoke(full, _items.Where(i => i.Path.StartsWith(full + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)).ToList());
+        // The folder's own files, listed directly: the library's list may be mid-rescan (F5, the file watcher).
+        var paths = await Task.Run(() => LibraryScanner.Scan([full]).Select(i => i.Path).ToList());
+        FolderAdded?.Invoke(full, paths);
     }
 
-    /// <summary>A folder was added to the library, with the photos and videos found in it.</summary>
-    public event Action<string, IReadOnlyList<MediaItem>>? FolderAdded;
+    /// <summary>A folder was added to the library, with the paths of the photos and videos in it.</summary>
+    public event Action<string, IReadOnlyList<string>>? FolderAdded;
 
     private string? _backgroundProgress;
 
