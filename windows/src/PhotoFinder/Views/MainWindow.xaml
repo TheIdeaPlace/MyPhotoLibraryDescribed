@@ -22,7 +22,13 @@
     </Window.Resources>
 
     <DockPanel>
-        <Menu DockPanel.Dock="Top" x:Name="MainMenu">
+        <!-- Not in the Tab order: menu bars are reached with Alt or F10, as in every Windows app. -->
+        <Menu DockPanel.Dock="Top" x:Name="MainMenu" KeyboardNavigation.TabNavigation="None" Focusable="False">
+            <Menu.ItemContainerStyle>
+                <Style TargetType="MenuItem">
+                    <Setter Property="IsTabStop" Value="False" />
+                </Style>
+            </Menu.ItemContainerStyle>
             <MenuItem Header="_File">
                 <MenuItem Command="v:AppCommands.OpenItem" />
                 <MenuItem Command="v:AppCommands.Preview" InputGestureText="Space" />
