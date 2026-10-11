@@ -29,6 +29,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The whole history: the installer's version counts its commits.
+          fetch-depth: 0
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -57,10 +60,11 @@ jobs:
       # with -Sign by an account that can use the kellyford-public certificate.
       - name: Build the installer (unsigned)
         shell: pwsh
-        run: ./scripts/build-msix.ps1 -Revision ${{ github.run_number }}
+        run: ./scripts/build-msix.ps1
 
       - name: Upload the installer
         uses: actions/upload-artifact@v7
         with:
           name: installer-unsigned
           path: windows/artifacts/msix
+          retention-days: 7

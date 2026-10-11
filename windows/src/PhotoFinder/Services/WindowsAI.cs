@@ -53,7 +53,29 @@ public sealed class WindowsAI : IDisposable
     public static string AliasPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps", Alias);
 
-    public static bool IsInstalled => File.Exists(AliasPath);
+    /// <summary>The helper to start. Installed, it's the one in Photo Finder's own package, started directly: a packaged
+    /// app's child runs with the package's identity, and this can't pick up another package's photofinder-ai.exe
+    /// alias (an old test install, or a development registration). If it somehow starts without identity, it
+    /// relaunches itself through the alias. Otherwise (development), the alias.</summary>
+    public static string HelperPath => PackagedHelper ?? AliasPath;
+
+    private static readonly string? PackagedHelper = FindPackagedHelper();
+
+    private static string? FindPackagedHelper()
+    {
+        try
+        {
+            var path = Path.Combine(Windows.ApplicationModel.Package.Current.InstalledLocation.Path, "AI", "PhotoFinderAI.exe");
+            return File.Exists(path) ? path : null;
+        }
+        catch (Exception)
+        {
+            // No package identity: a development build or a test run.
+            return null;
+        }
+    }
+
+    public static bool IsInstalled => File.Exists(HelperPath);
 
     public const string NotInstalledMessage =
         "Describe Image uses Windows' on-device AI on Copilot+ PCs, through the Photo Finder AI helper, which isn't installed on this PC.";
@@ -235,7 +257,7 @@ public sealed class WindowsAI : IDisposable
     private static ProcessStartInfo StartInfo(string mode)
     {
         var utf8 = new UTF8Encoding(false);
-        return new ProcessStartInfo(AliasPath, mode)
+        return new ProcessStartInfo(HelperPath, mode)
         {
             UseShellExecute = false,
             CreateNoWindow = true,

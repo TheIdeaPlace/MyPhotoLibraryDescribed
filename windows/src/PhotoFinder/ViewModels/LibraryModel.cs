@@ -799,6 +799,13 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     public void SaveSettings() => _settings.Save(_settingsPath);
 
+    /// <summary>Saves the photo details and descriptions now, as closing does: before an update closes Photo Finder.</summary>
+    public void SaveCaches()
+    {
+        _cache.Save();
+        Descriptions?.Save();
+    }
+
     private void OnStatusChanged()
     {
         OnPropertyChanged(nameof(StatusText));

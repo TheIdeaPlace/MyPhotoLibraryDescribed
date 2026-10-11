@@ -14,18 +14,20 @@ Needs, once:
 
 See The-Idea-Place-Projects/signing/windows.md. PowerShell 5.1 compatible.
 
+.PARAMETER ExpectedSubject
+The subject the signing certificate must have, which a package's Publisher has to equal for Windows to install it.
+Each signed executable is checked against it, so a changed certificate fails the build instead of the install.
+
 .EXAMPLE
-.\scripts\sign-files.ps1 out\msix\PhotoFinder_0.1.0.5_x64\App\PhotoFinder.exe
+.\scripts\sign-files.ps1 -ExpectedSubject 'CN=kelly ford, O=kelly ford, L=Madison, S=wi, C=US' out\msix\x64\App\PhotoFinder.exe
 #>
 [CmdletBinding()]
 param(
+    [string]$ExpectedSubject,
     [Parameter(Mandatory, ValueFromRemainingArguments)]
     [string[]]$Path
 )
 $ErrorActionPreference = 'Stop'
-
-# The certificate's subject: a package's Publisher must equal it exactly.
-$script:Subject = 'CN=kelly ford, O=kelly ford, L=Madison, S=wi, C=US'
 
 # @() keeps one file a list: a single path would otherwise splat into one argument per character.
 $files = @(foreach ($p in $Path) { (Resolve-Path -LiteralPath $p).Path })
@@ -80,6 +82,10 @@ foreach ($f in $files) {
         $sig = Get-AuthenticodeSignature -LiteralPath $f
         $ok = $sig.Status -eq 'Valid' -and [bool]$sig.TimeStamperCertificate
         Write-Host "$f`n  status: $($sig.Status); signer: $($sig.SignerCertificate.Subject); timestamped: $([bool]$sig.TimeStamperCertificate)"
+        if ($ExpectedSubject -and $sig.SignerCertificate.Subject -ne $ExpectedSubject) {
+            Write-Host "  expected signer: $ExpectedSubject"
+            $ok = $false
+        }
     }
     if (-not $ok) { $bad++ }
 }
