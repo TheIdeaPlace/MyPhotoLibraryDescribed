@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using PhotoFinder.Models;
 using PhotoFinder.Services;
@@ -214,6 +215,11 @@ public sealed class WindowTests : IDisposable
             window.FileList.UpdateLayout();
             var first = (ListViewItem)window.FileList.ItemContainerGenerator.ContainerFromIndex(0);
             Assert.StartsWith("b.jpg, ", AutomationProperties.GetName(first));
+
+            // The menu bar isn't a Tab stop: Alt and F10 reach it, as in every Windows app.
+            Assert.Equal(KeyboardNavigationMode.None, KeyboardNavigation.GetTabNavigation(window.MainMenu));
+            Assert.False(window.MainMenu.Focusable);
+            Assert.All(window.MainMenu.Items.OfType<MenuItem>(), item => Assert.False(item.IsTabStop, $"{item.Header} is a Tab stop"));
 
             // Turning a column on rebuilds the list's columns and what screen readers hear.
             var before = window.ListColumns.Columns.Count;
