@@ -58,6 +58,16 @@ public sealed class WindowTests : IDisposable
             window.GeneralList.UpdateLayout();
             var first = (ListBoxItem)window.GeneralList.ItemContainerGenerator.ContainerFromIndex(0);
             Assert.Equal("Name: a.jpg", AutomationProperties.GetName(first));
+
+            // The description types read as their names, not as the objects behind them.
+            window.KindBox.IsDropDownOpen = true;
+            window.KindBox.UpdateLayout();
+            var kinds = window.KindBox.Items.Cast<object>()
+                .Select(i => (ComboBoxItem)window.KindBox.ItemContainerGenerator.ContainerFromItem(i))
+                .Select(c => System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(c).GetName()).ToList();
+            window.KindBox.IsDropDownOpen = false;
+            Assert.Equal(["Accessible", "Detailed", "Brief", "Diagram"], kinds);
+            Assert.Equal("Accessible", window.KindBox.SelectedItem?.ToString());
         }
         finally
         {

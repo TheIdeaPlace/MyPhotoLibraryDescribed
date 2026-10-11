@@ -11,6 +11,9 @@ namespace PhotoFinder.Views;
 public sealed record InfoLine(string Label, string Value)
 {
     public string Spoken => $"{Label}: {Value}";
+
+    /// <summary>What screen readers fall back to for an item without its own name.</summary>
+    public override string ToString() => Spoken;
 }
 
 /// <summary>Get Info: the date, location, camera and exposure details, and Image Contents, which describes
@@ -67,7 +70,12 @@ public partial class InfoWindow : Window
         Closed += (_, _) => _closing.Cancel();
     }
 
-    private sealed record KindChoice(string Id, string Title);
+    /// <summary>A description type in the combo box. Screen readers name each choice from ToString, which on a
+    /// record is "KindChoice { Id = ..., Title = ... }" unless it's overridden.</summary>
+    private sealed record KindChoice(string Id, string Title)
+    {
+        public override string ToString() => Title;
+    }
 
     private void FocusFirstField()
     {
