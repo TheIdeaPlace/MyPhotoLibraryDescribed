@@ -75,7 +75,7 @@ public sealed class FileRow : INotifyPropertyChanged
     /// <summary>What a screen reader hears for the row in the list.</summary>
     public string AccessibleName => SpokenWith(SpokenColumns);
 
-    /// <summary>The row as it would be read with these columns in this order (Choose Columns' preview).</summary>
+    /// <summary>The row as it would be read with these columns in this order (the Columns dialog's preview).</summary>
     public string SpokenWith(IReadOnlyList<string> columns)
     {
         var order = columns.Contains(Columns.Name) ? columns : columns.Prepend(Columns.Name).ToList();

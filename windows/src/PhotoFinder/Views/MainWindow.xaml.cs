@@ -176,7 +176,6 @@ public partial class MainWindow : Window
             else gridColumn.DisplayMemberBinding = new Binding(ColumnProperties[column.Id]);
             ListColumns.Columns.Add(gridColumn);
         }
-        BuildColumnsMenu();
     }
 
     /// <summary>Shows which column is sorted, without rebuilding the columns (which would lose their widths).</summary>
@@ -209,16 +208,15 @@ public partial class MainWindow : Window
         return header;
     }
 
+    /// <summary>Right-clicking a column header opens the Columns dialog, the one place columns are chosen and ordered.</summary>
     private ContextMenu MakeColumnsContextMenu()
     {
         var menu = new ContextMenu();
-        foreach (var item in ColumnToggleItems()) menu.Items.Add(item);
-        menu.Items.Add(new Separator());
         menu.Items.Add(new MenuItem { Command = AppCommands.ChooseColumns, CommandTarget = this });
         return menu;
     }
 
-    /// <summary>View, Choose Columns: which columns, and in what order they're shown and read.</summary>
+    /// <summary>View, Columns: which columns, and in what order they're shown and read.</summary>
     private void ChooseColumns()
     {
         var sample = _model.FocusedRow is { IsContainer: false } focused ? focused : _model.Rows.FirstOrDefault(r => !r.IsContainer);
@@ -231,19 +229,6 @@ public partial class MainWindow : Window
         // Back where it was (it can be opened from the sidebar or search); the list if that's gone.
         if (returnTo is UIElement { IsVisible: true } element && element.Focus()) return;
         FocusContent();
-    }
-
-    private IEnumerable<MenuItem> ColumnToggleItems() => Columns.Optional.Select(column =>
-    {
-        var item = new MenuItem { Header = column.Title, IsCheckable = true, IsChecked = _model.IsColumnVisible(column) };
-        item.Click += (_, _) => _model.SetColumnVisible(column, item.IsChecked);
-        return item;
-    });
-
-    private void BuildColumnsMenu()
-    {
-        ColumnsMenu.Items.Clear();
-        foreach (var item in ColumnToggleItems()) ColumnsMenu.Items.Add(item);
     }
 
     private void BuildSortMenu()
