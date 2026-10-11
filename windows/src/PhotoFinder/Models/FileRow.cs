@@ -11,10 +11,9 @@ public sealed class FileRow : INotifyPropertyChanged
     private ImageSource? _thumbnail;
     private string _description = "";
 
-    /// <summary>The optional columns the list is showing, in order. Screen readers hear a row as its
-    /// name followed by these, so what they hear matches what's on screen.</summary>
-    public static IReadOnlyList<string> SpokenColumns { get; set; } =
-        Columns.Optional.Where(c => c.VisibleByDefault).Select(c => c.Id).ToArray();
+    /// <summary>The columns the list is showing, in order. Screen readers hear a row as these, in this order,
+    /// so what they hear matches what's on screen. Name is read first if it isn't in the list.</summary>
+    public static IReadOnlyList<string> SpokenColumns { get; set; } = Columns.DefaultOrder;
 
     private FileRow(string id, MediaItem? item, SidebarItem? container)
     {
@@ -74,18 +73,14 @@ public sealed class FileRow : INotifyPropertyChanged
     }
 
     /// <summary>What a screen reader hears for the row in the list.</summary>
-    public string AccessibleName
+    public string AccessibleName => SpokenWith(SpokenColumns);
+
+    /// <summary>The row as it would be read with these columns in this order (Choose Columns' preview).</summary>
+    public string SpokenWith(IReadOnlyList<string> columns)
     {
-        get
-        {
-            var parts = new List<string> { Name };
-            foreach (var id in SpokenColumns)
-            {
-                var text = SpokenText(id);
-                if (!string.IsNullOrEmpty(text)) parts.Add(text);
-            }
-            return string.Join(", ", parts);
-        }
+        var order = columns.Contains(Columns.Name) ? columns : columns.Prepend(Columns.Name).ToList();
+        var parts = order.Select(SpokenText).Where(t => t.Length > 0).ToList();
+        return parts.Count > 0 ? string.Join(", ", parts) : Name;
     }
 
     /// <summary>What a screen reader hears for the item outside the list (gallery, preview): name, kind, date and caption.</summary>
@@ -129,6 +124,7 @@ public sealed class FileRow : INotifyPropertyChanged
         if (text.Length == 0) return "";
         return id switch
         {
+            Columns.Name => text,
             "caption" => $"Caption: {text}",
             "keywords" => $"Keywords: {text}",
             "favorite" => "Favorite",

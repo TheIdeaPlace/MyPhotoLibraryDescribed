@@ -233,7 +233,7 @@ public sealed class LibraryModelTests : IDisposable
         Assert.Contains("Keywords: holiday", row.AccessibleName);
         model.SetColumnVisible(Columns.Find("kind")!, false);
         Assert.DoesNotContain("Photo", row.AccessibleName);
-        Assert.True(Settings.Load(_lib.PathOf(@"data\Settings.json")).Columns["keywords"]);
+        Assert.Contains("keywords", Settings.Load(_lib.PathOf(@"data\Settings.json")).ShownColumnIds());
     }
 
     [WpfFact]

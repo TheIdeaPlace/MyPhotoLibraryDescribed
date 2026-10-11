@@ -9,7 +9,11 @@ public enum ViewMode { List, Gallery }
 public sealed class Settings
 {
     public ViewMode ViewMode { get; set; } = ViewMode.List;
-    /// <summary>Columns turned on or off from their defaults, by id.</summary>
+    /// <summary>The columns shown, in the order they're shown and read, by id. Null until chosen.</summary>
+    public List<string>? ColumnOrder { get; set; }
+
+    /// <summary>Columns turned on or off from their defaults, from before columns could be reordered. Read once
+    /// to carry the choice over; ColumnOrder replaces it.</summary>
     public Dictionary<string, bool> Columns { get; set; } = [];
     public string SortColumn { get; set; } = "date";
     public bool SortDescending { get; set; } = true;
@@ -21,8 +25,17 @@ public sealed class Settings
     /// <summary>Describe each photo with Windows AI when it's arrowed to, and speak the description.</summary>
     public bool AutoDescribe { get; set; } = true;
 
-    public bool IsColumnVisible(ColumnInfo column) =>
-        column.Id == Models.Columns.Name || (Columns.TryGetValue(column.Id, out var visible) ? visible : column.VisibleByDefault);
+    /// <summary>The columns shown, in order, always including Name.</summary>
+    public List<string> ShownColumnIds()
+    {
+        if (ColumnOrder is not null) return Models.Columns.Clean(ColumnOrder);
+        // Settings from before reordering: the old on/off choices, in the default order.
+        return Models.Columns.Clean(Models.Columns.All
+            .Where(c => c.Id == Models.Columns.Name || (Columns.TryGetValue(c.Id, out var visible) ? visible : c.VisibleByDefault))
+            .Select(c => c.Id));
+    }
+
+    public bool IsColumnVisible(ColumnInfo column) => ShownColumnIds().Contains(column.Id);
 
     public static string DefaultPath => Path.Combine(AppPaths.DataFolder, "Settings.json");
 
