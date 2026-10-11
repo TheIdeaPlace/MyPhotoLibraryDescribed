@@ -77,7 +77,7 @@ public class TextRecognitionTests
         using var lib = new TestLibrary();
         var path = lib.AddJpeg("sign.jpg", new TestLibrary.JpegOptions { Text = "HELLO WORLD 42" });
         var lines = await TextRecognition.ReadLinesAsync(path);
-        Assert.Contains("HELLO WORLD 42", string.Join(" ", lines));
+        Assert.Contains("HELLO WORLD 42", string.Join(" ", lines) + " [read: " + string.Join(" / ", lines) + "]");
     }
 
     [Fact]

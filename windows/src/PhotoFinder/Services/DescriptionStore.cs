@@ -33,6 +33,23 @@ public sealed class DescriptionStore
         Task.Run(Save);
     }
 
+    /// <summary>Keeps a file's descriptions when Photo Finder itself changes the file (a caption, rating or
+    /// favorite), which changes its size and date but not the picture.</summary>
+    public void Rekey(string path, long oldSize, DateTime oldModified, MediaItem now)
+    {
+        var oldPrefix = $"{path.ToUpperInvariant()}|{oldSize}|{oldModified.ToUniversalTime().Ticks}|";
+        var moved = false;
+        lock (_lock)
+        {
+            foreach (var (key, text) in Entries.Where(e => e.Key.StartsWith(oldPrefix, StringComparison.Ordinal)).ToList())
+            {
+                Entries[Key(now, key[oldPrefix.Length..])] = text;
+                moved = true;
+            }
+        }
+        if (moved) Task.Run(Save);
+    }
+
     public void Save()
     {
         lock (_saveLock)

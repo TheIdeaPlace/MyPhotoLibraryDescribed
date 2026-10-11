@@ -207,7 +207,7 @@ public sealed class WindowTests : IDisposable
         // What Tab does (KeyboardNavigation.Navigate): the next tab stop after the focused element, within that
         // element's own group (a container with its own TabNavigation, like a list), not the whole window.
         var groupParent = navigation.GetMethod("GetGroupParent", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
-            [typeof(DependencyObject)])!;
+            [typeof(DependencyObject), typeof(bool)])!;
         // Which navigation is happening (Tab, Ctrl+Tab or arrows) is state Navigate sets first; groups are found by it.
         navigation.GetField("_navigationProperty", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .SetValue(current, KeyboardNavigation.TabNavigationProperty);
@@ -215,7 +215,8 @@ public sealed class WindowTests : IDisposable
         DependencyObject? e = null;
         for (var i = 0; i < 200; i++)
         {
-            var container = e is null ? window : (DependencyObject)groupParent.Invoke(current, [e])!;
+            // includeCurrent: true, as Navigate does, so a focused group with tab stops inside is entered.
+            var container = e is null ? window : (DependencyObject)groupParent.Invoke(current, [e, true])!;
             e = (DependencyObject?)getNextTab.Invoke(current, [e, container, false]);
             if (e is null || order.Contains(e)) break;
             order.Add(e);
@@ -245,6 +246,7 @@ public sealed class WindowTests : IDisposable
 
             // The menu bar isn't a Tab stop: Alt and F10 reach it, as in every Windows app.
             Assert.Equal(KeyboardNavigationMode.None, KeyboardNavigation.GetTabNavigation(window.MainMenu));
+            Assert.Equal(KeyboardNavigationMode.None, KeyboardNavigation.GetControlTabNavigation(window.MainMenu));
             var tabOrder = TabOrder(window);
             Assert.NotEmpty(tabOrder);
             Assert.DoesNotContain(tabOrder, e => e is MenuItem || e is Menu);

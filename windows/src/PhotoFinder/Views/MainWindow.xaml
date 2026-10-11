@@ -22,10 +22,12 @@
     </Window.Resources>
 
     <DockPanel>
-        <!-- Not in the Tab order: menu bars are reached with Alt or F10, as in every Windows app. Set on the
-             Menu only: marking its menus IsTabStop="False" as well stops the arrow keys moving between them,
-             because WPF's arrow navigation looks for tab stops too. -->
-        <Menu DockPanel.Dock="Top" x:Name="MainMenu" IsTabStop="False" KeyboardNavigation.TabNavigation="None">
+        <!-- Not in the Tab or Ctrl+Tab order: menu bars are reached with Alt or F10, as in every Windows app.
+             TabNavigation="None" is what does it (IsTabStop="False" is already the Menu's default; Menu sets
+             ControlTabNavigation="Once" itself). Never IsTabStop="False" on the menus themselves: WPF's arrow
+             keys look for tab stops, so Right Arrow would stop moving between them. -->
+        <Menu DockPanel.Dock="Top" x:Name="MainMenu" IsTabStop="False" KeyboardNavigation.TabNavigation="None"
+              KeyboardNavigation.ControlTabNavigation="None">
             <MenuItem Header="_File">
                 <MenuItem Command="v:AppCommands.OpenItem" />
                 <MenuItem Command="v:AppCommands.Preview" InputGestureText="Space" />

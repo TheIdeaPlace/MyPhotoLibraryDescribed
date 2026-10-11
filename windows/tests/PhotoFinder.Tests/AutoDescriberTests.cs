@@ -29,32 +29,33 @@ public sealed class AutoDescriberTests : IDisposable
 
     private static readonly AIReadiness Ready = new(true, "Ready", null);
 
+    private int _prepared;
+
     private async Task<(LibraryModel Model, AutoDescriber Auto, DescriptionStore Store)> StartAsync(
-        AIReadiness? readiness = null, Func<MediaItem, Task<string>>? describe = null, Settings? settings = null)
+        AIReadiness? readiness = null, Func<MediaItem, Task<string>>? describe = null, Settings? settings = null,
+        AIReadiness? afterPrepare = null)
     {
+        var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
         var model = new LibraryModel(settings ?? new Settings(), _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
-            () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1));
+            () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1)) { Descriptions = store };
         model.SelectionRequested += (ids, _) => model.SelectedRows = model.Rows.Where(r => ids.Contains(r.Id)).ToList();
         await model.StartAsync();
         await model.DetailFillTask;
-        var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
         var auto = new AutoDescriber(model, store,
             async (item, kind, _) =>
             {
                 _described.Add($"{item.Name}:{kind}");
                 return describe is null ? $"A picture called {item.Name}." : await describe(item);
             },
-            _ => Task.FromResult(readiness ?? Ready), TimeSpan.FromMilliseconds(30));
+            _ => Task.FromResult(_prepared > 0 ? afterPrepare ?? Ready : readiness ?? Ready),
+            _ => { _prepared++; return Task.FromResult(afterPrepare ?? Ready); },
+            TimeSpan.FromMilliseconds(30));
         return (model, auto, store);
     }
 
     private static void Select(LibraryModel model, string name) => model.SelectedRows = model.Rows.Where(r => r.Name == name).ToList();
 
-    private static async Task Settle(AutoDescriber auto)
-    {
-        await Task.Delay(120);
-        await auto.Idle;
-    }
+    private static Task Settle(AutoDescriber auto) => auto.WhenIdleAsync();
 
     [WpfFact]
     public async Task ArrowingToAPhoto_DescribesItAndSpeaksIt()
@@ -97,6 +98,9 @@ public sealed class AutoDescriberTests : IDisposable
             await Settle(auto);
             _announced.Clear();
             Select(model, "a.jpg");
+            // After the same pause as a new description, so the row's name is heard first.
+            Assert.DoesNotContain("A picture called a.jpg.", _announced);
+            await Settle(auto);
             Assert.Contains("A picture called a.jpg.", _announced);
             Assert.Equal(["a.jpg:accessible", "b.jpg:accessible"], _described);
             Assert.NotNull(store.Get(model.FocusedRow!.Item!, "accessible"));
@@ -115,11 +119,10 @@ public sealed class AutoDescriberTests : IDisposable
         using (model) using (auto)
         {
             Select(model, "a.jpg");
-            await Task.Delay(120);
+            await WaitUntil(() => _described.Count == 1);
             Select(model, "b.jpg");
-            await Task.Delay(120);
+            await Task.Delay(100);
             release.SetResult();
-            await Settle(auto);
             await Settle(auto);
             Assert.DoesNotContain("Slow a.jpg", _announced);
             Assert.Contains("Slow b.jpg", _announced);
@@ -158,7 +161,7 @@ public sealed class AutoDescriberTests : IDisposable
     }
 
     [WpfFact]
-    public async Task WhenWindowsAIIsntAvailable_ItSaysSoOnce()
+    public async Task WhenWindowsAIIsntAvailable_ArrowingStaysQuiet_ButTurningItOnSaysWhy()
     {
         var (model, auto, _) = await StartAsync(new AIReadiness(false, "NotSupportedOnCurrentSystem", "Needs a Copilot+ PC."));
         using (model) using (auto)
@@ -167,9 +170,177 @@ public sealed class AutoDescriberTests : IDisposable
             await Settle(auto);
             Select(model, "b.jpg");
             await Settle(auto);
-            Assert.Single(_announced, a => a.Contains("Needs a Copilot+ PC."));
+            Assert.DoesNotContain(_announced, a => a.Contains("Copilot+"));
             Assert.Empty(_described);
+
+            auto.Enabled = true;
+            await Settle(auto);
+            Assert.Single(_announced, a => a.Contains("Needs a Copilot+ PC."));
         }
+    }
+
+    [WpfFact]
+    public async Task AModelNotDownloadedYet_IsntDownloadedByArrowing_OnlyByTurningItOn()
+    {
+        var (model, auto, _) = await StartAsync(new AIReadiness(true, "NotReady", null));
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await Settle(auto);
+            Assert.Equal(0, _prepared);
+            Assert.Empty(_described);
+
+            auto.Enabled = true;
+            await Settle(auto);
+            Assert.Equal(1, _prepared);
+            Assert.Contains(_announced, a => a.Contains("Getting Windows' image description model ready"));
+            Assert.Equal(["a.jpg:accessible"], _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task APrepareThatDoesntFinish_IsReportedNotRetriedForEveryPhoto()
+    {
+        var (model, auto, _) = await StartAsync(new AIReadiness(true, "NotReady", null),
+            afterPrepare: new AIReadiness(true, "NotReady", "Still downloading."));
+        using (model) using (auto)
+        {
+            auto.Enabled = true;
+            await Settle(auto);
+            Select(model, "a.jpg");
+            await Settle(auto);
+            Select(model, "b.jpg");
+            await Settle(auto);
+            Assert.Equal(1, _prepared);
+            Assert.Empty(_described);
+            Assert.Contains(_announced, a => a.Contains("Still downloading."));
+        }
+    }
+
+    [WpfFact]
+    public async Task NotOnThePhoto_NothingIsDescribedOrSpoken()
+    {
+        var (model, auto, _) = await StartAsync();
+        using (model) using (auto)
+        {
+            var onPhoto = false;
+            auto.CanSpeak = () => onPhoto;
+            Select(model, "a.jpg");
+            await Settle(auto);
+            Assert.Empty(_described);
+
+            // Back in the list, on the same photo: now it's described.
+            onPhoto = true;
+            auto.Refocused();
+            await Settle(auto);
+            Assert.Equal(["a.jpg:accessible"], _described);
+            Assert.Contains("A picture called a.jpg.", _announced);
+
+            // Focus comes back again (after a dialog, say): already spoken, so not again.
+            _announced.Clear();
+            auto.Refocused();
+            await Settle(auto);
+            Assert.Empty(_announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task MovingAwayMidDescription_SavesItWithoutSpeaking()
+    {
+        var release = new TaskCompletionSource();
+        var onPhoto = true;
+        var (model, auto, store) = await StartAsync(describe: async item => { await release.Task; return "Done"; });
+        using (model) using (auto)
+        {
+            auto.CanSpeak = () => onPhoto;
+            Select(model, "a.jpg");
+            await WaitUntil(() => _described.Count == 1);
+            onPhoto = false;
+            release.SetResult();
+            await Settle(auto);
+            Assert.DoesNotContain("Done", _announced);
+            Assert.Equal("Done", store.Get(model.FocusedRow!.Item!, "accessible"));
+        }
+    }
+
+    [WpfFact]
+    public async Task TurningItOffMidDescription_DoesntSpeakIt()
+    {
+        var release = new TaskCompletionSource();
+        var (model, auto, _) = await StartAsync(describe: async _ => { await release.Task; return "Late"; });
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await WaitUntil(() => _described.Count == 1);
+            auto.Enabled = false;
+            release.SetResult();
+            await Settle(auto);
+            Assert.DoesNotContain("Late", _announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task AnUnexpectedFailure_IsSpoken_AndTheNextPhotoStillWorks()
+    {
+        var (model, auto, _) = await StartAsync(describe: item =>
+            item.Name == "a.jpg" ? throw new IOException("The file is in use.") : Task.FromResult($"Fine {item.Name}"));
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await Settle(auto);
+            Assert.Contains(_announced, a => a.Contains("The file is in use."));
+            Select(model, "b.jpg");
+            await Settle(auto);
+            Assert.Contains("Fine b.jpg", _announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task AnEmptyDescription_IsntSaved()
+    {
+        var (model, auto, store) = await StartAsync(describe: _ => Task.FromResult(""));
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await Settle(auto);
+            Assert.Contains("Windows returned an empty description.", _announced);
+            Assert.Null(store.Get(model.FocusedRow!.Item!, "accessible"));
+        }
+    }
+
+    [WpfFact]
+    public async Task AfterTheListIsRebuilt_TheDescriptionIsBackOnTheRow_WithoutBeingSpokenAgain()
+    {
+        var (model, auto, _) = await StartAsync();
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await Settle(auto);
+            _announced.Clear();
+            model.SortBy("name");
+            await Settle(auto);
+            Assert.Equal("A picture called a.jpg.", model.FocusedRow!.Description);
+            Assert.DoesNotContain("A picture called a.jpg.", _announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task FavoritingAPhoto_KeepsItsDescription()
+    {
+        var (model, auto, store) = await StartAsync();
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await Settle(auto);
+            await model.ToggleFavoriteAsync();
+            Assert.Equal("A picture called a.jpg.", store.Get(model.Rows.Single(r => r.Name == "a.jpg").Item!, "accessible"));
+        }
+    }
+
+    private static async Task WaitUntil(Func<bool> done)
+    {
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (!done() && DateTime.UtcNow < until) await Task.Delay(10);
     }
 
     [WpfFact]

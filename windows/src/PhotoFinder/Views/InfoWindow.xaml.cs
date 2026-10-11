@@ -44,6 +44,17 @@ public partial class InfoWindow : Window
         GeneralList.ItemsSource = GeneralFields(row).Select(f => new InfoLine(f.Label, f.Value)).ToList();
         ContentsSection.Visibility = _item.IsVideo ? Visibility.Collapsed : Visibility.Visible;
         KindBox.ItemsSource = WindowsAI.Kinds.Select(k => new KindChoice(k.Id, k.Title)).ToList();
+        // Each type has its own description; show the one for the type chosen, if it's been made.
+        KindBox.SelectionChanged += (_, _) =>
+        {
+            if (KindBox.SelectedValue is string kind && _store?.Get(_item, kind) is { } text) ShowDescription(text);
+            else
+            {
+                DescriptionLabel.Visibility = Visibility.Collapsed;
+                DescriptionBox.Visibility = Visibility.Collapsed;
+                DescriptionBox.Text = "";
+            }
+        };
         KindBox.SelectedValue = WindowsAI.Kinds.Any(k => k.Id == settings.DescriptionKind) ? settings.DescriptionKind : WindowsAI.Kinds[0].Id;
         // A description already made (automatically, or here before) shows at once.
         if (store?.Get(_item, (string)KindBox.SelectedValue) is { } saved) ShowDescription(saved);
@@ -142,7 +153,11 @@ public partial class InfoWindow : Window
         if (_describeNow)
         {
             DescribeButton.Focus();
-            await DescribeAsync();
+            // Already described (automatically, or before): say it rather than describe it again.
+            if (_store?.Get(_item, (string)KindBox.SelectedValue) is { } saved)
+                Announcer.Announce(saved, interrupt: true);
+            else
+                await DescribeAsync();
         }
     }
 

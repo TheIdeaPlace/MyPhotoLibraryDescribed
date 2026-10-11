@@ -90,6 +90,7 @@ public partial class MainWindow : Window
                 e.Cancel = true;
                 return;
             }
+            AutoDescriber?.Dispose();
             model.Dispose();
         };
     }
@@ -134,7 +135,16 @@ public partial class MainWindow : Window
             AutoDescriber.Enabled = !AutoDescriber.Enabled;
             AutoDescribeItem.IsChecked = AutoDescriber.Enabled;
         }, () => AutoDescriber is not null);
-        Loaded += (_, _) => AutoDescribeItem.IsChecked = AutoDescriber?.Enabled ?? false;
+        Loaded += (_, _) =>
+        {
+            AutoDescribeItem.IsChecked = AutoDescriber?.Enabled ?? false;
+            if (AutoDescriber is null) return;
+            // Descriptions are for the photo you're on: the list or gallery has focus, and this window is in front
+            // (not the sidebar, search, Get Info or a message).
+            AutoDescriber.CanSpeak = () => IsActive && (FileList.IsKeyboardFocusWithin || GalleryImage.IsKeyboardFocusWithin);
+            FileList.GotKeyboardFocus += (_, _) => AutoDescriber.Refocused();
+            GalleryImage.GotKeyboardFocus += (_, _) => AutoDescriber.Refocused();
+        };
         CommandBindings.Add(new CommandBinding(AppCommands.Rate,
             (_, e) =>
             {
