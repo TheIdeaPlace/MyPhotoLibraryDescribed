@@ -1,19 +1,19 @@
 # Photo Finder
 
-A screen-reader-first, Finder-style browser for photos, built as two separate apps that should **work the same wherever the platform allows**:
+A screen-reader-first, Finder-style browser for photos, built as two separate apps that should **work the same wherever the platform allows**. "Photo Finder" is a working name; the final one isn't chosen, so don't build the name into anything that's hard to change (#34):
 
 - **Mac:** `PhotoFinder/` (SwiftUI, PhotoKit, Apple Intelligence), tests in `PhotoFinderTests/`, project generated from `project.yml` by XcodeGen.
 - **Windows:** `windows/` (WPF, .NET, Windows AI through the packaged `PhotoFinderAI` helper). See `windows/README.md`.
 
 On-device image description (Apple Intelligence on the Mac, Windows AI on Copilot+ PCs) is fast enough on the right hardware to be an everyday feature, not something kept for an explicit command. Design with that in mind.
 
-`docs/PLATFORM-DIFFERENCES.md` lists every way the two apps differ, and is updated in the same PR as any change that adds or closes a difference.
+**`docs/GOALS.md` is Kelly's list of what the app must do**, with where each goal stands; read it before choosing work. `docs/PLATFORM-DIFFERENCES.md` lists every way the two apps differ, and is updated in the same PR as any change that adds or closes a difference.
 
 ## Working across two sessions
 
 Work is usually split between a Claude Code session on Kelly's Mac (the **Mac session**) and one on Kelly's Windows PC (the **Windows session**). Remote Control messages between them are unreliable (presence is wrong, connections drop, delivery is never confirmed), so **GitHub is how sessions coordinate**:
 
-1. **At the start of a session**, read the pinned issue **#13 (Coordination)** for comments addressed to you, and list open issues: `gh issue list --label parity` and `gh issue list --label needs-kelly`.
+1. **At the start of a session**, read the pinned issue **#13 (Coordination)** for comments addressed to you, and list open issues: `gh issue list --label goal`, `gh issue list --label parity` and `gh issue list --label needs-kelly`.
 2. **Every task is an issue**, labelled `mac`, `windows` or `both` (a parity gap also gets `parity`). Before starting one, check nobody has claimed it, then comment `Mac session taking this` or `Windows session taking this` and add the `claimed` label. If you stop partway, say so in a comment and remove `claimed`.
 3. **Anything that isn't a single task goes in #13**, with a first line like `Mac → Windows: …`, `Windows → Mac: …` or `Mac → Kelly: …`. Reply `ACK <link>` once you've read a comment addressed to you and taken it on. Post there whenever a change affects the other app: shared behaviour or wording read aloud, keyboard shortcuts, description prompts or the saved-description format, or a check only one side can do (the Mac's Xcode 27 build).
 4. **One change, both apps.** When a change to one app should also happen in the other, either do both in the same PR, or open an issue for the other side (`parity` plus its platform label) and link it from your PR.
