@@ -27,19 +27,37 @@ public partial class InfoWindow : Window
     private bool _reading;
     private readonly CancellationTokenSource _closing = new();
 
-    public InfoWindow(FileRow row, Settings settings, Action saveSettings, bool describeNow)
+    private readonly DescriptionStore? _store;
+    private readonly FileRow _row;
+
+    public InfoWindow(FileRow row, Settings settings, Action saveSettings, bool describeNow, DescriptionStore? store = null)
     {
         _item = row.Item ?? throw new ArgumentException("Get Info needs a photo or video.", nameof(row));
         _settings = settings;
         _saveSettings = saveSettings;
         _describeNow = describeNow;
+        _store = store;
+        _row = row;
         InitializeComponent();
         Title = $"{_item.Name} Info";
         NameHeading.Text = _item.Name;
         GeneralList.ItemsSource = GeneralFields(row).Select(f => new InfoLine(f.Label, f.Value)).ToList();
         ContentsSection.Visibility = _item.IsVideo ? Visibility.Collapsed : Visibility.Visible;
         KindBox.ItemsSource = WindowsAI.Kinds.Select(k => new KindChoice(k.Id, k.Title)).ToList();
+        // Each type has its own description; show the one for the type chosen, if it's been made.
+        KindBox.SelectionChanged += (_, _) =>
+        {
+            if (KindBox.SelectedValue is string kind && _store?.Get(_item, kind) is { } text) ShowDescription(text);
+            else
+            {
+                DescriptionLabel.Visibility = Visibility.Collapsed;
+                DescriptionBox.Visibility = Visibility.Collapsed;
+                DescriptionBox.Text = "";
+            }
+        };
         KindBox.SelectedValue = WindowsAI.Kinds.Any(k => k.Id == settings.DescriptionKind) ? settings.DescriptionKind : WindowsAI.Kinds[0].Id;
+        // A description already made (automatically, or here before) shows at once.
+        if (store?.Get(_item, (string)KindBox.SelectedValue) is { } saved) ShowDescription(saved);
         Loaded += async (_, _) =>
         {
             if (GeneralList.Items.Count > 0) GeneralList.SelectedIndex = 0;
@@ -135,7 +153,11 @@ public partial class InfoWindow : Window
         if (_describeNow)
         {
             DescribeButton.Focus();
-            await DescribeAsync();
+            // Already described (automatically, or before): say it rather than describe it again.
+            if (_store?.Get(_item, (string)KindBox.SelectedValue) is { } saved)
+                Announcer.Announce(saved, interrupt: true);
+            else
+                await DescribeAsync();
         }
     }
 
@@ -180,6 +202,11 @@ public partial class InfoWindow : Window
             DescriptionLabel.Visibility = Visibility.Visible;
             DescriptionBox.Visibility = Visibility.Visible;
             DescriptionBox.Text = text.Length > 0 ? text : "Windows returned an empty description.";
+            if (text.Length > 0)
+            {
+                _store?.Put(_item, kind, text);
+                _row.Description = text;
+            }
             // Spoken whole, with focus left where it is, as the Mac app does: moving focus would cut the
             // speech off. The description box is next in Tab order for reading it line by line.
             Announcer.Announce(DescriptionBox.Text, interrupt: true);
@@ -202,6 +229,13 @@ public partial class InfoWindow : Window
         {
             _describing = false;
         }
+    }
+
+    private void ShowDescription(string text)
+    {
+        DescriptionLabel.Visibility = Visibility.Visible;
+        DescriptionBox.Visibility = Visibility.Visible;
+        DescriptionBox.Text = text;
     }
 
     // MARK: Read text

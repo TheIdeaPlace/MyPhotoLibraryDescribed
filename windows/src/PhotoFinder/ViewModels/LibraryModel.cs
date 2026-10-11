@@ -61,6 +61,9 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     public IReadOnlyList<MediaItem> AllItems => _items;
     public Settings Settings => _settings;
 
+    /// <summary>Saved Windows AI descriptions, shared by automatic descriptions and Get Info.</summary>
+    public DescriptionStore? Descriptions { get; init; }
+
     public SidebarItem? CurrentSource
     {
         get => _currentSource;
@@ -575,7 +578,9 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             {
                 foreach (var item in files)
                 {
+                    var (oldSize, oldModified) = (item.Size, item.Modified);
                     item.RefreshFileInfo();
+                    Descriptions?.Rekey(item.Path, oldSize, oldModified, item);
                     try { item.Metadata = await MetadataReader.ReadAsync(item.Path); }
                     catch (Exception) { /* keeps what it had */ }
                     if (item.Metadata is { } m) _cache.Remember(item, m);

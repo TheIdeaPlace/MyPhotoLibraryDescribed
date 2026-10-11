@@ -196,6 +196,34 @@ public sealed class WindowTests : IDisposable
         }
     }
 
+    /// <summary>Every element Tab visits, in order, from WPF's own Tab logic. WPF keeps it internal, and real
+    /// key presses would need the window in front, taking focus from whatever the person is doing.</summary>
+    private static List<DependencyObject> TabOrder(Window window)
+    {
+        var navigation = typeof(FrameworkElement).Assembly.GetType("System.Windows.Input.KeyboardNavigation")!;
+        var current = navigation.GetProperty("Current", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.GetValue(null)!;
+        var getNextTab = navigation.GetMethod("GetNextTab", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+            [typeof(DependencyObject), typeof(DependencyObject), typeof(bool)])!;
+        // What Tab does (KeyboardNavigation.Navigate): the next tab stop after the focused element, within that
+        // element's own group (a container with its own TabNavigation, like a list), not the whole window.
+        var groupParent = navigation.GetMethod("GetGroupParent", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+            [typeof(DependencyObject), typeof(bool)])!;
+        // Which navigation is happening (Tab, Ctrl+Tab or arrows) is state Navigate sets first; groups are found by it.
+        navigation.GetField("_navigationProperty", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(current, KeyboardNavigation.TabNavigationProperty);
+        var order = new List<DependencyObject>();
+        DependencyObject? e = null;
+        for (var i = 0; i < 200; i++)
+        {
+            // includeCurrent: true, as Navigate does, so a focused group with tab stops inside is entered.
+            var container = e is null ? window : (DependencyObject)groupParent.Invoke(current, [e, true])!;
+            e = (DependencyObject?)getNextTab.Invoke(current, [e, container, false]);
+            if (e is null || order.Contains(e)) break;
+            order.Add(e);
+        }
+        return order;
+    }
+
     [WpfFact]
     public async Task MainWindow_ShowsTheLibrary_WithNamedListAndRows()
     {
@@ -218,8 +246,19 @@ public sealed class WindowTests : IDisposable
 
             // The menu bar isn't a Tab stop: Alt and F10 reach it, as in every Windows app.
             Assert.Equal(KeyboardNavigationMode.None, KeyboardNavigation.GetTabNavigation(window.MainMenu));
-            Assert.False(window.MainMenu.Focusable);
-            Assert.All(window.MainMenu.Items.OfType<MenuItem>(), item => Assert.False(item.IsTabStop, $"{item.Header} is a Tab stop"));
+            Assert.Equal(KeyboardNavigationMode.None, KeyboardNavigation.GetControlTabNavigation(window.MainMenu));
+            var tabOrder = TabOrder(window);
+            Assert.NotEmpty(tabOrder);
+            Assert.DoesNotContain(tabOrder, e => e is MenuItem || e is Menu);
+            Assert.Contains(window.SearchBox, tabOrder);
+            // The list is one Tab stop, not one per row.
+            Assert.Single(tabOrder.OfType<ListViewItem>());
+
+            // ...and the arrow keys still move between its menus. WPF's arrow navigation looks for tab stops,
+            // which is what broke Right Arrow when the menus themselves were marked as not tab stops.
+            var menus = window.MainMenu.Items.OfType<MenuItem>().ToList();
+            for (var i = 0; i + 1 < menus.Count; i++)
+                Assert.Same(menus[i + 1], menus[i].PredictFocus(FocusNavigationDirection.Right));
 
             // Turning a column on rebuilds the list's columns and what screen readers hear.
             var before = window.ListColumns.Columns.Count;

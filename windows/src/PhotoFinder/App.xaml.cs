@@ -23,11 +23,20 @@ public partial class App : Application
             args.Handled = true;
         };
         var settings = Settings.Load(Settings.DefaultPath);
+        var descriptions = new DescriptionStore(DescriptionStore.DefaultPath);
         var model = new LibraryModel(settings, Settings.DefaultPath, new MetadataCache(MetadataCache.DefaultPath),
-            LibraryRoots.PicturesLibraryAsync);
-        MainWindow = new MainWindow(model);
+            LibraryRoots.PicturesLibraryAsync) { Descriptions = descriptions };
+        var autoDescriber = new AutoDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
+        MainWindow = new MainWindow(model) { AutoDescriber = autoDescriber };
         MainWindow.Show();
     }
+
+    private static Task<string> DescribeAsync(Models.MediaItem item, string kind, CancellationToken cancel) =>
+        WindowsAI.DescribeAsync(async size =>
+        {
+            using var bitmap = await ImageDecoding.DecodeAsync(item.Path, size);
+            return await ImageDecoding.ToJpegAsync(bitmap);
+        }, kind, cancel);
 
     protected override void OnExit(ExitEventArgs e)
     {
