@@ -47,7 +47,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         _cache = cache;
         _picturesLibrary = picturesLibrary;
         _clock = clock ?? (() => DateTime.Now);
-        FileRow.SpokenColumns = VisibleOptionalColumns.Select(c => c.Id).ToArray();
+        FileRow.SpokenColumns = _settings.ShownColumnIds();
     }
 
     // MARK: State
@@ -439,16 +439,27 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     // MARK: Columns
 
-    public IEnumerable<ColumnInfo> VisibleOptionalColumns => Columns.Optional.Where(_settings.IsColumnVisible);
+    /// <summary>The columns shown, in the order they're shown and read. Always includes Name.</summary>
+    public IReadOnlyList<ColumnInfo> ShownColumns => _settings.ShownColumnIds().Select(id => Columns.Find(id)!).ToList();
 
     public bool IsColumnVisible(ColumnInfo column) => _settings.IsColumnVisible(column);
 
+    /// <summary>Turns a column on (added at the end) or off. Name can't be turned off.</summary>
     public void SetColumnVisible(ColumnInfo column, bool visible)
     {
         if (column.Id == Columns.Name) return;
-        _settings.Columns[column.Id] = visible;
+        var order = _settings.ShownColumnIds();
+        order.Remove(column.Id);
+        if (visible) order.Add(column.Id);
+        SetColumnOrder(order);
+    }
+
+    /// <summary>Shows these columns, in this order, in the list and in what screen readers hear for each row.</summary>
+    public void SetColumnOrder(IEnumerable<string> ids)
+    {
+        _settings.ColumnOrder = Columns.Clean(ids);
         SaveSettings();
-        FileRow.SpokenColumns = VisibleOptionalColumns.Select(c => c.Id).ToArray();
+        FileRow.SpokenColumns = _settings.ColumnOrder;
         foreach (var row in Rows) row.NotifyAccessibleName();
         ColumnsChanged?.Invoke();
     }

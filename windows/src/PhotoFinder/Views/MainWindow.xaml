@@ -53,6 +53,7 @@
                 <MenuItem x:Name="AsGalleryItem" Command="v:AppCommands.AsGallery" IsCheckable="False" />
                 <Separator />
                 <MenuItem Header="_Columns" x:Name="ColumnsMenu" />
+                <MenuItem Command="v:AppCommands.ChooseColumns" />
                 <MenuItem Header="_Sort By" x:Name="SortMenu" />
             </MenuItem>
             <MenuItem Header="_Go">

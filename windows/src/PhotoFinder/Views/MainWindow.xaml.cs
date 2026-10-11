@@ -129,6 +129,7 @@ public partial class MainWindow : Window
         Bind(AppCommands.ToggleFavorite, () => { if (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite")) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, EditCaption, HasFiles);
         Bind(AppCommands.About, ShowAbout);
+        Bind(AppCommands.ChooseColumns, ChooseColumns);
         Bind(AppCommands.AutoDescribe, () =>
         {
             if (AutoDescriber is null) return;
@@ -164,20 +165,16 @@ public partial class MainWindow : Window
         foreach (var existing in ListColumns.Columns)
             if (existing.Header is GridViewColumnHeader { Tag: string id }) _columnWidths[id] = existing.ActualWidth > 0 ? existing.ActualWidth : existing.Width;
         ListColumns.Columns.Clear();
-        ListColumns.Columns.Add(new GridViewColumn
+        foreach (var column in _model.ShownColumns)
         {
-            Header = MakeHeader(Columns.NameColumn),
-            CellTemplate = (DataTemplate)FindResource("NameCellTemplate"),
-            Width = _columnWidths.GetValueOrDefault(Columns.Name, Columns.NameColumn.Width),
-        });
-        foreach (var column in _model.VisibleOptionalColumns)
-        {
-            ListColumns.Columns.Add(new GridViewColumn
+            var gridColumn = new GridViewColumn
             {
                 Header = MakeHeader(column),
-                DisplayMemberBinding = new Binding(ColumnProperties[column.Id]),
                 Width = _columnWidths.GetValueOrDefault(column.Id, column.Width),
-            });
+            };
+            if (column.Id == Columns.Name) gridColumn.CellTemplate = (DataTemplate)FindResource("NameCellTemplate");
+            else gridColumn.DisplayMemberBinding = new Binding(ColumnProperties[column.Id]);
+            ListColumns.Columns.Add(gridColumn);
         }
         BuildColumnsMenu();
     }
@@ -216,7 +213,27 @@ public partial class MainWindow : Window
     {
         var menu = new ContextMenu();
         foreach (var item in ColumnToggleItems()) menu.Items.Add(item);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(new MenuItem { Command = AppCommands.ChooseColumns, CommandTarget = this });
         return menu;
+    }
+
+    /// <summary>View, Choose Columns: which columns, and in what order they're shown and read.</summary>
+    private void ChooseColumns()
+    {
+        var sample = _model.FocusedRow is { IsContainer: false } focused ? focused : _model.Rows.FirstOrDefault(r => !r.IsContainer);
+        var before = _model.ShownColumns.Select(c => c.Id).ToList();
+        var dialog = new ColumnsDialog(before, sample) { Owner = this };
+        var ok = dialog.ShowDialog() == true;
+        FocusContent();
+        if (!ok) return;
+        if (dialog.ShownColumns.SequenceEqual(before))
+        {
+            Services.Announcer.Announce("Columns unchanged");
+            return;
+        }
+        _model.SetColumnOrder(dialog.ShownColumns);
+        Services.Announcer.Announce($"Columns changed: {string.Join(", ", _model.ShownColumns.Select(c => c.Title))}");
     }
 
     private IEnumerable<MenuItem> ColumnToggleItems() => Columns.Optional.Select(column =>

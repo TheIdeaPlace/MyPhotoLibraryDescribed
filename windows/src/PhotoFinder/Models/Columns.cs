@@ -32,4 +32,18 @@ public static class Columns
     public static IEnumerable<ColumnInfo> All => Optional.Prepend(NameColumn);
 
     public static ColumnInfo? Find(string id) => All.FirstOrDefault(c => c.Id == id);
+
+    /// <summary>The columns shown until someone chooses otherwise, in order: Name, then the defaults.</summary>
+    public static IReadOnlyList<string> DefaultOrder { get; } =
+        All.Where(c => c.VisibleByDefault).Select(c => c.Id).ToArray();
+
+    /// <summary>A usable column order: known columns only, each once, and always Name (put first if missing),
+    /// falling back to the defaults when nothing usable is left.</summary>
+    public static List<string> Clean(IEnumerable<string>? ids)
+    {
+        var order = (ids ?? []).Where(id => Find(id) is not null).Distinct().ToList();
+        if (order.Count == 0) return [.. DefaultOrder];
+        if (!order.Contains(Name)) order.Insert(0, Name);
+        return order;
+    }
 }
