@@ -10,7 +10,11 @@ struct PhotoFinderApp: App {
             ContentView()
                 .environment(model)
                 .frame(minWidth: 720, minHeight: 420)
-                .task { await model.start() }
+                .task {
+                    // Unit tests run inside the app; they don't need (and can't answer) the Photos permission prompt.
+                    guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+                    await model.start()
+                }
         }
         .commands { PhotoCommands(model: model) }
     }
@@ -51,14 +55,7 @@ struct PhotoCommands: Commands {
                 set: { _ in model.viewMode = .gallery }
             ))
             .keyboardShortcut("4")
-            Menu("Columns") {
-                ForEach(LibraryModel.optionalColumns) { column in
-                    Toggle(column.title, isOn: Binding(
-                        get: { model.isColumnVisible(column) },
-                        set: { model.setColumn(column, visible: $0) }
-                    ))
-                }
-            }
+            Button("Columns…") { model.columnsSheetShown = true }
             Divider()
         }
         CommandMenu("Go") {
@@ -75,6 +72,13 @@ struct PhotoCommands: Commands {
                 .keyboardShortcut("f", modifiers: [.command, .shift])
             Button("Edit Caption…") { model.editCaption() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
+            Divider()
+            Toggle("Describe New Photos in the Background", isOn: Binding(
+                get: { model.describeInBackground },
+                set: { model.setDescribeInBackground($0) }
+            ))
+            // Always enabled (it says when nothing is running), like the Columns sheet's buttons.
+            Button("Stop Background Describing") { model.stopBackgroundDescribing() }
         }
     }
 }

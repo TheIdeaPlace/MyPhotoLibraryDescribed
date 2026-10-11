@@ -12,6 +12,9 @@ targets:
   PhotoFinder:
     type: application
     platform: macOS
+    scheme:
+      testTargets:
+        - PhotoFinderTests
     sources:
       - PhotoFinder
     info:
@@ -32,3 +35,19 @@ targets:
         DEVELOPMENT_TEAM: P887QF74N8
         ENABLE_HARDENED_RUNTIME: NO
         GENERATE_INFOPLIST_FILE: NO
+  PhotoFinderTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - PhotoFinderTests
+    dependencies:
+      - target: PhotoFinder
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: net.theideaplace.PhotoFinderTests
+        # The app's product name has a space, which XcodeGen's default test host path doesn't account for.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Photo Finder.app/Contents/MacOS/Photo Finder"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: P887QF74N8

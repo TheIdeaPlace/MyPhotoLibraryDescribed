@@ -20,9 +20,11 @@ enum PhotoExporter {
     private static let originalFilenameSelector = NSSelectorFromString("originalFilename")
 
     static func originalFilename(for asset: PHAsset) -> String {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *), let name = asset.extendedMetadata.originalFilename, !name.isEmpty {
             return name
         }
+#endif
         // Asking PHAssetResource for every asset is a slow round trip to the Photos database.
         // PHAsset already carries the name (undocumented), so use it when present.
         if asset.responds(to: originalFilenameSelector),

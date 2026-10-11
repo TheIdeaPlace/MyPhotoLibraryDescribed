@@ -40,6 +40,7 @@ struct BrowserView: View {
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .sheet(item: $model.infoTarget) { InfoView(target: $0) }
         .sheet(item: $model.captionTarget) { CaptionEditor(target: $0, model: model) }
+        .sheet(isPresented: $model.columnsSheetShown) { ColumnsSheet(model: model) }
         .alert("Something went wrong", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
@@ -114,11 +115,15 @@ struct FileListView: View {
 
     var body: some View {
         @Bindable var model = model
-        Table(of: FileRow.self, selection: $model.selection, sortOrder: $model.sortOrder,
-              columnCustomization: $model.columnCustomization) {
-            nameColumn
-            standardColumns
-            extraColumns
+        // Built from the chosen columns, in the chosen order (View > Columns), which is also the order
+        // VoiceOver reads a row's cells in.
+        Table(of: FileRow.self, selection: $model.selection, sortOrder: $model.sortOrder) {
+            TableColumnForEach(model.shownColumns) { column in
+                TableColumn(column.title, sortUsing: ColumnOrder.comparator(column.id)) { (row: FileRow) in
+                    cell(column.id, row)
+                }
+                .width(min: ColumnOrder.width(column.id).min, ideal: ColumnOrder.width(column.id).ideal)
+            }
         } rows: {
             ForEach(model.visibleRows) { row in
                 TableRow(row)
@@ -154,73 +159,12 @@ struct FileListView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar() }
     }
 
-    // Split up so the compiler can type-check the table.
-    @TableColumnBuilder<FileRow, KeyPathComparator<FileRow>>
-    private var nameColumn: some TableColumnContent<FileRow, KeyPathComparator<FileRow>> {
-        TableColumn("Name", value: \.name) { (row: FileRow) in
+    @ViewBuilder private func cell(_ column: String, _ row: FileRow) -> some View {
+        if column == ColumnOrder.name {
             NameCell(row: row, model: model)
+        } else {
+            Text(row.text(for: column))
         }
-        .width(min: 180, ideal: 300)
-        .customizationID("name")
-        .disabledCustomizationBehavior(.visibility)
-    }
-
-    @TableColumnBuilder<FileRow, KeyPathComparator<FileRow>>
-    private var standardColumns: some TableColumnContent<FileRow, KeyPathComparator<FileRow>> {
-        TableColumn("Date Taken", value: \.sortDate) { (row: FileRow) in Text(row.dateText) }
-            .width(min: 120, ideal: 170)
-            .customizationID("date")
-        TableColumn("Kind", value: \.kind) { (row: FileRow) in Text(row.kind) }
-            .width(min: 80, ideal: 130)
-            .customizationID("kind")
-        TableColumn("Caption", value: \.caption) { (row: FileRow) in Text(row.caption) }
-            .width(min: 100, ideal: 220)
-            .customizationID("caption")
-        TableColumn("Dimensions", value: \.pixelCount) { (row: FileRow) in Text(row.dimensions) }
-            .width(min: 80, ideal: 110)
-            .customizationID("dimensions")
-        TableColumn("Duration", value: \.duration) { (row: FileRow) in Text(row.durationText) }
-            .width(min: 60, ideal: 70)
-            .customizationID("duration")
-        TableColumn("Favorite", value: \.favoriteSort) { (row: FileRow) in Text(row.isFavorite ? "Yes" : "") }
-            .width(min: 50, ideal: 60)
-            .customizationID("favorite")
-    }
-
-    @TableColumnBuilder<FileRow, KeyPathComparator<FileRow>>
-    private var extraColumns: some TableColumnContent<FileRow, KeyPathComparator<FileRow>> {
-        TableColumn("Keywords", value: \.keywords) { (row: FileRow) in Text(row.keywords) }
-            .width(min: 80, ideal: 160)
-            .customizationID("keywords")
-            .defaultVisibility(.hidden)
-        TableColumn("Rating", value: \.rating) { (row: FileRow) in Text(row.ratingText) }
-            .width(min: 50, ideal: 70)
-            .customizationID("rating")
-            .defaultVisibility(.hidden)
-        TableColumn("Date Modified", value: \.sortModified) { (row: FileRow) in Text(row.modifiedText) }
-            .width(min: 120, ideal: 170)
-            .customizationID("modified")
-            .defaultVisibility(.hidden)
-        TableColumn("File Type", value: \.fileType) { (row: FileRow) in Text(row.fileType) }
-            .width(min: 70, ideal: 110)
-            .customizationID("fileType")
-            .defaultVisibility(.hidden)
-        TableColumn("Orientation", value: \.orientation) { (row: FileRow) in Text(row.orientation) }
-            .width(min: 70, ideal: 90)
-            .customizationID("orientation")
-            .defaultVisibility(.hidden)
-        TableColumn("Megapixels", value: \.megapixels) { (row: FileRow) in Text(row.megapixelsText) }
-            .width(min: 60, ideal: 80)
-            .customizationID("megapixels")
-            .defaultVisibility(.hidden)
-        TableColumn("Location", value: \.locationText) { (row: FileRow) in Text(row.locationText) }
-            .width(min: 100, ideal: 150)
-            .customizationID("location")
-            .defaultVisibility(.hidden)
-        TableColumn("Source", value: \.source) { (row: FileRow) in Text(row.source) }
-            .width(min: 70, ideal: 100)
-            .customizationID("source")
-            .defaultVisibility(.hidden)
     }
 
     @ViewBuilder private var emptyState: some View {
@@ -428,10 +372,10 @@ private struct StatusBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if model.isLoading || model.activity != nil || model.nameProgress != nil {
+            if model.isLoading || model.activity != nil || model.nameProgress != nil || model.backgroundProgress != nil {
                 ProgressView().controlSize(.small)
             }
-            Text(model.activity ?? model.nameProgress ?? model.statusText)
+            Text(model.activity ?? model.nameProgress ?? model.backgroundProgress.map { "\(model.statusText). \($0)" } ?? model.statusText)
             Spacer()
         }
         .font(.callout)

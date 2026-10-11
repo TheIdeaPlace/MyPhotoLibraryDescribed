@@ -13,12 +13,6 @@ enum ViewMode: String {
     case list, gallery
 }
 
-struct ColumnInfo: Identifiable {
-    let id: String
-    let title: String
-    let visibleByDefault: Bool
-}
-
 struct InfoTarget: Identifiable {
     let id: String
     let asset: PHAsset
@@ -61,9 +55,13 @@ final class LibraryModel {
             if viewMode == .gallery { ensureGallerySelection() }
         }
     }
-    var columnCustomization = TableColumnCustomization<FileRow>() {
-        didSet { saveColumnCustomization() }
+    /// The columns shown, in the order they're shown and read. Always includes Name.
+    var columnOrder: [String] = ColumnOrder.defaultOrder {
+        didSet { UserDefaults.standard.set(columnOrder, forKey: "columnOrder") }
     }
+    var columnsSheetShown = false
+    /// What describing new photos in the background is doing, shown in the status bar.
+    var backgroundProgress: String?
     var errorMessage: String?
 
     @ObservationIgnored private var assetsByID: [String: PHAsset] = [:]
@@ -77,6 +75,18 @@ final class LibraryModel {
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var nameFillTask: Task<Void, Never>?
     private let names = NameCache()
+    /// Apple Intelligence descriptions already made, shared by Get Info and background describing.
+    let descriptions = DescriptionCache()
+    /// Every photo, watched for new ones to describe in the background.
+    @ObservationIgnored private var allPhotosFetch: PHFetchResult<PHAsset>?
+    /// The background describer (macOS 27), kept untyped so this class builds with older SDKs too.
+    @ObservationIgnored private var backgroundDescriber: AnyObject?
+    @ObservationIgnored private var terminationObserver: NSObjectProtocol?
+
+    /// Describe photos added to the Photos library behind the scenes, so their descriptions are ready in Get Info.
+    var describeInBackground: Bool = UserDefaults.standard.bool(forKey: "describeInBackground") {
+        didSet { UserDefaults.standard.set(describeInBackground, forKey: "describeInBackground") }
+    }
     private static let log = Logger(subsystem: "net.theideaplace.PhotoFinder", category: "library")
     private let imageManager = PHCachingImageManager()
     private let galleryImageSize = CGSize(width: 2400, height: 2400)
@@ -91,48 +101,26 @@ final class LibraryModel {
         if let raw = UserDefaults.standard.string(forKey: "viewMode"), let mode = ViewMode(rawValue: raw) {
             viewMode = mode
         }
-        if let data = UserDefaults.standard.data(forKey: "columns"),
-           let saved = try? JSONDecoder().decode(TableColumnCustomization<FileRow>.self, from: data) {
-            columnCustomization = saved
+        if let saved = UserDefaults.standard.stringArray(forKey: "columnOrder") {
+            columnOrder = ColumnOrder.clean(saved)
+        } else if let data = UserDefaults.standard.data(forKey: "columns"),
+                  let migrated = ColumnOrder.migrate(customization: data) {
+            // Columns from before they could be reordered: keep which were on, in the default order.
+            columnOrder = migrated
         }
+        // Descriptions are saved a couple of seconds after each change; don't lose one made just before quitting.
+        let cache = descriptions
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in cache.save() }
     }
 
     // MARK: - Columns
 
-    /// Every column except Name, which can't be hidden. Order matches the table.
-    static let optionalColumns: [ColumnInfo] = [
-        ColumnInfo(id: "date", title: "Date Taken", visibleByDefault: true),
-        ColumnInfo(id: "kind", title: "Kind", visibleByDefault: true),
-        ColumnInfo(id: "caption", title: "Caption", visibleByDefault: true),
-        ColumnInfo(id: "dimensions", title: "Dimensions", visibleByDefault: true),
-        ColumnInfo(id: "duration", title: "Duration", visibleByDefault: true),
-        ColumnInfo(id: "favorite", title: "Favorite", visibleByDefault: true),
-        ColumnInfo(id: "keywords", title: "Keywords", visibleByDefault: false),
-        ColumnInfo(id: "rating", title: "Rating", visibleByDefault: false),
-        ColumnInfo(id: "modified", title: "Date Modified", visibleByDefault: false),
-        ColumnInfo(id: "fileType", title: "File Type", visibleByDefault: false),
-        ColumnInfo(id: "orientation", title: "Orientation", visibleByDefault: false),
-        ColumnInfo(id: "megapixels", title: "Megapixels", visibleByDefault: false),
-        ColumnInfo(id: "location", title: "Location", visibleByDefault: false),
-        ColumnInfo(id: "source", title: "Source", visibleByDefault: false),
-    ]
+    var shownColumns: [ColumnInfo] { columnOrder.compactMap(ColumnOrder.info) }
 
-    func isColumnVisible(_ column: ColumnInfo) -> Bool {
-        switch columnCustomization[visibility: column.id] {
-        case .visible: true
-        case .hidden: false
-        default: column.visibleByDefault
-        }
-    }
-
-    func setColumn(_ column: ColumnInfo, visible: Bool) {
-        columnCustomization[visibility: column.id] = visible ? .visible : .hidden
-    }
-
-    private func saveColumnCustomization() {
-        if let data = try? JSONEncoder().encode(columnCustomization) {
-            UserDefaults.standard.set(data, forKey: "columns")
-        }
+    /// Shows these columns, in this order: in the list, and in the order VoiceOver reads each row's cells.
+    func setColumnOrder(_ ids: [String]) {
+        columnOrder = ColumnOrder.clean(ids)
     }
 
     // MARK: - Derived state
@@ -179,6 +167,8 @@ final class LibraryModel {
 
         rebuildSidebar()
         selectedSourceID = SidebarID.allPhotos
+        // Watched for new photos only while describing them in the background is on: it's a whole-library fetch.
+        if describeInBackground { allPhotosFetch = PHAsset.fetchAssets(with: .image, options: nil) }
         await refreshDateBuckets()
         rebuildSidebar()
         warmNameCache()
@@ -485,6 +475,14 @@ final class LibraryModel {
     }
 
     private func libraryDidChange(_ change: PHChange) {
+        if let all = allPhotosFetch, let details = change.changeDetails(for: all) {
+            allPhotosFetch = details.fetchResultAfterChanges
+            // Without incremental changes Photos doesn't say what's new; those photos are described in Get Info as usual.
+            if describeInBackground, details.hasIncrementalChanges, !details.insertedObjects.isEmpty {
+                describeLater(details.insertedObjects)
+            }
+        }
+
         if let fetch = currentFetch, let details = change.changeDetails(for: fetch) {
             currentFetch = details.fetchResultAfterChanges
             if details.hasIncrementalChanges, details.insertedObjects.isEmpty, details.removedObjects.isEmpty {
@@ -686,14 +684,73 @@ final class LibraryModel {
         let box = UncheckedBox(value: assets)
         perform("Saving caption…") {
             try await PHPhotoLibrary.shared().performChanges {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
                 if #available(macOS 27, *) {
                     for asset in box.value {
                         PHAssetChangeRequest(for: asset).caption = trimmed.isEmpty ? nil : trimmed
                     }
                 }
+#endif
             }
             self.announce(trimmed.isEmpty ? "Caption removed" : "Caption saved")
         }
+    }
+
+    // MARK: - Describing in the background
+
+    /// Photo > Describe New Photos in the Background.
+    func setDescribeInBackground(_ on: Bool) {
+        describeInBackground = on
+        allPhotosFetch = on ? PHAsset.fetchAssets(with: .image, options: nil) : nil
+        guard on else {
+            let left = stopBackgroundDescribing(announce: false)
+            announce(left > 0 ? "Background describing off. Stopped with \(left == 1 ? "1 photo" : "\(left) photos") not described."
+                     : "New photos won't be described in the background")
+            return
+        }
+        if let reason = backgroundUnavailableReason {
+            announce("Photos can't be described in the background. \(reason)")
+        } else {
+            announce("Photos added to your library will be described in the background")
+        }
+    }
+
+    /// Why background describing can't work on this Mac, or nil when it can.
+    var backgroundUnavailableReason: String? {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        if #available(macOS 27, *) { return ImageConversation.unavailableReason }
+#endif
+        return "Describing photos needs Apple Intelligence on macOS 27 or later."
+    }
+
+    var isDescribingInBackground: Bool { backgroundProgress != nil }
+
+    /// Photo > Stop Background Describing: stops this run; the setting stays on for photos added later.
+    @discardableResult
+    func stopBackgroundDescribing(announce shouldAnnounce: Bool = true) -> Int {
+        var left = 0
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        if #available(macOS 27, *), let describer = backgroundDescriber as? BackgroundDescriber {
+            left = describer.stop()
+        }
+#endif
+        if shouldAnnounce {
+            announce(left > 0 ? "Stopped describing in the background. \(left == 1 ? "1 photo" : "\(left) photos") not described."
+                     : "Nothing is being described in the background")
+        }
+        return left
+    }
+
+    private func describeLater(_ assets: [PHAsset]) {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        if #available(macOS 27, *) {
+            let describer = (backgroundDescriber as? BackgroundDescriber) ?? BackgroundDescriber(cache: descriptions) { [weak self] text in
+                self?.backgroundProgress = text
+            }
+            backgroundDescriber = describer
+            describer.enqueue(assets)
+        }
+#endif
     }
 
     // MARK: - Gallery

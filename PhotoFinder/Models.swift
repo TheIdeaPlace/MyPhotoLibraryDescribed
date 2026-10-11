@@ -113,9 +113,11 @@ struct FileRow: Identifiable, Hashable, Sendable {
         caption = ""
         keywords = ""
         var rating = 0
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
             rating = asset.rating.rawValue
         }
+#endif
         self.rating = rating
         ratingText = rating == 0 ? "" : rating == 1 ? "1 star" : "\(rating) stars"
 
@@ -277,6 +279,7 @@ struct AssetDetails: Sendable {
     let keywords: String
 
     static func load(for asset: PHAsset, names: NameCache) -> AssetDetails {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
             let metadata = asset.extendedMetadata
             let name = metadata.originalFilename.flatMap { $0.isEmpty ? nil : $0 } ?? names.name(for: asset)
@@ -284,6 +287,7 @@ struct AssetDetails: Sendable {
             return AssetDetails(name: name, caption: metadata.caption ?? "",
                                 keywords: metadata.keywords.joined(separator: ", "))
         }
+#endif
         return AssetDetails(name: names.name(for: asset), caption: "", keywords: "")
     }
 }
@@ -292,9 +296,11 @@ enum RowBuilder {
     /// Fetch options that load file names and captions in bulk on macOS 27 and later.
     static func fetchOptions() -> PHFetchOptions {
         let options = PHFetchOptions()
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
             options.prefetchAssetExtendedMetadata = true
         }
+#endif
         return options
     }
 
