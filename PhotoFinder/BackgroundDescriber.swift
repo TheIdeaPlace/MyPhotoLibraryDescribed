@@ -16,14 +16,14 @@ import SwiftUI
 @MainActor
 final class BackgroundDescriber {
     private let cache: DescriptionCache
-    private let progress: (String?) -> Void
+    private let progress: @MainActor (String?) -> Void
     private var queue: [String] = []
     private var queued = Set<String>()
     private var task: Task<Void, Never>?
     private var total = 0
     private var done = 0
 
-    init(cache: DescriptionCache, progress: @escaping (String?) -> Void) {
+    init(cache: DescriptionCache, progress: @escaping @MainActor (String?) -> Void) {
         self.cache = cache
         self.progress = progress
     }
@@ -73,10 +73,12 @@ final class BackgroundDescriber {
                   let image = ImageConversation.makeImage(from: data) else { continue }
             let session = LanguageModelSession(instructions: ImageConversation.instructions)
             let prompt = ImageConversation.describePrompt
-            if let answer = try? await session.respond({
+            // The same form ImageConversation uses for the same request.
+            let answer = try? await session.respond {
                 prompt
                 Attachment(image)
-            }).content {
+            }.content
+            if let answer {
                 cache.remember(answer, for: asset)
                 described += 1
             }

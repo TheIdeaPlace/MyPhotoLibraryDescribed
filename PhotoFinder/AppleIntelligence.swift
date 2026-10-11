@@ -217,9 +217,9 @@ struct AppleIntelligenceSection: View {
     private func start() {
         guard let imageData else { return }
         let cache = model.descriptions
-        let asset = UncheckedBox(value: asset)
+        let photo = UncheckedBox(value: asset)
         guard let conversation = conversation ?? ImageConversation(imageData: imageData, onDescribed: { text in
-            cache.remember(text, for: asset.value)
+            cache.remember(text, for: photo.value)
         }) else {
             return
         }
