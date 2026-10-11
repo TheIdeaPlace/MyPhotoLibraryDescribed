@@ -56,6 +56,19 @@ enum ColumnOrder {
         clean(all.filter { $0.id == name || (isVisible($0) ?? $0.visibleByDefault) }.map(\.id))
     }
 
+    /// Carries over the column choices from before columns could be reordered, when SwiftUI's table kept only
+    /// which columns were visible. Nil when the data can't be read.
+    static func migrate(customization data: Data) -> [String]? {
+        guard let saved = try? JSONDecoder().decode(TableColumnCustomization<FileRow>.self, from: data) else { return nil }
+        return fromVisibility { column in
+            switch saved[visibility: column.id] {
+            case .visible: true
+            case .hidden: false
+            default: nil
+            }
+        }
+    }
+
     /// How a column sorts the list.
     static func comparator(_ id: String) -> KeyPathComparator<FileRow> {
         switch id {
@@ -77,14 +90,22 @@ enum ColumnOrder {
         }
     }
 
+    /// The widths the columns had before they could be reordered.
     static func width(_ id: String) -> (min: CGFloat, ideal: CGFloat) {
         switch id {
         case name: (180, 300)
         case "date", "modified": (120, 170)
-        case "kind", "fileType": (70, 120)
+        case "kind": (80, 130)
         case "caption": (100, 220)
-        case "keywords", "location": (80, 160)
         case "dimensions": (80, 110)
+        case "duration": (60, 70)
+        case "favorite", "rating": (50, 60)
+        case "keywords": (80, 160)
+        case "fileType": (70, 110)
+        case "orientation": (70, 90)
+        case "megapixels": (60, 80)
+        case "location": (100, 150)
+        case "source": (70, 100)
         default: (50, 80)
         }
     }

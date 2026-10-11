@@ -28,7 +28,7 @@ jobs:
       # The app uses macOS 27 APIs (Apple Intelligence image attachments, Photos' extended metadata),
       # which need the macOS 27 SDK. The newest stable Xcode on the runners (26.x) doesn't have it, so
       # this takes the newest Xcode installed, beta included. Also lists what's installed, for when it fails.
-      - name: Select latest stable Xcode
+      - name: Select the newest Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest
@@ -51,7 +51,7 @@ jobs:
         run: |
           sdk=$(xcrun --sdk macosx --show-sdk-version)
           if [ "${sdk%%.*}" -lt 27 ]; then
-            echo "SDK $sdk is older than macOS 27: building without the macOS 27 code."
+            echo "::warning::macOS 27 code not compiled: the runner's SDK is $sdk. Background describing and Get Info's saved descriptions are only checked by a local Xcode 27 build."
             echo 'SWIFT_FLAGS=OTHER_SWIFT_FLAGS=$(inherited) -DPF_SDK26' >> "$GITHUB_ENV"
           fi
 
@@ -60,5 +60,5 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project PhotoFinder.xcodeproj -scheme PhotoFinder -configuration Debug \
-            -derivedDataPath "$RUNNER_TEMP/dd" -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= ${SWIFT_FLAGS:+"$SWIFT_FLAGS"} test

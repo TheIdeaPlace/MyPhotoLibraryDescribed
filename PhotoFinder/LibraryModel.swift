@@ -81,6 +81,7 @@ final class LibraryModel {
     @ObservationIgnored private var allPhotosFetch: PHFetchResult<PHAsset>?
     /// The background describer (macOS 27), kept untyped so this class builds with older SDKs too.
     @ObservationIgnored private var backgroundDescriber: AnyObject?
+    @ObservationIgnored private var terminationObserver: NSObjectProtocol?
 
     /// Describe photos added to the Photos library behind the scenes, so their descriptions are ready in Get Info.
     var describeInBackground: Bool = UserDefaults.standard.bool(forKey: "describeInBackground") {
@@ -103,16 +104,14 @@ final class LibraryModel {
         if let saved = UserDefaults.standard.stringArray(forKey: "columnOrder") {
             columnOrder = ColumnOrder.clean(saved)
         } else if let data = UserDefaults.standard.data(forKey: "columns"),
-                  let saved = try? JSONDecoder().decode(TableColumnCustomization<FileRow>.self, from: data) {
+                  let migrated = ColumnOrder.migrate(customization: data) {
             // Columns from before they could be reordered: keep which were on, in the default order.
-            columnOrder = ColumnOrder.fromVisibility { column in
-                switch saved[visibility: column.id] {
-                case .visible: true
-                case .hidden: false
-                default: nil
-                }
-            }
+            columnOrder = migrated
         }
+        // Descriptions are saved a couple of seconds after each change; don't lose one made just before quitting.
+        let cache = descriptions
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in cache.save() }
     }
 
     // MARK: - Columns
@@ -168,7 +167,8 @@ final class LibraryModel {
 
         rebuildSidebar()
         selectedSourceID = SidebarID.allPhotos
-        allPhotosFetch = PHAsset.fetchAssets(with: .image, options: nil)
+        // Watched for new photos only while describing them in the background is on: it's a whole-library fetch.
+        if describeInBackground { allPhotosFetch = PHAsset.fetchAssets(with: .image, options: nil) }
         await refreshDateBuckets()
         rebuildSidebar()
         warmNameCache()
@@ -477,7 +477,8 @@ final class LibraryModel {
     private func libraryDidChange(_ change: PHChange) {
         if let all = allPhotosFetch, let details = change.changeDetails(for: all) {
             allPhotosFetch = details.fetchResultAfterChanges
-            if describeInBackground, !details.insertedObjects.isEmpty {
+            // Without incremental changes Photos doesn't say what's new; those photos are described in Get Info as usual.
+            if describeInBackground, details.hasIncrementalChanges, !details.insertedObjects.isEmpty {
                 describeLater(details.insertedObjects)
             }
         }
@@ -700,6 +701,7 @@ final class LibraryModel {
     /// Photo > Describe New Photos in the Background.
     func setDescribeInBackground(_ on: Bool) {
         describeInBackground = on
+        allPhotosFetch = on ? PHAsset.fetchAssets(with: .image, options: nil) : nil
         guard on else {
             let left = stopBackgroundDescribing(announce: false)
             announce(left > 0 ? "Background describing off. Stopped with \(left == 1 ? "1 photo" : "\(left) photos") not described."

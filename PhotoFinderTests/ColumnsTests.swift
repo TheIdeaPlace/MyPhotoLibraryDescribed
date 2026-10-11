@@ -70,3 +70,53 @@ final class DescriptionCacheTests: XCTestCase {
         XCTAssertNil(reloaded.description(forKey: "photo-2"))
     }
 }
+
+final class ColumnMigrationTests: XCTestCase {
+    func testOldTableCustomizationCarriesOver() throws {
+        var old = TableColumnCustomization<FileRow>()
+        old[visibility: "caption"] = .hidden
+        old[visibility: "keywords"] = .visible
+        let data = try JSONEncoder().encode(old)
+        XCTAssertEqual(ColumnOrder.migrate(customization: data),
+                       ["name", "date", "kind", "dimensions", "duration", "favorite", "keywords"])
+        XCTAssertNil(ColumnOrder.migrate(customization: Data("not json".utf8)))
+    }
+}
+
+final class BackgroundQueueTests: XCTestCase {
+    func testProgressAndSummary() {
+        var queue = BackgroundQueue()
+        XCTAssertNil(queue.progress)
+        XCTAssertEqual(queue.add(["a", "b", "c"]), 3)
+        XCTAssertEqual(queue.add(["b", "d"]), 1)
+        XCTAssertEqual(queue.progress, "Describing photos in the background, 1 of 4")
+        XCTAssertEqual(queue.next(), "a")
+        queue.finished(described: true)
+        XCTAssertEqual(queue.progress, "Describing photos in the background, 2 of 4")
+        XCTAssertEqual(queue.next(), "b")
+        queue.skippedNotOnThisMac()
+        XCTAssertEqual(queue.summary, "Finished describing 1 photo in the background. 1 photo wasn't described because it's only in iCloud.")
+    }
+
+    func testFailedPhotosAreRetriedAFewTimesThenLeft() {
+        var queue = BackgroundQueue()
+        queue.add(["a"])
+        XCTAssertEqual(queue.next(), "a")
+        XCTAssertTrue(queue.retryLater("a"))
+        XCTAssertEqual(queue.next(), "a")
+        XCTAssertTrue(queue.retryLater("a"))
+        XCTAssertEqual(queue.next(), "a")
+        XCTAssertFalse(queue.retryLater("a"))
+        XCTAssertNil(queue.next())
+        XCTAssertNil(queue.summary)
+    }
+
+    func testStopEmptiesTheQueueAndSaysHowManyWereLeft() {
+        var queue = BackgroundQueue()
+        queue.add(["a", "b", "c"])
+        _ = queue.next()
+        XCTAssertEqual(queue.stop(), 2)
+        XCTAssertTrue(queue.isEmpty)
+        XCTAssertNil(queue.progress)
+    }
+}

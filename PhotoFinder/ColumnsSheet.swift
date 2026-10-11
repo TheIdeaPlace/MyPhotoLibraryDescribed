@@ -5,9 +5,11 @@ import SwiftUI
 /// shown in the order they're read, Add, Remove, Move Up, Move Down, Move to Top, Move to Bottom and Reset to
 /// Default, and a preview of the selected photo's line. OK keeps the choice; Cancel (or Escape) leaves it.
 ///
-/// Keys as well as buttons: Return in Available adds, Delete in Shown removes, and Option-Up Arrow,
-/// Option-Down Arrow, Option-Home and Option-End in Shown move. Every action is announced, and the moved column
-/// stays selected, so arrowing on reads its new neighbours.
+/// Keys: Return (or a double-click) in Available adds, and in Shown removes; Delete in Shown removes.
+/// Option-Up Arrow, Option-Down Arrow, Option-Home and Option-End move the selected shown column: they're the
+/// Move buttons' keyboard shortcuts, which work wherever focus is in the sheet, rather than key handlers on the
+/// list, which a Mac list may never pass the keys to. Every action is announced, and the moved column stays
+/// selected, so arrowing on reads its new neighbours.
 struct ColumnsSheet: View {
     let model: LibraryModel
     @Environment(\.dismiss) private var dismiss
@@ -17,6 +19,8 @@ struct ColumnsSheet: View {
     private enum Field { case available, shown }
 
     private static let explanation = "Choose which columns the list shows, and in what order. VoiceOver reads each photo in this order too: put Caption or Date Taken first to hear it before the file name."
+    private static let availableKeys = "Return adds the selected column."
+    private static let shownKeys = "Delete or Return removes the selected column. Option-Up Arrow and Option-Down Arrow move it; Option-Home and Option-End move it to the top or bottom."
 
     init(model: LibraryModel) {
         self.model = model
@@ -27,13 +31,16 @@ struct ColumnsSheet: View {
         model.focusedRow.flatMap { $0.isContainer ? nil : $0 } ?? model.rows.first { !$0.isContainer }
     }
 
+    private var preview: String { sample?.line(for: editor.shown) ?? "There's no photo here to preview." }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(Self.explanation)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Available columns:")
+                    // The list carries this as its label, so VoiceOver doesn't hear it twice.
+                    Text("Available columns:").accessibilityHidden(true)
                     List(selection: $editor.availableSelection) {
                         if editor.notShown.isEmpty {
                             // An empty list reads as nothing at all to VoiceOver.
@@ -43,32 +50,24 @@ struct ColumnsSheet: View {
                             Text(ColumnOrder.title(id)).tag(id as String?)
                         }
                     }
+                    // Return and double-click: a list's primary action, the native way to act on its row.
+                    .contextMenu(forSelectionType: String.self, menu: { _ in }, primaryAction: { _ in say(editor.add()) })
                     .focused($focus, equals: .available)
                     .accessibilityLabel("Available columns")
-                    .accessibilityHint(Self.explanation)
-                    .onKeyPress(.return) { say(editor.add()); return .handled }
+                    .accessibilityHint("\(Self.explanation) \(Self.availableKeys)")
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Shown columns, in the order they're read:")
+                    Text("Shown columns, in the order they're read:").accessibilityHidden(true)
                     List(selection: $editor.shownSelection) {
                         ForEach(editor.shown, id: \.self) { id in
                             Text(ColumnOrder.title(id)).tag(id as String?)
                         }
                     }
+                    .contextMenu(forSelectionType: String.self, menu: { _ in }, primaryAction: { _ in say(editor.remove()) })
+                    .onDeleteCommand { say(editor.remove()) }
                     .focused($focus, equals: .shown)
                     .accessibilityLabel("Shown columns, in the order they're read")
-                    .accessibilityHint(Self.explanation)
-                    .onKeyPress(keys: [.delete, .deleteForward]) { _ in say(editor.remove()); return .handled }
-                    .onKeyPress(keys: [.upArrow, .downArrow, .home, .end], phases: .down) { press in
-                        guard press.modifiers == .option else { return .ignored }
-                        switch press.key {
-                        case .upArrow: say(editor.move(by: -1))
-                        case .downArrow: say(editor.move(by: 1))
-                        case .home: say(editor.moveToEnd(top: true))
-                        default: say(editor.moveToEnd(top: false))
-                        }
-                        return .handled
-                    }
+                    .accessibilityHint("\(Self.explanation) \(Self.shownKeys)")
                 }
             }
             .frame(minHeight: 220)
@@ -77,17 +76,21 @@ struct ColumnsSheet: View {
                 Button("Add") { say(editor.add()) }
                 Button("Remove") { say(editor.remove()) }
                 Button("Move Up") { say(editor.move(by: -1)) }
+                    .keyboardShortcut(.upArrow, modifiers: .option)
                 Button("Move Down") { say(editor.move(by: 1)) }
+                    .keyboardShortcut(.downArrow, modifiers: .option)
                 Button("Move to Top") { say(editor.moveToEnd(top: true)) }
+                    .keyboardShortcut(.home, modifiers: .option)
                 Button("Move to Bottom") { say(editor.moveToEnd(top: false)) }
+                    .keyboardShortcut(.end, modifiers: .option)
                 Button("Reset to Default") { say(editor.reset()) }
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text("Preview of the selected photo's line:")
-                Text(sample?.line(for: editor.shown) ?? "There's no photo here to preview.")
+                Text("Preview of the selected photo's line:").accessibilityHidden(true)
+                Text(preview)
                     .textSelection(.enabled)
                     .accessibilityLabel("Preview of the selected photo's line")
-                    .accessibilityValue(sample?.line(for: editor.shown) ?? "There's no photo here to preview.")
+                    .accessibilityValue(preview)
             }
             HStack {
                 Spacer()
@@ -102,7 +105,8 @@ struct ColumnsSheet: View {
         }
         .padding()
         .frame(minWidth: 620, minHeight: 480)
-        .onAppear { focus = .shown }
+        // Set as the sheet's default rather than on appear, which can run before the sheet has a window.
+        .defaultFocus($focus, .shown)
     }
 
     private func say(_ text: String) {

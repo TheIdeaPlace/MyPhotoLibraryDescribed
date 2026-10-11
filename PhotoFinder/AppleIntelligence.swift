@@ -27,6 +27,9 @@ final class ImageConversation {
     private var session: LanguageModelSession?
     /// A description saved earlier (by Describe Image or background describing), shown without asking again.
     private let saved: String?
+
+    /// Whether this started from a saved description rather than describing.
+    var startedFromSaved: Bool { saved != nil }
     private let onDescribed: (String) -> Void
 
     static let instructions = """
@@ -133,7 +136,7 @@ final class ImageConversation {
 
     /// Decodes the photo at a sensible size, already rotated upright. The model resizes internally,
     /// so a full-resolution decode would only cost memory.
-    static func makeImage(from data: Data) -> CGImage? {
+    nonisolated static func makeImage(from data: Data) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -176,6 +179,13 @@ struct AppleIntelligenceSection: View {
                 }
                 if let error = conversation.errorMessage {
                     Text(error).foregroundStyle(.red)
+                }
+            }
+            if let conversation, conversation.startedFromSaved, !conversation.isWorking {
+                // A saved description may be stale (the photo was edited) or poor: describing again replaces it.
+                Button("Describe Again") {
+                    self.conversation = nil
+                    start()
                 }
             }
             if conversation?.exchanges.isEmpty ?? true {
