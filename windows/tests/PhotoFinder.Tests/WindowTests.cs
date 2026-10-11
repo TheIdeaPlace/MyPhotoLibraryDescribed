@@ -285,4 +285,93 @@ public sealed class WindowTests : IDisposable
             window.Close();
         }
     }
+
+    [WpfFact]
+    public async Task Gallery_NamesThePhotoOnly_FooterIsTabbable_AndTheStatusBarIsTheLastPane()
+    {
+        _lib.AddJpeg(@"Trip\a.jpg", new TestLibrary.JpegOptions { Title = "Beach", DateTaken = new DateTime(2022, 6, 1) });
+        var announced = new List<string>();
+        Announcer.Observer = announced.Add;
+        var model = new LibraryModel(new Settings(), _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
+            () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1));
+        var window = new MainWindow(model) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.True(await WaitFor(() => model.Rows.Count == 1 && model.DetailProgress is null && model.Rows[0].Caption == "Beach"));
+            model.SelectedRows = [model.Rows[0]];
+            AppCommands.AsGallery.Execute(null, window);
+            // Just the name, so arrowing says which photo and the description follows it.
+            Assert.True(await WaitFor(() => AutomationProperties.GetName(window.GalleryImage) == "a.jpg"));
+            window.UpdateLayout();
+
+            // Tab from the photo goes through the footer in reading order: name, details, caption (no description
+            // yet), then Previous, the position and Next.
+            var tabOrder = TabOrder(window);
+            var fromPhoto = tabOrder.SkipWhile(e => e != window.GalleryImage).Skip(1).Take(6).ToList();
+            Assert.Equal<DependencyObject>([window.GalleryName, window.GalleryDetails, window.GalleryCaption,
+                window.PreviousButton, window.GalleryPositionText, window.NextButton], fromPhoto);
+            Assert.Equal("1 of 1", window.GalleryPositionText.Text);
+            // The status bar is reached with F6, not Tab, as in QuickMail.
+            Assert.DoesNotContain(tabOrder, e => e is TextBlock);
+
+            // Only sections with something to say are stops.
+            Assert.Equal([window.StatusBarText], window.StatusSections());
+            model.BackgroundProgress = "Describing photos in the background, 1 of 2";
+            window.UpdateLayout();
+            Assert.Equal([window.StatusBarText, window.BackgroundText], window.StatusSections());
+            Assert.Equal(model.StatusText, window.StatusBarText.Text);
+            SetActivity(model, "Exporting…");
+            window.UpdateLayout();
+            Assert.Equal([window.StatusBarText, window.ActivityText, window.BackgroundText], window.StatusSections());
+            Assert.Equal("Exporting…", window.ActivityText.Text);
+
+            // F6 from the gallery goes Search, then the status bar, then round to the sidebar.
+            Assert.True(window.GalleryImage.Focus());
+            AppCommands.NextPane.Execute(null, window);
+            Assert.True(window.SearchBox.IsKeyboardFocusWithin);
+            AppCommands.NextPane.Execute(null, window);
+            Assert.True(window.StatusBarText.IsKeyboardFocused);
+            Assert.Contains(announced, a => a.StartsWith("Status bar: "));
+
+            // Right and Left wrap through the sections.
+            window.StatusBar_PreviewKeyDown(window.MainStatusBar, Press(System.Windows.Input.Key.Right));
+            Assert.True(window.ActivityText.IsKeyboardFocused);
+            window.StatusBar_PreviewKeyDown(window.MainStatusBar, Press(System.Windows.Input.Key.Right));
+            Assert.True(window.BackgroundText.IsKeyboardFocused);
+            window.StatusBar_PreviewKeyDown(window.MainStatusBar, Press(System.Windows.Input.Key.Right));
+            Assert.True(window.StatusBarText.IsKeyboardFocused);
+            window.StatusBar_PreviewKeyDown(window.MainStatusBar, Press(System.Windows.Input.Key.Left));
+            Assert.True(window.BackgroundText.IsKeyboardFocused);
+            window.StatusBar_PreviewKeyDown(window.MainStatusBar, Press(System.Windows.Input.Key.Left));
+            Assert.True(window.ActivityText.IsKeyboardFocused);
+
+            // The section you're on going away (the export finished) leaves you in the status bar.
+            SetActivity(model, null);
+            Assert.True(await WaitFor(() => window.StatusBarText.IsKeyboardFocused));
+            model.BackgroundProgress = null;
+
+            AppCommands.NextPane.Execute(null, window);
+            Assert.True(window.Sidebar.IsKeyboardFocusWithin);
+            AppCommands.PreviousPane.Execute(null, window);
+            Assert.True(window.MainStatusBar.IsKeyboardFocusWithin);
+
+            // Escape goes back to the photo.
+            window.StatusBar_PreviewKeyDown(window.MainStatusBar, Press(System.Windows.Input.Key.Escape));
+            Assert.True(window.GalleryImage.IsKeyboardFocused);
+        }
+        finally
+        {
+            Announcer.Observer = null;
+            window.Close();
+        }
+    }
+
+    private static void SetActivity(LibraryModel model, string? activity) =>
+        typeof(LibraryModel).GetProperty(nameof(LibraryModel.Activity))!.SetValue(model, activity);
+
+    /// <summary>A key press as WPF would deliver it to the focused element.</summary>
+    private static KeyEventArgs Press(Key key) =>
+        new(Keyboard.PrimaryDevice, PresentationSource.FromVisual((System.Windows.Media.Visual)Keyboard.FocusedElement)!, 0, key)
+        { RoutedEvent = Keyboard.PreviewKeyDownEvent };
 }

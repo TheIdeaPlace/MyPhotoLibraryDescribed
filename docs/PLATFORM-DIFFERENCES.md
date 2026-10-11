@@ -37,7 +37,7 @@ These follow from what each operating system offers apps, and aren't gaps to clo
 - **Setting ratings.** Windows sets ratings from Photo > Rating. PhotoKit may not allow apps to write ratings; check before building.
 - **Sort By menu.** Windows has View > Sort By for sorting without a column header. On the Mac, sorting is only by clicking column headers.
 - **Search result count.** Windows speaks how many results a search found. The Mac doesn't announce it.
-- **Moving between panes.** Windows has F6 and Shift+F6 for sidebar, list and search. The Mac relies on Tab and VoiceOver.
+- **Moving between panes.** Both have F6 and Shift+F6 (Go > Next Pane and Previous Pane on the Mac) for the sidebar, the list or gallery, search and the status bar, with Left and Right Arrow between status bar sections. On Windows the status bar is reached only with F6, not Tab, as in QuickMail; on the Mac, SwiftUI's focusable status sections may also be Tab stops.
 - **Gallery Home and End.** Windows' gallery goes to the first and last item with Home and End.
 - **Tests.** Windows has about 270 tests; the Mac has a handful (columns and the description cache). Mac CI can't compile the macOS 27 code until GitHub's runners have Xcode 27.
 - **Installer.** Windows has a test installer (`windows/scripts/package-test.ps1`). The Mac is built from Xcode.

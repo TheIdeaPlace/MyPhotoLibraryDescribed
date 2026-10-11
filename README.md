@@ -8,7 +8,8 @@ There's also a separate native Windows version, built for JAWS, NVDA and Narrato
 
 - **Sidebar** with *Library* (All Photos, Favorites, Videos, Screenshots and the other smart albums), *Dates* (a folder for each year, with a folder for each month inside), *My Albums* (including album folders) and *Shared Albums*.
 - **List view** with Name (the original file name, such as `IMG_1234.HEIC`), Date Taken, Kind, Caption, Dimensions, Duration and Favorite columns. Click a column header to sort. **View > Columns…** chooses which columns are shown and in what order: Available and Shown lists, Add, Remove, Move Up, Move Down, Move to Top, Move to Bottom and Reset to Default, with a preview of the selected photo's line. Option-Up and Option-Down Arrow (and Option-Home and Option-End) move the selected column, Return in Available adds one and Delete in Shown removes one, and each change is announced. VoiceOver reads each row's cells in this order. The extra columns are Keywords, Rating, Date Modified, File Type, Orientation, Megapixels, Location and Source.
-- **Gallery view** (View > as Gallery) shows one full-size image at a time. The image uses the same name as the list, so VoiceOver's image descriptions (VO-Shift-L) work on the whole picture instead of a thumbnail. Arrow keys move between items.
+- **Gallery view** (View > as Gallery) shows one full-size image at a time. The image is named with just the file name, so arrowing says which photo and its description follows, and VoiceOver's image descriptions (VO-Shift-L) work on the whole picture instead of a thumbnail. The kind, date, size and caption are in the footer below. Arrow keys move between items.
+- **Status bar**: Go > Next Pane (F6) and Previous Pane (Shift-F6) move between the sidebar, the list or gallery, Search and the status bar. In the status bar, Left and Right Arrow move between its sections (the library summary, what's being done now, and background describing), and Escape goes back to the list or gallery.
 - **Edit Caption** (macOS 27 and later) writes the caption to your Photos library, where it syncs with iCloud Photos. PhotoKit can't rename a photo's original file, so the app offers captions instead.
 - Folders, years and albums also appear as rows in the list, so you can move through the library like Finder.
 - **Get Info** shows the date, location, camera, lens and exposure details. Its *Describe Image* button uses on-device Vision to list what is in the photo and read any text it contains.
@@ -30,6 +31,7 @@ There's also a separate native Windows version, built for JAWS, NVDA and Narrato
 | Edit Caption | Shift-Command-E |
 | List view / Gallery view | Command-2 / Command-4 |
 | Previous or next item in the gallery | Left or Right Arrow (Up or Down also work) |
+| Move between the sidebar, the list or gallery, Search and the status bar | F6 and Shift-F6 (Fn-F6 on a Mac keyboard) |
 | Search the current list | Command-F |
 | Go to All Photos | Shift-Command-A |
 

@@ -7,6 +7,16 @@ using System.Windows.Media;
 
 namespace PhotoFinder.Views;
 
+/// <summary>Shows an element only when its text isn't empty, so status bar sections with nothing to say are skipped.</summary>
+public sealed class TextVisibilityConverter : System.Windows.Data.IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) =>
+        string.IsNullOrEmpty(value as string) ? Visibility.Collapsed : Visibility.Visible;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
 /// <summary>A ListView that can replace its whole selection in one step, which ListBox keeps protected.
 /// Selecting thousands of rows one at a time raises an event for each.</summary>
 public sealed class FileListView : ListView

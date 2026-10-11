@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct PhotoCommands: Commands {
     let model: LibraryModel
+    private static let f6 = KeyEquivalent(Character(UnicodeScalar(NSF6FunctionKey)!))
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -66,6 +67,12 @@ struct PhotoCommands: Commands {
             Divider()
             Button("All Photos") { model.navigate(to: SidebarID.allPhotos) }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
+            Divider()
+            // F6 and Shift-F6, as on Windows: sidebar, list or gallery, Search, status bar.
+            Button("Next Pane") { model.movePane(by: 1) }
+                .keyboardShortcut(Self.f6, modifiers: [])
+            Button("Previous Pane") { model.movePane(by: -1) }
+                .keyboardShortcut(Self.f6, modifiers: .shift)
         }
         CommandMenu("Photo") {
             Button("Toggle Favorite") { model.toggleFavorite() }

@@ -485,12 +485,49 @@ public partial class MainWindow : Window
 
     // MARK: Panes
 
-    /// <summary>F6 and Shift+F6 move between the sidebar, the list or gallery, and search.</summary>
+    /// <summary>F6 and Shift+F6 move between the sidebar, the list or gallery, search and the status bar.</summary>
     private void MovePane(int direction)
     {
-        var panes = new List<Action> { FocusSidebarSelection, FocusContent, () => SearchBox.Focus() };
-        var current = Sidebar.IsKeyboardFocusWithin ? 0 : SearchBox.IsKeyboardFocusWithin ? 2 : 1;
+        var panes = new List<Action> { FocusSidebarSelection, FocusContent, () => SearchBox.Focus(), FocusStatusBar };
+        var current = Sidebar.IsKeyboardFocusWithin ? 0 : SearchBox.IsKeyboardFocusWithin ? 2 : MainStatusBar.IsKeyboardFocusWithin ? 3 : 1;
         panes[(current + direction + panes.Count) % panes.Count]();
+    }
+
+    // MARK: Status bar
+
+    /// <summary>The status bar's sections that have something to say, in order.</summary>
+    internal List<TextBlock> StatusSections() =>
+        new[] { StatusBarText, ActivityText, BackgroundText }.Where(t => t.IsVisible || t == StatusBarText).ToList();
+
+    /// <summary>F6 to the status bar: its first section, announced as the status bar, as QuickMail does.</summary>
+    internal void FocusStatusBar()
+    {
+        StatusBarText.Focus();
+        Services.Announcer.Announce($"Status bar: {StatusBarText.Text}");
+    }
+
+    /// <summary>When the section you're on goes away (the export finished), focus stays in the status bar.</summary>
+    private void StatusSection_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is false && sender is TextBlock { IsKeyboardFocused: true }) StatusBarText.Focus();
+    }
+
+    /// <summary>Left and Right move between the sections, wrapping; Escape goes back to the list or gallery.</summary>
+    internal void StatusBar_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (Keyboard.Modifiers != ModifierKeys.None) return;
+        if (e.Key == Key.Escape)
+        {
+            FocusContent();
+            e.Handled = true;
+            return;
+        }
+        if (e.Key is not (Key.Left or Key.Right)) return;
+        var sections = StatusSections();
+        var at = sections.FindIndex(t => t.IsKeyboardFocused);
+        var next = at < 0 ? 0 : (at + (e.Key == Key.Right ? 1 : -1) + sections.Count) % sections.Count;
+        sections[next].Focus();
+        e.Handled = true;
     }
 
     // MARK: View mode and gallery
@@ -548,7 +585,9 @@ public partial class MainWindow : Window
             row.PropertyChanged += GalleryRow_PropertyChanged;
         }
         ShowGalleryDescription(row);
-        AutomationProperties.SetName(GalleryImage, row.SpokenDescription);
+        // Just the name: arrowing through the gallery says which photo, then its description follows. The rest is in
+        // the footer below (Tab to it).
+        AutomationProperties.SetName(GalleryImage, row.Name);
         if (_galleryShownId == row.Id) return;
         _galleryShownId = row.Id;
 
