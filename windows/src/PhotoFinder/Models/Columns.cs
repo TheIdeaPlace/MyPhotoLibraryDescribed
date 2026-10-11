@@ -25,7 +25,7 @@ public static class Columns
         new("size", "Size", false, 90),
         new("orientation", "Orientation", false, 90),
         new("megapixels", "Megapixels", false, 90),
-        new("location", "Location", false, 150),
+        new("location", "Place Taken", false, 150),
         new("folder", "Folder", false, 260),
     ];
 

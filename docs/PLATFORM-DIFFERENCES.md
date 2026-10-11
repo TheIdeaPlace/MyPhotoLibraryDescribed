@@ -21,19 +21,19 @@ These follow from what each operating system offers apps, and aren't gaps to clo
 | Copy, Export, drag | Exports the current version, downloading it if needed | Copies the original file |
 | Image description | Apple Intelligence (macOS 27), in the app | Windows AI on Copilot+ PCs, through a small packaged helper, because Windows only lets packaged apps use the model |
 | Reading text in photos | Vision | Windows OCR |
-| Location | Coordinates, plus a place name from reverse geocoding | Coordinates only: Windows' geocoder needs a Maps key |
+| Place Taken | Coordinates, plus a place name from reverse geocoding | Coordinates only: Windows' geocoder needs a Maps key |
 | Library changes | PhotoKit's change observer | Watching the library's folders on disk |
 | Screen reader announcements | VoiceOver announcements | UIA notification events, for JAWS, NVDA and Narrator |
 | Columns from the source | Source (My Library, Shared Album, Synced) | Size and Folder |
-| Adding folders | Not applicable: the library is Photos | File > Add Folder to Library and Remove Folder from Library |
+| Adding folders | Not applicable: the library is Photos | File > Add Folder to Library and Remove Folder from Library; Delete on a library folder in the sidebar |
+| Unavailable menu items | macOS menus already let VoiceOver reach them | WPF skips disabled items, so Photo Finder's menu items stay reachable and are read as unavailable |
 | Show the file | Not applicable | Show in File Explorer (Ctrl+Shift+R) |
 
 ## Gaps to close
 
 ### On the Mac, from Windows
 
-- **Automatic descriptions.** Windows describes the photo you arrow to and speaks the description, with a setting to turn it off. The Mac describes only when you press Describe Image in Get Info.
-- **Description types.** Windows offers Accessible, Detailed, Brief and Diagram. The Mac has one prompt, plus follow-up questions (see below).
+- **Automatic descriptions.** Windows describes the photo you arrow to and speaks the description, with a setting to turn it off. The Mac describes when you press Describe Photo (Shift-Command-D) or Describe Image in Get Info.
 - **Setting ratings.** Windows sets ratings from Photo > Rating. PhotoKit may not allow apps to write ratings; check before building.
 - **Sort By menu.** Windows has View > Sort By for sorting without a column header. On the Mac, sorting is only by clicking column headers.
 - **Search result count.** Windows speaks how many results a search found. The Mac doesn't announce it.
@@ -57,3 +57,5 @@ These follow from what each operating system offers apps, and aren't gaps to clo
 
 - **Columns dialog:** View > Columns… on both, with the same lists, buttons, keys (Alt on Windows, Option on the Mac) and announcements. Column order sets the order each row is read in.
 - **Saved descriptions:** both save descriptions, so a photo is described once.
+- **Describe Photo:** Ctrl+Shift+D on Windows (list, gallery and Preview), Shift-Command-D on the Mac (list and gallery), describing the photo you're on and speaking it.
+- **Choosing how photos are described:** Windows has Photo > Description Type, with Windows AI's four kinds (Accessible, Detailed, Brief, Diagram). The Mac's Settings has the prompt itself, since Apple Intelligence takes any prompt.

@@ -28,7 +28,7 @@ enum ColumnOrder {
         ColumnInfo(id: "fileType", title: "File Type", visibleByDefault: false),
         ColumnInfo(id: "orientation", title: "Orientation", visibleByDefault: false),
         ColumnInfo(id: "megapixels", title: "Megapixels", visibleByDefault: false),
-        ColumnInfo(id: "location", title: "Location", visibleByDefault: false),
+        ColumnInfo(id: "location", title: "Place Taken", visibleByDefault: false),
         ColumnInfo(id: "source", title: "Source", visibleByDefault: false),
     ]
 
@@ -144,7 +144,7 @@ extension FileRow {
             case "keywords": return "Keywords: \(value)"
             case "favorite": return "Favorite"
             case "modified": return "Modified \(value)"
-            case "location": return "Location \(value)"
+            case "location": return "Place taken \(value)"
             default: return value
             }
         }

@@ -40,7 +40,8 @@ public static class AppCommands
         new KeyGesture(Key.F, ModifierKeys.Control | ModifierKeys.Shift));
     public static readonly RoutedUICommand EditCaption = Make("Edit Cap_tion…", nameof(EditCaption),
         new KeyGesture(Key.F2), new KeyGesture(Key.E, ModifierKeys.Control | ModifierKeys.Shift));
-    public static readonly RoutedUICommand DescribeImage = Make("_Describe Image…", nameof(DescribeImage),
+    /// <summary>Describes the photo you're on and speaks it, in the list, gallery or Preview.</summary>
+    public static readonly RoutedUICommand DescribePhoto = Make("_Describe Photo", nameof(DescribePhoto),
         new KeyGesture(Key.D, ModifierKeys.Control | ModifierKeys.Shift));
     public static readonly RoutedUICommand DescribeInBackground = Make("Describe Added Folders in the Bac_kground", nameof(DescribeInBackground));
     public static readonly RoutedUICommand StopBackground = Make("_Stop Background Describing", nameof(StopBackground));

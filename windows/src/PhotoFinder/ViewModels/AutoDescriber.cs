@@ -35,6 +35,8 @@ public sealed class AutoDescriber : IDisposable
     private bool _running;
     private bool _waiting;
     private bool _unavailable;
+    /// <summary>Describe Photo requests in progress.</summary>
+    private int _manual;
     /// <summary>The photo last moved to. The selection is re-applied whenever the list refreshes; that isn't
     /// moving, and mustn't speak the description again.</summary>
     private string? _lastPath;
@@ -62,7 +64,7 @@ public sealed class AutoDescriber : IDisposable
     public Func<bool> CanSpeak { get; set; } = () => true;
 
     /// <summary>Describing, or about to (the pause after arrowing): background describing waits for this.</summary>
-    public bool IsBusy => _waiting || _running;
+    public bool IsBusy => _waiting || _running || _manual > 0;
 
     public bool Enabled
     {
@@ -106,6 +108,92 @@ public sealed class AutoDescriber : IDisposable
     public void Refocused()
     {
         if (CurrentPath() is { } path && path != _spokenPath) FocusChanged(force: true);
+    }
+
+    /// <summary>
+    /// Photo > Describe Photo (Ctrl+Shift+D): describes <paramref name="row"/> now and speaks it, whether or not
+    /// automatic descriptions are on. Since you asked, it gets Windows' model ready if that's all it needs, and says
+    /// why when it can't. <paramref name="stillOn"/> says whether you're still on that photo when it's done.
+    /// </summary>
+    public Task DescribeNowAsync(FileRow row, Func<bool> stillOn)
+    {
+        var task = DescribeNowCoreAsync(row, stillOn);
+        Busy(task);
+        return task;
+    }
+
+    private async Task DescribeNowCoreAsync(FileRow row, Func<bool> stillOn)
+    {
+        if (row.Item is not { } item)
+        {
+            Announcer.Announce("Only photos can be described.");
+            return;
+        }
+        if (item.IsVideo)
+        {
+            Announcer.Announce("Videos can't be described.");
+            return;
+        }
+        if (item.IsOnlineOnly)
+        {
+            Announcer.Announce("This photo is only online. Open it once to download it, then describe it.");
+            return;
+        }
+        // Automatic describing of the same photo would only say it again.
+        if (_target == item.Path)
+        {
+            _wait?.Cancel();
+            _waiting = false;
+            _target = null;
+        }
+        var kind = _model.Settings.DescriptionKind;
+        if (_store.Get(item, kind) is { } saved)
+        {
+            row.Description = saved;
+            Announcer.Announce(saved);
+            _spokenPath = item.Path;
+            return;
+        }
+        _manual++;
+        try
+        {
+            var readiness = await _check(_closing.Token);
+            if (readiness.State == "NotReady")
+            {
+                Announcer.Announce("Getting Windows' image description model ready. The first time, this can take a few minutes.");
+                readiness = await _prepare(_closing.Token);
+            }
+            if (readiness.State != "Ready")
+            {
+                Announcer.Announce($"This photo can't be described. {readiness.Message}");
+                return;
+            }
+            _unavailable = false;
+            Announcer.Announce($"Describing {item.Name}");
+            var text = await _describe(item, kind, _closing.Token);
+            if (text.Length == 0)
+            {
+                if (stillOn()) Announcer.Announce("Windows returned an empty description.");
+                return;
+            }
+            _store.Put(item, kind, text);
+            row.Description = text;
+            if (!stillOn()) return;
+            Announcer.Announce(text);
+            _spokenPath = item.Path;
+        }
+        catch (OperationCanceledException)
+        {
+            // Closing.
+        }
+        catch (Exception ex)
+        {
+            if (stillOn()) Announcer.Announce(ex is DescriptionException ? ex.Message : $"Windows couldn't describe this photo: {ex.Message}");
+        }
+        finally
+        {
+            _manual--;
+        }
     }
 
     private void Model_PropertyChanged(object? sender, PropertyChangedEventArgs e)

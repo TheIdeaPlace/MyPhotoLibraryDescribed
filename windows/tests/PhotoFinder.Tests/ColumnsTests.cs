@@ -9,6 +9,13 @@ namespace PhotoFinder.Tests;
 public class ColumnOrderTests
 {
     [Fact]
+    public void WhereAPhotoWasTaken_IsCalledPlaceTaken_NotLocation_SoItIsntReadAsTheFolder()
+    {
+        Assert.Equal("Place Taken", Columns.Find("location")!.Title);
+        Assert.Equal("Folder", Columns.Find("folder")!.Title);
+    }
+
+    [Fact]
     public void Clean_DropsUnknownAndRepeated_AndAlwaysKeepsName()
     {
         Assert.Equal(["caption", "name", "date"], Columns.Clean(["caption", "nonsense", "name", "date", "caption"]));

@@ -370,6 +370,63 @@ public sealed class WindowTests : IDisposable
     private static void SetActivity(LibraryModel model, string? activity) =>
         typeof(LibraryModel).GetProperty(nameof(LibraryModel.Activity))!.SetValue(model, activity);
 
+    private static IEnumerable<MenuItem> AllMenuItems(ItemsControl parent) =>
+        parent.Items.OfType<MenuItem>().SelectMany(m => AllMenuItems(m).Prepend(m));
+
+    [WpfFact]
+    public async Task Menus_KeepUnavailableItemsReachable_SidebarDeleteRemovesOnlyLibraryFolders_AndDescriptionTypeIsAChoice()
+    {
+        _lib.AddJpeg(@"Trip\a.jpg");
+        var model = new LibraryModel(new Settings(), _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
+            () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1));
+        var window = new MainWindow(model) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.True(await WaitFor(() => model.Rows.Count == 1 && model.DetailProgress is null));
+
+            // Every menu item stays enabled to WPF, so the arrows reach it, and says whether it can be used.
+            var items = AllMenuItems(window.MainMenu).ToList();
+            Assert.All(items, m => Assert.IsType<AppMenuItem>(m));
+            var remove = (AppMenuItem)items.Single(m => m.Command == AppCommands.RemoveFolder);
+            remove.UpdateAvailability();
+            Assert.True(remove.IsEnabled);
+            Assert.True(remove.Focusable);
+            Assert.False(remove.IsAvailable);
+            var peer = (System.Windows.Automation.Peers.AutomationPeer)System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(remove);
+            Assert.False(peer.IsEnabled());
+            Assert.Equal("Only folders in the library can be removed.", window.SidebarRemovalProblem());
+            // Down Arrow from Add Folder lands on it rather than skipping to Refresh, as a disabled WPF item would.
+            var file = window.MainMenu.Items.OfType<MenuItem>().First();
+            file.IsSubmenuOpen = true;
+            Assert.True(await WaitFor(() => remove.IsVisible));
+            var add = items.Single(m => m.Command == AppCommands.AddFolder);
+            Assert.Same(remove, add.PredictFocus(FocusNavigationDirection.Down));
+            file.IsSubmenuOpen = false;
+
+            // On a library folder, it can be removed; a folder inside it can't on its own.
+            model.Navigate(model.Sections[2].Children[0].Id);
+            remove.UpdateAvailability();
+            Assert.True(remove.IsAvailable);
+            Assert.True(peer.IsEnabled());
+            Assert.Null(window.SidebarRemovalProblem());
+            model.Navigate(SidebarIds.Folder(_lib.PathOf("Trip")));
+            Assert.StartsWith("This folder is part of ", window.SidebarRemovalProblem());
+
+            // Photo > Description Type: the four kinds, and choosing one is saved.
+            var kinds = items.Single(m => m.Name == "KindMenu").Items.OfType<AppMenuItem>().ToList();
+            Assert.Equal(["Accessible", "Detailed", "Brief", "Diagram"], kinds.Select(k => ((string)k.Header).TrimStart('_')));
+            window.SetDescriptionKind("brief", "Brief");
+            Assert.Equal("brief", Settings.Load(_lib.PathOf(@"data\Settings.json")).DescriptionKind);
+
+            Assert.Contains(items, m => m.Command == AppCommands.DescribePhoto);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     /// <summary>A key press as WPF would deliver it to the focused element.</summary>
     private static KeyEventArgs Press(Key key) =>
         new(Keyboard.PrimaryDevice, PresentationSource.FromVisual((System.Windows.Media.Visual)Keyboard.FocusedElement)!, 0, key)

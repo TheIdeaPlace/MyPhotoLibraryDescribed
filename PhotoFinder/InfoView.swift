@@ -166,7 +166,7 @@ enum PhotoMetadata {
         let asset = box.value
         var fields: [InfoField] = []
         if let location = asset.location, let place = await placeName(for: location) {
-            fields.append(InfoField(label: "Location", value: place))
+            fields.append(InfoField(label: "Place Taken", value: place))
         }
         var imageData: Data?
         if asset.mediaType == .image, let (data, uti) = await requestImageData(box) {

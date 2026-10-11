@@ -129,7 +129,7 @@ public sealed class FileRow : INotifyPropertyChanged
             "keywords" => $"Keywords: {text}",
             "favorite" => "Favorite",
             "modified" => $"Modified {text}",
-            "location" => $"Location {text}",
+            "location" => $"Place taken {text}",
             "folder" => $"in {text}",
             _ => text,
         };

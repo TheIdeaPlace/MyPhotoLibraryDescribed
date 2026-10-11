@@ -39,11 +39,8 @@ final class ImageConversation {
         Do not identify people by name. Do not begin with "The image shows" or "This photo shows".
         """
 
-    static let describePrompt = """
-        Describe this photo. Start with a one-sentence summary, then give the important details: \
-        people and what they are doing, the setting, notable objects, colors and lighting, \
-        and any text that appears in the photo.
-        """
+    /// The standard prompt, or the one chosen in Settings.
+    static var describePrompt: String { DescriptionPrompt.current }
 
     init?(imageData: Data, saved: String? = nil, onDescribed: @escaping (String) -> Void = { _ in }) {
         guard let image = Self.makeImage(from: imageData) else { return nil }
@@ -112,7 +109,7 @@ final class ImageConversation {
         }
     }
 
-    private static func message(for error: Error) -> String {
+    static func message(for error: Error) -> String {
         let declined = "Apple Intelligence declined to describe this image."
         let tooLong = "This conversation is too long for Apple Intelligence. Close Get Info and open it again to start over."
         let language = "Apple Intelligence doesn't support your current language for this."
@@ -144,6 +141,23 @@ final class ImageConversation {
             kCGImageSourceThumbnailMaxPixelSize: 2048,
         ]
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+}
+
+/// Photo > Describe Photo: one description of one photo, with the prompt from Settings.
+@available(macOS 27, *)
+enum PhotoDescriber {
+    static func describe(_ data: Data) async throws -> String? {
+        // Decoded off the main actor: a 2048-pixel decode would stall the window.
+        let image = await Task.detached(priority: .userInitiated) { ImageConversation.makeImage(from: data) }.value
+        guard let image else { return nil }
+        let session = LanguageModelSession(instructions: ImageConversation.instructions)
+        let prompt = ImageConversation.describePrompt
+        let answer = try await session.respond {
+            prompt
+            Attachment(image)
+        }.content
+        return answer.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

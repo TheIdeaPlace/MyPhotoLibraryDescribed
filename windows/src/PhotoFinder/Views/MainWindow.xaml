@@ -26,62 +26,64 @@
         <!-- Not in the Tab or Ctrl+Tab order: menu bars are reached with Alt or F10, as in every Windows app.
              TabNavigation="None" is what does it (IsTabStop="False" is already the Menu's default; Menu sets
              ControlTabNavigation="Once" itself). Never IsTabStop="False" on the menus themselves: WPF's arrow
-             keys look for tab stops, so Right Arrow would stop moving between them. -->
+             keys look for tab stops, so Right Arrow would stop moving between them. Every item is an AppMenuItem, so
+             ones that can't be used now are still reached with the arrows and read as unavailable, not skipped. -->
         <Menu DockPanel.Dock="Top" x:Name="MainMenu" IsTabStop="False" KeyboardNavigation.TabNavigation="None"
               KeyboardNavigation.ControlTabNavigation="None">
-            <MenuItem Header="_File">
-                <MenuItem Command="v:AppCommands.OpenItem" />
-                <MenuItem Command="v:AppCommands.Preview" InputGestureText="Space" />
-                <MenuItem Command="v:AppCommands.GetInfo" />
-                <MenuItem Command="v:AppCommands.ShowInExplorer" />
+            <v:AppMenuItem Header="_File">
+                <v:AppMenuItem Command="v:AppCommands.OpenItem" />
+                <v:AppMenuItem Command="v:AppCommands.Preview" InputGestureText="Space" />
+                <v:AppMenuItem Command="v:AppCommands.GetInfo" />
+                <v:AppMenuItem Command="v:AppCommands.ShowInExplorer" />
                 <Separator />
-                <MenuItem Command="v:AppCommands.Export" />
+                <v:AppMenuItem Command="v:AppCommands.Export" />
                 <Separator />
-                <MenuItem Command="v:AppCommands.AddFolder" />
-                <MenuItem Command="v:AppCommands.RemoveFolder" />
-                <MenuItem Command="v:AppCommands.Refresh" />
+                <v:AppMenuItem Command="v:AppCommands.AddFolder" />
+                <v:AppMenuItem Command="v:AppCommands.RemoveFolder" />
+                <v:AppMenuItem Command="v:AppCommands.Refresh" />
                 <Separator />
-                <MenuItem Command="v:AppCommands.Exit" />
-            </MenuItem>
-            <MenuItem Header="_Edit">
-                <MenuItem Header="_Copy" Command="ApplicationCommands.Copy" />
-                <MenuItem Header="Select _All" Command="ApplicationCommands.SelectAll" />
+                <v:AppMenuItem Command="v:AppCommands.Exit" />
+            </v:AppMenuItem>
+            <v:AppMenuItem Header="_Edit">
+                <v:AppMenuItem Header="_Copy" Command="ApplicationCommands.Copy" />
+                <v:AppMenuItem Header="Select _All" Command="ApplicationCommands.SelectAll" />
                 <Separator />
-                <MenuItem Command="v:AppCommands.Find" />
-            </MenuItem>
-            <MenuItem Header="_View" x:Name="ViewMenu" SubmenuOpened="ViewMenu_SubmenuOpened">
-                <MenuItem x:Name="AsListItem" Command="v:AppCommands.AsList" IsCheckable="False" />
-                <MenuItem x:Name="AsGalleryItem" Command="v:AppCommands.AsGallery" IsCheckable="False" />
+                <v:AppMenuItem Command="v:AppCommands.Find" />
+            </v:AppMenuItem>
+            <v:AppMenuItem Header="_View" x:Name="ViewMenu" SubmenuOpened="ViewMenu_SubmenuOpened">
+                <v:AppMenuItem x:Name="AsListItem" Command="v:AppCommands.AsList" IsCheckable="False" />
+                <v:AppMenuItem x:Name="AsGalleryItem" Command="v:AppCommands.AsGallery" IsCheckable="False" />
                 <Separator />
-                <MenuItem Command="v:AppCommands.ChooseColumns" />
-                <MenuItem Header="_Sort By" x:Name="SortMenu" />
-            </MenuItem>
-            <MenuItem Header="_Go">
-                <MenuItem Command="v:AppCommands.EnclosingFolder" />
-                <MenuItem Command="v:AppCommands.OpenSelected" />
+                <v:AppMenuItem Command="v:AppCommands.ChooseColumns" />
+                <v:AppMenuItem Header="_Sort By" x:Name="SortMenu" />
+            </v:AppMenuItem>
+            <v:AppMenuItem Header="_Go">
+                <v:AppMenuItem Command="v:AppCommands.EnclosingFolder" />
+                <v:AppMenuItem Command="v:AppCommands.OpenSelected" />
                 <Separator />
-                <MenuItem Command="v:AppCommands.AllPhotos" />
-            </MenuItem>
-            <MenuItem Header="_Photo">
-                <MenuItem Command="v:AppCommands.ToggleFavorite" />
-                <MenuItem Command="v:AppCommands.EditCaption" />
-                <MenuItem Header="_Rating">
-                    <MenuItem Header="_No Rating" Command="v:AppCommands.Rate" CommandParameter="0" />
-                    <MenuItem Header="_1 Star" Command="v:AppCommands.Rate" CommandParameter="1" />
-                    <MenuItem Header="_2 Stars" Command="v:AppCommands.Rate" CommandParameter="2" />
-                    <MenuItem Header="_3 Stars" Command="v:AppCommands.Rate" CommandParameter="3" />
-                    <MenuItem Header="_4 Stars" Command="v:AppCommands.Rate" CommandParameter="4" />
-                    <MenuItem Header="_5 Stars" Command="v:AppCommands.Rate" CommandParameter="5" />
-                </MenuItem>
+                <v:AppMenuItem Command="v:AppCommands.AllPhotos" />
+            </v:AppMenuItem>
+            <v:AppMenuItem Header="_Photo">
+                <v:AppMenuItem Command="v:AppCommands.ToggleFavorite" />
+                <v:AppMenuItem Command="v:AppCommands.EditCaption" />
+                <v:AppMenuItem Header="_Rating">
+                    <v:AppMenuItem Header="_No Rating" Command="v:AppCommands.Rate" CommandParameter="0" />
+                    <v:AppMenuItem Header="_1 Star" Command="v:AppCommands.Rate" CommandParameter="1" />
+                    <v:AppMenuItem Header="_2 Stars" Command="v:AppCommands.Rate" CommandParameter="2" />
+                    <v:AppMenuItem Header="_3 Stars" Command="v:AppCommands.Rate" CommandParameter="3" />
+                    <v:AppMenuItem Header="_4 Stars" Command="v:AppCommands.Rate" CommandParameter="4" />
+                    <v:AppMenuItem Header="_5 Stars" Command="v:AppCommands.Rate" CommandParameter="5" />
+                </v:AppMenuItem>
                 <Separator />
-                <MenuItem Command="v:AppCommands.DescribeImage" />
-                <MenuItem x:Name="AutoDescribeItem" Command="v:AppCommands.AutoDescribe" IsCheckable="True" />
-                <MenuItem x:Name="BackgroundDescribeItem" Command="v:AppCommands.DescribeInBackground" IsCheckable="True" />
-                <MenuItem Command="v:AppCommands.StopBackground" />
-            </MenuItem>
-            <MenuItem Header="_Help">
-                <MenuItem Command="v:AppCommands.About" />
-            </MenuItem>
+                <v:AppMenuItem Command="v:AppCommands.DescribePhoto" />
+                <v:AppMenuItem x:Name="AutoDescribeItem" Command="v:AppCommands.AutoDescribe" IsCheckable="True" />
+                <v:AppMenuItem Header="Description _Type" x:Name="KindMenu" />
+                <v:AppMenuItem x:Name="BackgroundDescribeItem" Command="v:AppCommands.DescribeInBackground" IsCheckable="True" />
+                <v:AppMenuItem Command="v:AppCommands.StopBackground" />
+            </v:AppMenuItem>
+            <v:AppMenuItem Header="_Help">
+                <v:AppMenuItem Command="v:AppCommands.About" />
+            </v:AppMenuItem>
         </Menu>
 
         <Border DockPanel.Dock="Top" Padding="8,6" BorderThickness="0,0,0,1"
@@ -197,17 +199,17 @@
                     </v:FileListView.View>
                     <v:FileListView.ContextMenu>
                         <ContextMenu>
-                            <MenuItem Command="v:AppCommands.OpenItem" />
-                            <MenuItem Command="v:AppCommands.Preview" InputGestureText="Space" />
-                            <MenuItem Command="v:AppCommands.GetInfo" />
-                            <MenuItem Command="v:AppCommands.EditCaption" />
-                            <MenuItem Command="v:AppCommands.ShowInExplorer" />
+                            <v:AppMenuItem Command="v:AppCommands.OpenItem" />
+                            <v:AppMenuItem Command="v:AppCommands.Preview" InputGestureText="Space" />
+                            <v:AppMenuItem Command="v:AppCommands.GetInfo" />
+                            <v:AppMenuItem Command="v:AppCommands.EditCaption" />
+                            <v:AppMenuItem Command="v:AppCommands.ShowInExplorer" />
                             <Separator />
-                            <MenuItem Header="_Copy" Command="ApplicationCommands.Copy" />
-                            <MenuItem Command="v:AppCommands.Export" />
+                            <v:AppMenuItem Header="_Copy" Command="ApplicationCommands.Copy" />
+                            <v:AppMenuItem Command="v:AppCommands.Export" />
                             <Separator />
-                            <MenuItem Command="v:AppCommands.ToggleFavorite" />
-                            <MenuItem Command="v:AppCommands.DescribeImage" />
+                            <v:AppMenuItem Command="v:AppCommands.ToggleFavorite" />
+                            <v:AppMenuItem Command="v:AppCommands.DescribePhoto" />
                         </ContextMenu>
                     </v:FileListView.ContextMenu>
                 </v:FileListView>

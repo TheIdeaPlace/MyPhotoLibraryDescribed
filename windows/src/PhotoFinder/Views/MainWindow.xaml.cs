@@ -59,6 +59,7 @@ public partial class MainWindow : Window
         BindCommands();
         BuildColumns();
         BuildSortMenu();
+        BuildKindMenu();
 
         model.PropertyChanged += Model_PropertyChanged;
         model.SelectionRequested += Model_SelectionRequested;
@@ -114,7 +115,7 @@ public partial class MainWindow : Window
         Bind(AppCommands.OpenSelected, () => _model.Open(), HasSelection);
         Bind(AppCommands.Preview, ShowPreview, HasFiles);
         Bind(AppCommands.GetInfo, () => ShowInfo(describe: false), HasFiles);
-        Bind(AppCommands.DescribeImage, () => ShowInfo(describe: true), () => _model.SelectedRows.Any(r => r.Item is { IsVideo: false }));
+        Bind(AppCommands.DescribePhoto, DescribePhoto, () => _model.FocusedRow?.Item is not null);
         Bind(AppCommands.ShowInExplorer, () => _model.ShowInExplorer(), () => _model.SelectedRows.Any(r => r.Item is not null || r.Container?.FolderPath is not null));
         Bind(AppCommands.Export, ExportSelection, HasFiles);
         Bind(AppCommands.AddFolder, AddFolder);
@@ -248,10 +249,33 @@ public partial class MainWindow : Window
         SortMenu.Items.Clear();
         foreach (var column in Columns.All)
         {
-            var item = new MenuItem { Header = column.Title, IsCheckable = true, IsChecked = _model.SortColumn == column.Id, Tag = column.Id };
+            var item = new AppMenuItem { Header = column.Title, IsCheckable = true, IsChecked = _model.SortColumn == column.Id, Tag = column.Id };
             item.Click += (_, _) => _model.SortBy(column.Id);
             SortMenu.Items.Add(item);
         }
+    }
+
+    /// <summary>Photo > Description Type: what Describe Photo and automatic descriptions ask Windows for. Get Info's
+    /// choice changes it too.</summary>
+    private void BuildKindMenu()
+    {
+        foreach (var (id, title) in Services.WindowsAI.Kinds)
+        {
+            var item = new AppMenuItem { Header = $"_{title}", IsCheckable = true, Tag = id };
+            item.Click += (_, _) => SetDescriptionKind(id, title);
+            KindMenu.Items.Add(item);
+        }
+        KindMenu.SubmenuOpened += (_, _) =>
+        {
+            foreach (MenuItem item in KindMenu.Items) item.IsChecked = (string)item.Tag == _model.Settings.DescriptionKind;
+        };
+    }
+
+    internal void SetDescriptionKind(string id, string title)
+    {
+        _model.Settings.DescriptionKind = id;
+        _model.SaveSettings();
+        Services.Announcer.Announce($"Photos get {title} descriptions");
     }
 
     private void ViewMenu_SubmenuOpened(object sender, RoutedEventArgs e)
@@ -386,6 +410,29 @@ public partial class MainWindow : Window
             FocusContent();
             e.Handled = true;
         }
+        else if (e.Key == Key.Delete && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            if (SidebarRemovalProblem() is { } problem)
+            {
+                System.Media.SystemSounds.Beep.Play();
+                Services.Announcer.Announce(problem);
+            }
+            else
+            {
+                RemoveFolder();
+            }
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>Why Delete can't remove the sidebar item you're on, or null when it's a library folder it can remove
+    /// (after asking). Only whole library folders come out; a folder inside one stays with it.</summary>
+    internal string? SidebarRemovalProblem()
+    {
+        if (_model.CurrentRoot is not { } root) return "Only folders in the library can be removed.";
+        if (!string.Equals(_model.CurrentSource?.FolderPath, root, StringComparison.OrdinalIgnoreCase))
+            return $"This folder is part of {Path.GetFileName(root)}. Only whole library folders can be removed.";
+        return null;
     }
 
     // MARK: List
@@ -676,10 +723,22 @@ public partial class MainWindow : Window
         if (rows.Count == 0) { System.Media.SystemSounds.Beep.Play(); return; }
         // One item previews the whole list, so arrows keep going; several preview just those.
         var set = rows.Count == 1 ? _model.Rows.Where(r => r.Item is not null).ToList() : rows;
-        var preview = new PreviewWindow(set, set.IndexOf(rows[0])) { Owner = this };
+        var preview = new PreviewWindow(set, set.IndexOf(rows[0])) { Owner = this, Describe = AutoDescriber is null ? null : AutoDescriber.DescribeNowAsync };
         preview.ShowDialog();
         if (preview.CurrentRow is { } last && rows.Count == 1) Model_SelectionRequested([last.Id], false);
         FocusContent();
+    }
+
+    private void DescribePhoto()
+    {
+        if (_model.FocusedRow is not { } row) return;
+        if (AutoDescriber is null)
+        {
+            Services.Announcer.Announce("Describing photos isn't available.");
+            return;
+        }
+        var path = row.Item?.Path;
+        _ = AutoDescriber.DescribeNowAsync(row, () => IsActive && _model.FocusedRow?.Item?.Path == path);
     }
 
     private void ShowInfo(bool describe)

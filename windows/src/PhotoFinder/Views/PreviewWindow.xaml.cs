@@ -31,6 +31,9 @@ public partial class PreviewWindow : Window
     /// <summary>The item showing when the window closed.</summary>
     public FileRow? CurrentRow => _rows.Count == 0 ? null : _rows[_index];
 
+    /// <summary>Describe Photo (Ctrl+Shift+D) for the item shown, given whether you're still on it when it's done.</summary>
+    public Func<FileRow, Func<bool>, Task>? Describe { get; init; }
+
     private async void Show(int index, bool announce)
     {
         if (_rows.Count == 0) return;
@@ -79,6 +82,12 @@ public partial class PreviewWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.D && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            if (CurrentRow is { } row && Describe is not null) _ = Describe(row, () => IsActive && CurrentRow == row);
+            e.Handled = true;
+            return;
+        }
         if (Keyboard.Modifiers != ModifierKeys.None) return;
         // Buttons keep their own keys, so Tab to Next and Space still presses it.
         if (e.OriginalSource is System.Windows.Controls.Primitives.ButtonBase && e.Key is Key.Space or Key.Enter) return;

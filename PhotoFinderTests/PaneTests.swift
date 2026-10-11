@@ -23,3 +23,15 @@ final class PaneTests: XCTestCase {
         XCTAssertEqual(StatusSection.next(from: .activity, by: 1, shown: [.status, .background]), .status)
     }
 }
+
+final class DescriptionPromptTests: XCTestCase {
+    func testAnEmptySettingMeansTheStandardPrompt() {
+        XCTAssertEqual(DescriptionPrompt.resolve(nil), DescriptionPrompt.standard)
+        XCTAssertEqual(DescriptionPrompt.resolve("  \n "), DescriptionPrompt.standard)
+        XCTAssertEqual(DescriptionPrompt.resolve(" Describe it briefly. "), "Describe it briefly.")
+    }
+
+    func testWhereAPhotoWasTakenIsCalledPlaceTaken() {
+        XCTAssertEqual(ColumnOrder.title("location"), "Place Taken")
+    }
+}
