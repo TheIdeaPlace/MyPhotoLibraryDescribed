@@ -44,9 +44,21 @@ jobs:
           brew install xcodegen
           xcodegen generate
 
-      # No signing on CI: there's no certificate, and none is needed to compile and test.
-      - name: Build
+      # The app's macOS 27 calls (Apple Intelligence images, Photos' extended metadata) sit inside
+      # `#if !PF_SDK26`. With an older SDK, that flag leaves them out so everything else still compiles and
+      # is tested; once the runners have Xcode 27, nothing is left out.
+      - name: Choose build flags
+        run: |
+          sdk=$(xcrun --sdk macosx --show-sdk-version)
+          if [ "${sdk%%.*}" -lt 27 ]; then
+            echo "SDK $sdk is older than macOS 27: building without the macOS 27 code."
+            echo 'SWIFT_FLAGS=OTHER_SWIFT_FLAGS=$(inherited) -DPF_SDK26' >> "$GITHUB_ENV"
+          fi
+
+      # Signed ad hoc, which needs no certificate: Apple silicon won't run unsigned code, tests included.
+      - name: Build and test
         run: |
           set -o pipefail
           xcodebuild -project PhotoFinder.xcodeproj -scheme PhotoFinder -configuration Debug \
-            -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" build
+            -derivedDataPath "$RUNNER_TEMP/dd" -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= ${SWIFT_FLAGS:+"$SWIFT_FLAGS"} test

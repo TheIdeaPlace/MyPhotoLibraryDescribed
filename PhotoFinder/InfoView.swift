@@ -68,9 +68,11 @@ struct InfoView: View {
     }
 
     @ViewBuilder private var contentsSection: some View {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
-            AppleIntelligenceSection(imageData: imageData)
+            AppleIntelligenceSection(imageData: imageData, asset: target.asset)
         }
+#endif
         if let contents {
             LabeledContent("Detected") {
                 Text(contents.labels.isEmpty ? "Nothing recognized" : contents.labels.joined(separator: ", "))
@@ -140,6 +142,7 @@ enum PhotoMetadata {
             fields.append(InfoField(label: "Duration", value: FileRow.durationText(asset.duration)))
         }
         fields.append(InfoField(label: "Favorite", value: asset.isFavorite ? "Yes" : "No"))
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
             let metadata = asset.extendedMetadata
             fields.append(InfoField(label: "Caption", value: metadata.caption ?? "None"))
@@ -151,6 +154,7 @@ enum PhotoMetadata {
                 fields.append(InfoField(label: "Rating", value: rating == 1 ? "1 star" : "\(rating) stars"))
             }
         }
+#endif
         if let location = asset.location {
             let c = location.coordinate
             fields.append(InfoField(label: "Coordinates", value: String(format: "%.5f, %.5f", c.latitude, c.longitude)))

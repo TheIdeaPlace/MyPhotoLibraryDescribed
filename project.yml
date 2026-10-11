@@ -12,6 +12,9 @@ targets:
   PhotoFinder:
     type: application
     platform: macOS
+    scheme:
+      testTargets:
+        - PhotoFinderTests
     sources:
       - PhotoFinder
     info:
@@ -32,3 +35,16 @@ targets:
         DEVELOPMENT_TEAM: P887QF74N8
         ENABLE_HARDENED_RUNTIME: NO
         GENERATE_INFOPLIST_FILE: NO
+  PhotoFinderTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - PhotoFinderTests
+    dependencies:
+      - target: PhotoFinder
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: net.theideaplace.PhotoFinderTests
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: P887QF74N8

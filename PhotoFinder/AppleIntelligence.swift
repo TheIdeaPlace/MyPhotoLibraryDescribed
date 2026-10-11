@@ -1,7 +1,10 @@
 import CoreGraphics
 import FoundationModels
 import ImageIO
+import Photos
 import SwiftUI
+
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
 
 /// A conversation about one photo with Apple's on-device Foundation Model (macOS 27 accepts images).
 /// The first request describes the photo; later questions reuse the same session, so the model
@@ -22,23 +25,29 @@ final class ImageConversation {
 
     private let image: CGImage
     private var session: LanguageModelSession?
+    /// A description saved earlier (by Describe Image or background describing), shown without asking again.
+    private let saved: String?
+    private let onDescribed: (String) -> Void
 
-    private static let instructions = """
+    static let instructions = """
         You describe photos for a person who is blind and uses a screen reader. \
         Be accurate and concrete, and describe only what is visible. \
         If something is unclear, say so rather than guessing. \
         Do not identify people by name. Do not begin with "The image shows" or "This photo shows".
         """
 
-    private static let describePrompt = """
+    static let describePrompt = """
         Describe this photo. Start with a one-sentence summary, then give the important details: \
         people and what they are doing, the setting, notable objects, colors and lighting, \
         and any text that appears in the photo.
         """
 
-    init?(imageData: Data) {
+    init?(imageData: Data, saved: String? = nil, onDescribed: @escaping (String) -> Void = { _ in }) {
         guard let image = Self.makeImage(from: imageData) else { return nil }
         self.image = image
+        self.saved = saved
+        self.onDescribed = onDescribed
+        if let saved { exchanges = [Exchange(question: nil, answer: saved)] }
     }
 
     /// Why descriptions can't run on this Mac right now, or nil when they can.
@@ -78,7 +87,12 @@ final class ImageConversation {
                 let session = LanguageModelSession(instructions: Self.instructions)
                 self.session = session
                 let image = self.image
-                let prompt = question ?? Self.describePrompt
+                // A question about a saved description starts a new conversation that knows what was said.
+                let prompt = if let question, let saved {
+                    "Earlier you described this photo like this: \(saved)\n\nNow answer this question about it: \(question)"
+                } else {
+                    question ?? Self.describePrompt
+                }
                 answer = try await session.respond {
                     prompt
                     Attachment(image)
@@ -86,6 +100,7 @@ final class ImageConversation {
             }
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             exchanges.append(Exchange(question: question, answer: trimmed))
+            if question == nil { onDescribed(trimmed) }
             AccessibilityNotification.Announcement(trimmed).post()
         } catch {
             errorMessage = Self.message(for: error)
@@ -117,7 +132,7 @@ final class ImageConversation {
 
     /// Decodes the photo at a sensible size, already rotated upright. The model resizes internally,
     /// so a full-resolution decode would only cost memory.
-    private static func makeImage(from data: Data) -> CGImage? {
+    static func makeImage(from data: Data) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -132,10 +147,18 @@ final class ImageConversation {
 @available(macOS 27, *)
 struct AppleIntelligenceSection: View {
     let imageData: Data?
+    let asset: PHAsset
+    @Environment(LibraryModel.self) private var model
     @State private var conversation: ImageConversation?
     @State private var question = ""
 
     var body: some View {
+        content
+            .onAppear(perform: showSaved)
+            .onChange(of: imageData) { showSaved() }
+    }
+
+    @ViewBuilder private var content: some View {
         if let reason = ImageConversation.unavailableReason {
             Text(reason)
                 .foregroundStyle(.secondary)
@@ -173,6 +196,12 @@ struct AppleIntelligenceSection: View {
         }
     }
 
+    /// A description saved earlier shows as soon as the photo's data is in, without describing again.
+    private func showSaved() {
+        guard conversation == nil, let imageData, let saved = model.descriptions.description(for: asset) else { return }
+        conversation = ImageConversation(imageData: imageData, saved: saved)
+    }
+
     private func answerRow(label: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
@@ -187,7 +216,11 @@ struct AppleIntelligenceSection: View {
 
     private func start() {
         guard let imageData else { return }
-        guard let conversation = conversation ?? ImageConversation(imageData: imageData) else {
+        let cache = model.descriptions
+        let asset = UncheckedBox(value: asset)
+        guard let conversation = conversation ?? ImageConversation(imageData: imageData, onDescribed: { text in
+            cache.remember(text, for: asset.value)
+        }) else {
             return
         }
         self.conversation = conversation
@@ -201,3 +234,4 @@ struct AppleIntelligenceSection: View {
         Task { await conversation.ask(text) }
     }
 }
+#endif
