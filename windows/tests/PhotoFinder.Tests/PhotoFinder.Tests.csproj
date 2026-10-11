@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Must match the app's TFM: a project can only reference another whose platform version is <= its own. -->
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <UseWPF>true</UseWPF>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- The file and decode calls finish in milliseconds; threading the test's token through them adds noise, not safety. -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <!-- No xunit.runner.visualstudio: that is the VSTest adapter, which Microsoft.Testing.Platform doesn't use. -->
+    <PackageReference Include="xunit.v3" Version="4.0.1" />
+    <!-- STA-thread facts for WPF objects. -->
+    <PackageReference Include="Xunit.StaFact" Version="4.0.23" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PhotoFinder\PhotoFinder.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+</Project>

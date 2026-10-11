@@ -1,0 +1,27 @@
+<Project>
+
+  <!-- WPF compiles XAML through a temporary project whose obj/ isn't the real one, so without this
+       the generated .g.cs files are picked up twice (NETSDK1022). -->
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**;out/**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <WarningsAsErrors>CS8602;CS8604;CS8618</WarningsAsErrors>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Product>Photo Finder</Product>
+    <Company>Kelly Ford</Company>
+    <Authors>Kelly Ford</Authors>
+    <Copyright>Copyright © Kelly Ford</Copyright>
+    <!-- VERSION is the one place the Windows version lives. -->
+    <_VersionFromFile>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION'))</_VersionFromFile>
+    <VersionPrefix>$(_VersionFromFile.Trim())</VersionPrefix>
+  </PropertyGroup>
+
+</Project>
