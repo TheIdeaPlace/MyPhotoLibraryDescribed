@@ -180,10 +180,9 @@ public partial class InfoWindow : Window
             DescriptionLabel.Visibility = Visibility.Visible;
             DescriptionBox.Visibility = Visibility.Visible;
             DescriptionBox.Text = text.Length > 0 ? text : "Windows returned an empty description.";
+            // Spoken whole, with focus left where it is, as the Mac app does: moving focus would cut the
+            // speech off. The description box is next in Tab order for reading it line by line.
             Announcer.Announce(DescriptionBox.Text, interrupt: true);
-            // Where the description can be reviewed line by line. The announcement has already read it,
-            // so focus moves after it rather than interrupting it.
-            if (DescribeButton.IsKeyboardFocused) DescriptionBox.Focus();
         }
         catch (OperationCanceledException)
         {
@@ -221,7 +220,6 @@ public partial class InfoWindow : Window
             OcrBox.Visibility = Visibility.Visible;
             OcrBox.Text = lines.Count == 0 ? "No text found" : string.Join(Environment.NewLine, lines);
             Announcer.Announce(lines.Count == 0 ? "No text found" : $"Text: {string.Join(" ", lines)}", interrupt: true);
-            if (ReadTextButton.IsKeyboardFocused) OcrBox.Focus();
         }
         catch (Exception ex)
         {

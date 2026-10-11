@@ -120,7 +120,14 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     public bool IsLoading
     {
         get => _isLoading;
-        private set { _isLoading = value; OnPropertyChanged(); OnStatusChanged(); }
+        private set
+        {
+            _isLoading = value;
+            OnPropertyChanged();
+            OnStatusChanged();
+            // Refresh is disabled while loading; WPF re-checks commands only on input unless asked.
+            System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+        }
     }
 
     /// <summary>What's being done right now ("Exporting 2 of 5…"), shown in the status bar.</summary>
@@ -200,10 +207,12 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         if (unchanged) return;
         _items = scanned;
         IsLoading = false;
+        var before = CurrentSource;
         RebuildSidebar();
-        // The first scan, or one that replaced it (F5 while loading), opens All Photos.
+        // The first scan, or one that replaced it (F5 while loading), opens All Photos. If the rebuild already
+        // moved somewhere because the place was gone, those rows are already fresh.
         if (CurrentSource is null) Navigate(SidebarIds.AllPhotos, announce: false);
-        else ReloadCurrent(keepSelection: true);
+        else if (CurrentSource.Id == before?.Id) ReloadCurrent(keepSelection: true);
         await WatchRootsAsync();
         StartDetailFill();
     }
@@ -243,7 +252,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
                 // The place is gone (its last photo left it): say where the list went instead.
                 var gone = CurrentSource?.Title;
                 Navigate(SidebarIds.AllPhotos, announce: false);
-                Announcer.Announce($"{gone} is empty now. Showing All Photos, {CountText(Rows.Count)}");
+                Announcer.Announce($"{gone} is no longer in the library. Showing All Photos, {CountText(Rows.Count)}");
             }
         }
     }
@@ -638,7 +647,14 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         foreach (var w in _watchers) w.Dispose();
         _watchers.Clear();
         var roots = Roots.ToList();
+        var generation = _scanGeneration;
         var made = await Task.Run(() => MakeWatchers(roots));
+        // A newer scan (or closing) happened meanwhile: these are already out of date.
+        if (_disposed || generation != _scanGeneration)
+        {
+            foreach (var w in made) w.Dispose();
+            return;
+        }
         _watchers.AddRange(made);
     }
 
@@ -756,8 +772,11 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
+    private bool _disposed;
+
     public void Dispose()
     {
+        _disposed = true;
         _fillCancel?.Cancel();
         _rescanDebounce?.Cancel();
         foreach (var w in _watchers) w.Dispose();

@@ -121,13 +121,13 @@ public partial class MainWindow : Window
         Bind(AppCommands.AllPhotos, () => _model.Navigate(SidebarIds.AllPhotos));
         Bind(AppCommands.NextPane, () => MovePane(1));
         Bind(AppCommands.PreviousPane, () => MovePane(-1));
-        Bind(AppCommands.ToggleFavorite, () => { if (ConfirmBulkWrite("Toggle Favorite")) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
+        Bind(AppCommands.ToggleFavorite, () => { if (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite")) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, EditCaption, HasFiles);
         Bind(AppCommands.About, ShowAbout);
         CommandBindings.Add(new CommandBinding(AppCommands.Rate,
             (_, e) =>
             {
-                if (int.TryParse(e.Parameter?.ToString(), out var stars) && ConfirmBulkWrite("Set Rating")) _model.Fire(_model.SetRatingAsync(stars));
+                if (int.TryParse(e.Parameter?.ToString(), out var stars) && (_model.IsWriting || ConfirmBulkWrite("Set Rating"))) _model.Fire(_model.SetRatingAsync(stars));
                 e.Handled = true;
             },
             (_, e) => { e.CanExecute = HasFiles(); e.Handled = true; }));
@@ -551,8 +551,9 @@ public partial class MainWindow : Window
     private void Gallery_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (Keyboard.Modifiers != ModifierKeys.None) return;
-        // Previous and Next keep Space and Enter for pressing themselves.
+        // Previous and Next keep Space and Enter for pressing themselves; the read-only text boxes keep their keys.
         if (e.OriginalSource is ButtonBase && e.Key is Key.Space or Key.Enter) return;
+        if (e.OriginalSource is System.Windows.Controls.Primitives.TextBoxBase) return;
         switch (e.Key)
         {
             case Key.Left or Key.Up: _model.MoveSelection(-1); break;
