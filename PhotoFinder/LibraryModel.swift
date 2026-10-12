@@ -78,7 +78,7 @@ final class LibraryModel {
         }
     }
     var selection: Set<String> = [] {
-        didSet { if selection != oldValue { autoDescriber.moved(to: autoDescribeCandidate) } }
+        didSet { if selection != oldValue { movedSelection() } }
     }
     var searchText = "" {
         didSet { if searchText != oldValue { announceResultsAfterPause() } }
@@ -253,6 +253,33 @@ final class LibraryModel {
         }
     }
 
+    /// Where the photo you were on was in the list, to tell a step to the next or previous photo from a jump.
+    @ObservationIgnored private var lastPhotoIndex: Int?
+
+    private func movedSelection() {
+        let id = autoDescribeCandidate
+        let list = searchText.isEmpty ? rows : visibleRows
+        let index = id.flatMap { id in list.firstIndex { $0.id == id } }
+        let step = (index.flatMap { i in lastPhotoIndex.map { i - $0 } }) ?? 0
+        lastPhotoIndex = index
+        autoDescriber.moved(to: id, step: step)
+    }
+
+    /// The photo to describe ahead of `id`, going `step` (1 or -1): the first of the next three rows that's a photo
+    /// with no description yet, so a video or an already described photo is passed over.
+    private func photoAhead(of id: String, step: Int) -> String? {
+        let list = searchText.isEmpty ? rows : visibleRows
+        guard let index = list.firstIndex(where: { $0.id == id }) else { return nil }
+        for offset in 1...3 {
+            let i = index + offset * step
+            guard list.indices.contains(i) else { return nil }
+            let row = list[i]
+            guard !row.isContainer, isPhoto(row.id) else { continue }
+            return savedDescription(for: row.id) == nil ? row.id : nil
+        }
+        return nil
+    }
+
     /// The photo automatic describing is about: the one photo selected and shown. Nothing for folders, videos,
     /// several items, or a photo hidden by Search.
     private var autoDescribeCandidate: String? {
@@ -286,6 +313,18 @@ final class LibraryModel {
             return self.autoDescribeCandidate == id
         }
         describer.speak = { [weak self] text in self?.announce(text, queued: true) }
+        describer.nextPhoto = { [weak self] id, step in self?.photoAhead(of: id, step: step) }
+        describer.describeAhead = { [weak self] id in
+            // Not downloaded from iCloud, and not saved if Describe Again took the photo meanwhile.
+            _ = await self?.describeAndRemember(id, allowNetwork: false) { [weak self] in
+                (self?.describingAgain[id] ?? 0) == 0
+            }
+        }
+        describer.mayDescribeAhead = {
+            let info = ProcessInfo.processInfo
+            return NSApplication.shared.isActive && !info.isLowPowerModeEnabled
+                && [.nominal, .fair].contains(info.thermalState)
+        }
         return describer
     }
 
