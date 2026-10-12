@@ -169,20 +169,74 @@ public sealed class FileFieldsTests : IDisposable
         byte[] mpf = [0xFF, 0xE2, 0x00, 0x08, (byte)'M', (byte)'P', (byte)'F', 0x00, 0x49, 0x49];
         Assert.True(XmpFields.HoldsSecondPicture([0xFF, 0xD8, .. mpf, .. plain[2..]]));
         Assert.False(XmpFields.HoldsSecondPicture("not a jpeg"u8.ToArray()));
+        // Stray bytes where a marker should be are skipped, as decoders do, so a video after them is still found.
+        Assert.True(XmpFields.HoldsSecondPicture([0xFF, 0xD8, 0x12, 0x34, .. plain[2..], .. "ftypmp42"u8.ToArray()]));
+        // A segment whose length runs past the end can't be followed: treated as holding one, never rewritten on a guess.
+        Assert.True(XmpFields.HoldsSecondPicture([0xFF, 0xD8, 0xFF, 0xE1, 0x7F, 0xFF, 0x00]));
     }
 
     [Fact]
-    public async Task AMotionPhoto_IsLeftExactlyAsItWas_WithAReason()
+    public async Task AMotionPhotoWithRoom_GetsItsCaptionAndRatingInPlace_KeepingItsVideo()
+    {
+        // Saved once by Photo Finder, which leaves room for changes, then the video added after it.
+        var path = _lib.AddJpeg("motion.jpg");
+        File.WriteAllBytes(path, WithoutRoom(File.ReadAllBytes(path)));
+        await XmpFields.WriteAsync(path, "First.", null, null);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        var video = "ftypmp42 the video part"u8.ToArray();
+        File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. video]);
+        var size = new FileInfo(path).Length;
+        var captioned = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
+        Assert.True(captioned.Succeeded == 1, captioned.FailureSummary);
+        var rated = await MetadataWriter.SetRatingAsync([ItemFor(path)], 5);
+        Assert.True(rated.Succeeded == 1, rated.FailureSummary);
+        var after = File.ReadAllBytes(path);
+        Assert.Equal(size, after.Length);
+        Assert.Equal(video, after[^video.Length..]);
+        Assert.Equal("A dog.", (await XmpFields.ReadAsync(path)).Caption);
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public async Task AMotionPhotoWithoutRoom_IsLeftExactlyAsItWas_WithAReason()
     {
         var path = _lib.AddJpeg("motion.jpg");
-        File.AppendAllText(path, "ftypmp42 the video part");
+        File.WriteAllBytes(path, [.. WithoutRoom(File.ReadAllBytes(path)), .. "ftypmp42 the video part"u8.ToArray()]);
         var before = File.ReadAllBytes(path);
         var caption = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
         Assert.Equal(0, caption.Succeeded);
         Assert.Contains("second picture", caption.FailureSummary);
-        var rating = await MetadataWriter.SetRatingAsync([ItemFor(path)], 5);
-        Assert.Equal(0, rating.Succeeded);
         Assert.Equal(before, File.ReadAllBytes(path));
+        // Windows' rating handler may rewrite it too: if it does, the photo is put back as it was.
+        var rating = await MetadataWriter.SetRatingAsync([ItemFor(path)], 5);
+        var after = File.ReadAllBytes(path);
+        Assert.Equal("ftypmp42 the video part"u8.ToArray(), after[^23..]);
+        if (rating.Succeeded == 0) Assert.Equal(before, after);
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public async Task APngCalledJpg_IsLeftAlone_Saying_Why()
+    {
+        var path = _lib.AddPng("fake.png");
+        var renamed = Path.ChangeExtension(path, ".jpg");
+        File.Move(path, renamed);
+        var before = File.ReadAllBytes(renamed);
+        var result = await MetadataWriter.SetFieldsAsync([MetadataWriter.FieldChanges.Replacing(ItemFor(renamed), "A dog.")]);
+        Assert.Equal(0, result.Succeeded);
+        Assert.Contains("isn't the kind of file", result.FailureSummary);
+        Assert.Equal(before, File.ReadAllBytes(renamed));
+    }
+
+    [Fact]
+    public async Task ACaptionClearedInTheFile_DoesntMakeSomeonesTitleTheOldCaption()
+    {
+        var path = _lib.AddJpeg("titled.jpg", new TestLibrary.JpegOptions { Title = "My title" });
+        await XmpFields.WriteAsync(path, "", null, null);
+        await MetadataWriter.SetCaptionAsync([ItemFor(path)], "New");
+        Assert.Equal("New", (await XmpFields.ReadAsync(path)).Caption);
+        Assert.Equal("My title", await MetadataReader.ReadTitleAsync(path));
     }
 
     [Fact]
@@ -219,16 +273,8 @@ public sealed class FileFieldsTests : IDisposable
     {
         var path = _lib.AddJpeg("locked.jpg");
         await XmpFields.WriteAsync(path, null, "Another app's alt text.", null);
-        using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
-        {
-            // Only reading allowed: the property system still reads, WIC's read-write-sharing open doesn't.
-            var shown = await MetadataReader.ReadAsync(path);
-            if (shown.Version < Models.MediaMetadata.CurrentVersion)
-            {
-                Assert.Equal("", shown.AltText);
-                await Assert.ThrowsAnyAsync<Exception>(() => MetadataReader.ReadAsync(path, forWriting: true));
-            }
-        }
+        using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            await Assert.ThrowsAnyAsync<Exception>(() => MetadataReader.ReadAsync(path, forWriting: true));
         Assert.Equal("Another app's alt text.", (await MetadataReader.ReadAsync(path, forWriting: true)).AltText);
     }
 

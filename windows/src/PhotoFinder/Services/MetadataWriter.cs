@@ -1,4 +1,4 @@
-﻿using PhotoFinder.Models;
+using PhotoFinder.Models;
 using Windows.Storage;
 
 namespace PhotoFinder.Services;
@@ -47,8 +47,9 @@ public static class MetadataWriter
                     if (change.Caption is not null)
                     {
                         title = await MetadataReader.ReadTitleAsync(item.Path);
-                        var old = (await XmpFields.ReadAsync(item.Path)).Caption;
-                        oldCaption = old.Length > 0 ? old : title;
+                        // A caption cleared in the file is the old caption (none), not the Title someone wrote.
+                        var old = await XmpFields.ReadAsync(item.Path);
+                        oldCaption = old.HasCaption ? old.Caption : title;
                     }
                     await XmpFields.WriteAsync(item.Path, change.Caption, change.AltText, change.ExtendedDescription);
                     // The caption is saved; a Title that can't follow isn't a failure, since Explorer also reads the
@@ -84,11 +85,11 @@ public static class MetadataWriter
                 // Saving properties rewrites the file, which changes its modified date. Put it back, so a
                 // photo without a Date Taken doesn't jump to today in the list.
                 // UTC, so the hour that repeats when daylight saving ends can't shift it.
-                // Windows' handler rewrites a JPEG up to the image's end, losing a motion photo's video or HDR map.
-                if (XmpFields.HoldsSecondPicture(item.Path)) throw new SecondPictureException();
                 var modified = File.GetLastWriteTimeUtc(item.Path);
                 var file = await StorageFile.GetFileFromPathAsync(item.Path);
-                await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>(key, value)]);
+                // A motion photo's video or HDR map is checked for afterwards, and the photo put back if it's gone.
+                await XmpFields.KeepingSecondPictureAsync(item.Path,
+                    async _ => await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>(key, value)]));
                 try
                 {
                     File.SetLastWriteTimeUtc(item.Path, modified);
@@ -124,6 +125,7 @@ public static class MetadataWriter
     private static string Reason(MediaItem item, Exception ex) => ex switch
     {
         SecondPictureException => $"{item.Name} holds a second picture, such as a motion photo's video or an HDR map, that changing it would lose, so it was left as it is.",
+        InvalidDataException => $"{item.Name} isn't the kind of file its name says, so it was left as it is.",
         UnauthorizedAccessException => $"{item.Name} is read-only or in use.",
         FileNotFoundException => $"{item.Name} is no longer there.",
         // E_FAIL and "not implemented" are what a format without a writable property handler gives.

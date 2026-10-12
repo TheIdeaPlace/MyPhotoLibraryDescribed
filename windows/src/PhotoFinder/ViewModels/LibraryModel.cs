@@ -704,8 +704,6 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
                         {
                             try
                             {
-                                // A motion photo or Ultra HDR file would lose its second picture: not touched.
-                                if (XmpFields.HoldsSecondPicture(item.Path)) continue;
                                 var now = await MetadataReader.ReadAsync(item.Path, forWriting: true);
                                 var caption = policy.ShouldWrite(text, now.Caption) ? text : null;
                                 var fills = XmpFields.CanWrite(item.Path) && policy == CaptionPolicy.WhenEmpty;

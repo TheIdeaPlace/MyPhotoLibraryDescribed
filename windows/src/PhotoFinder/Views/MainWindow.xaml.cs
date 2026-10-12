@@ -305,6 +305,10 @@ public partial class MainWindow : Window
     /// once. Asking is the permission to change their photos; when on, only empty captions and alt text are filled.</summary>
     private void SaveInPhotos_Click(object sender, RoutedEventArgs e) => SetSaveInPhotos(!_model.Settings.SaveDescriptionsInPhotos);
 
+    /// <summary>"caption", "caption and alt text", "caption, alt text and extended description".</summary>
+    private static string Joined(IReadOnlyList<string> items) =>
+        items.Count <= 1 ? string.Concat(items) : $"{string.Join(", ", items.Take(items.Count - 1))} and {items[^1]}";
+
     internal void SetSaveInPhotos(bool on)
     {
         if (on && !QuestionDialog.Ask(ActiveWindow, "Save Descriptions in Photos", "Save descriptions in your photos?",
@@ -381,7 +385,7 @@ public partial class MainWindow : Window
         {
             var names = replacing.Select(r => r.Name).Distinct().ToList();
             var question = names.Count == 1
-                ? $"Replace the {string.Join(" and ", replacing.Select(r => r.Field))} of {names[0]}?\n\n" + string.Join("\n", replacing.Select(r => $"Its {r.Field} is: {r.Current}"))
+                ? $"Replace the {Joined(replacing.Select(r => r.Field).ToList())} of {names[0]}?\n\n" + string.Join("\n", replacing.Select(r => $"Its {r.Field} is: {r.Current}"))
                 : $"Replace what's already in {names.Count} photos?\n\nTheir captions, alt text or extended descriptions will be replaced with their descriptions.";
             if (MessageBox.Show(owner, question, "Use Description as Caption", MessageBoxButton.YesNo, MessageBoxImage.Question,
                     MessageBoxResult.No) != MessageBoxResult.Yes)
