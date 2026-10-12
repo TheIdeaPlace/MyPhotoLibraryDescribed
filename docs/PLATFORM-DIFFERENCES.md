@@ -61,5 +61,7 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 - **Search result count:** both say "No results", "1 result" or "12 results" once typing in Search pauses.
 - **View > Sort By:** both sort by any column without its header, with a checkmark on the current one. Choosing it again reverses it, and both say "Sorted by Date Taken, descending".
 - **Gallery Home and End:** both go to the first and last item.
+- **Help > Check System…:** the Mac lists macOS, Apple silicon, Apple Intelligence, Photos access, saved descriptions and the describing settings, each OK or what to do, with Copy to Clipboard. Windows: to come (#32).
+- **Help > Report a Bug…:** the Mac opens a new GitHub issue with the system check filled in, and copies it. Windows: to come (#33). Both move to the app kit's relay later.
 - **Describe Photo:** Ctrl+Shift+D on Windows (list, gallery and Preview), Shift-Command-D on the Mac (list and gallery), describing the photo you're on and speaking it.
 - **Choosing how photos are described:** Windows has Photo > Description Type, with Windows AI's four kinds (Accessible, Detailed, Brief, Diagram). The Mac's Settings has the prompt itself, since Apple Intelligence takes any prompt.
