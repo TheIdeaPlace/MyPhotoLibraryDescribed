@@ -1168,6 +1168,8 @@ final class LibraryModel {
             return
         }
         let stars = min(max(stars, 0), 5)
+        // Files chosen alongside library photos are left as they are, and that's said rather than skipped quietly.
+        let skippedFiles = !files(for: ids).isEmpty
         let box = UncheckedBox(value: assets)
         perform("Saving rating…") {
             try await PHPhotoLibrary.shared().performChanges {
@@ -1179,7 +1181,7 @@ final class LibraryModel {
                 }
 #endif
             }
-            self.announce(RatingText.done(stars))
+            self.announce(RatingText.done(stars) + (skippedFiles ? ". Files aren't rated yet" : ""))
         }
     }
 
