@@ -82,7 +82,8 @@ final class BackgroundDescriber {
                     prompt
                     Attachment(image)
                 }.content
-                cache.remember(answer, for: asset)
+                // Corrected in the Description panel while this was being described: the person's words win.
+                if !cache.isEdited(forKey: asset.localIdentifier) { cache.remember(answer, for: asset) }
                 guard run == generation else { return }
                 queue.finished(described: true)
             } catch {

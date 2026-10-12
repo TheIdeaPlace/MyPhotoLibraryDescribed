@@ -6,9 +6,13 @@ import SwiftUI
 struct DescriptionPanel: View {
     @Environment(LibraryModel.self) private var model
     var pane: FocusState<Pane?>.Binding
-    /// What's in the text box; saved when you press Return or leave the box.
+    /// What's in the text box; saved when you press Return or leave the box, if you changed it.
     @State private var draft = ""
+    /// The description the box was filled with, so only what you typed counts as a change.
+    @State private var loadedText = ""
     @State private var draftID: String?
+
+    private var isDirty: Bool { DescriptionDraft.isChanged(draft, from: loadedText) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -49,8 +53,11 @@ struct DescriptionPanel: View {
                     .controlSize(.small)
                 Spacer(minLength: 0)
             } else {
+                // Focusable, so F6 can land here and move on rather than getting stuck on a panel with nothing in it.
                 Text(model.focusedRow == nil ? "Select a photo to see its description." : "Videos and folders aren't described.")
                     .foregroundStyle(.secondary)
+                    .focusable()
+                    .focused(pane, equals: .description)
                 Spacer(minLength: 0)
             }
         }
@@ -64,29 +71,42 @@ struct DescriptionPanel: View {
             if let oldID, oldID == draftID { save(oldID) }
             load()
         }
-        // A description arriving (automatic describing, Describe Again) shows at once, unless you're typing.
+        // A description arriving (automatic describing, Describe Again) shows at once, even while you're in the box,
+        // unless you've started changing it.
         .onChange(of: model.descriptionRevision) {
-            if pane.wrappedValue != .description { load() }
+            if !isDirty { load() }
         }
         .onChange(of: pane.wrappedValue) { old, new in
             if old == .description, new != .description, let draftID { save(draftID) }
+        }
+        // Hidden with Option-Command-I, or the window closed, while you were typing: keep what you typed.
+        .onDisappear {
+            if let draftID { save(draftID) }
         }
     }
 
     private func load() {
         draftID = model.focusedRow?.id
-        draft = draftID.flatMap(model.savedDescription(for:)) ?? ""
+        loadedText = draftID.flatMap(model.savedDescription(for:)) ?? ""
+        draft = loadedText
     }
 
+    /// Saves the box's text for `id` if you changed it. An emptied box keeps the saved description.
     private func save(_ id: String) {
-        let saved = model.savedDescription(for: id) ?? ""
-        guard draft.trimmingCharacters(in: .whitespacesAndNewlines) != saved else { return }
-        // Clearing the box keeps the saved description (it can't be empty); show it again.
-        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !saved.isEmpty {
-            model.saveEditedDescription(draft, for: id)
-            if id == draftID { draft = saved }
+        guard isDirty else { return }
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            model.saveEditedDescription(draft, for: id)  // says the saved one is kept
+            if id == draftID { draft = loadedText }
             return
         }
         model.saveEditedDescription(draft, for: id)
+        if id == draftID { loadedText = draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+}
+
+/// Whether the Description panel's box holds a change of the person's, compared with what it was filled with.
+enum DescriptionDraft {
+    static func isChanged(_ draft: String, from loaded: String) -> Bool {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines) != loaded.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

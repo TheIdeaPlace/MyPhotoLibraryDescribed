@@ -35,6 +35,14 @@ final class DescriptionPanelTests: XCTestCase {
         XCTAssertEqual(saved, ["photo": "Mine"])
     }
 
+    func testOnlyWhatThePersonTypedCountsAsAChange() {
+        XCTAssertFalse(DescriptionDraft.isChanged("A dog", from: "A dog"))
+        XCTAssertFalse(DescriptionDraft.isChanged("A dog \n", from: "A dog"), "whitespace isn't a change")
+        XCTAssertFalse(DescriptionDraft.isChanged("", from: ""), "tabbing through an empty box isn't a change")
+        XCTAssertTrue(DescriptionDraft.isChanged("A brown dog", from: "A dog"))
+        XCTAssertTrue(DescriptionDraft.isChanged("", from: "A dog"))
+    }
+
     func testTheDescriptionColumnShowsAndIsReadWithItsLabel() {
         XCTAssertEqual(ColumnOrder.title("description"), "Description")
         XCTAssertFalse(ColumnOrder.defaultOrder.contains("description"), "off until chosen in View > Columns")

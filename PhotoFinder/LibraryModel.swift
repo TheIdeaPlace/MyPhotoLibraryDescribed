@@ -64,8 +64,9 @@ final class LibraryModel {
     var showDescriptionPanel: Bool = UserDefaults.standard.object(forKey: "showDescriptionPanel") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showDescriptionPanel, forKey: "showDescriptionPanel") }
     }
-    /// Photos being described right now, by row id, so the Description panel can say "Describing…".
-    private(set) var describingIDs: Set<String> = []
+    /// Photos being described right now, by row id and how many describes are running on each, so the Description
+    /// panel can say "Describing…" until the last one finishes.
+    private(set) var describingIDs: [String: Int] = [:]
     var sortOrder: [KeyPathComparator<FileRow>] = [KeyPathComparator(\FileRow.sortDate, order: .reverse)] {
         didSet { rows.sort(using: sortOrder) }
     }
@@ -305,6 +306,7 @@ final class LibraryModel {
         var comparator = ColumnOrder.comparator(id)
         comparator.order = descending ? .reverse : .forward
         sortOrder = [comparator]
+        if id == "description" { fillDescriptions() }
         let title = ColumnOrder.info(id)?.title ?? id
         announce("Sorted by \(title), \(descending ? "descending" : "ascending")")
     }
@@ -1396,6 +1398,14 @@ final class LibraryModel {
             announce("Select a photo to describe")
             return
         }
+        guard isPhoto(row.id) else {
+            announce("Videos can't be described")
+            return
+        }
+        if let reason = describeUnavailableReason {
+            announce(reason)
+            return
+        }
         // A description the person corrected is theirs: ask before Apple Intelligence replaces it.
         if descriptions.isEdited(forKey: key) {
             let alert = NSAlert()
@@ -1405,21 +1415,13 @@ final class LibraryModel {
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
-        guard isPhoto(row.id) else {
-            announce("Videos can't be described")
-            return
-        }
-        if let reason = describeUnavailableReason {
-            announce(reason)
-            return
-        }
         let id = row.id
         autoDescriber.describingManually(id)
         describingAgain[id, default: 0] += 1
         describeTask?.cancel()
         announce("Describing \(row.name) again")
         describeTask = Task { [weak self] in
-            let text = await self?.describeAndRemember(id, allowNetwork: true)
+            let text = await self?.describeAndRemember(id, allowNetwork: true, replacingEdited: true)
             self?.describingAgain[id, default: 1] -= 1
             guard let text else { return }
             self?.say(text, ifStillOn: id)
@@ -1434,7 +1436,7 @@ final class LibraryModel {
     /// What the Description panel says about a photo's description.
     func descriptionStatus(for id: String) -> String {
         _ = descriptionRevision
-        if describingIDs.contains(id) { return "Describing…" }
+        if describingIDs[id, default: 0] > 0 { return "Describing…" }
         guard let key = descriptionKey(for: id), descriptions.description(forKey: key) != nil else { return "Not described yet" }
         return descriptions.isEdited(forKey: key) ? "Edited by you" : "Saved description"
     }
@@ -1461,7 +1463,9 @@ final class LibraryModel {
         announce("Description copied")
     }
 
-    private var showsDescriptionColumn: Bool { columnOrder.contains("description") }
+    /// Whether rows need their descriptions: the Description column is showing, or the list is sorted by it (Sort By
+    /// lists every column).
+    private var showsDescriptionColumn: Bool { columnOrder.contains("description") || sortColumnID == "description" }
 
     /// Copies saved descriptions into the rows for the Description column, and re-sorts if that's the sort.
     private func fillDescriptions() {
@@ -1519,10 +1523,15 @@ final class LibraryModel {
     /// or why there isn't one; nil for a row that isn't a photo. Nil too, saying nothing, when the photo is only in
     /// iCloud and `allowNetwork` is false, or when a newer request replaced this one. A file in an added folder is
     /// read from disk and saved under its file key (#36).
-    private func describeAndRemember(_ id: String, allowNetwork: Bool,
+    /// `replacingEdited` is for Describe Again, where the person agreed to replace their own correction; otherwise a
+    /// description corrected meanwhile in the Description panel is kept.
+    private func describeAndRemember(_ id: String, allowNetwork: Bool, replacingEdited: Bool = false,
                                      keep: @MainActor () -> Bool = { true }) async -> String? {
-        describingIDs.insert(id)
-        defer { describingIDs.remove(id) }
+        describingIDs[id, default: 0] += 1
+        defer {
+            describingIDs[id, default: 1] -= 1
+            if describingIDs[id] == 0 { describingIDs[id] = nil }
+        }
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
             let key: String
@@ -1546,6 +1555,8 @@ final class LibraryModel {
                 }
                 // A newer Describe Photo replaced this one: its description is the one to keep.
                 guard !Task.isCancelled, keep() else { return nil }
+                // Corrected in the Description panel while this was being described: the person's words win.
+                guard replacingEdited || !descriptions.isEdited(forKey: key) else { return nil }
                 descriptions.remember(text, forKey: key)
                 return text
             } catch {
