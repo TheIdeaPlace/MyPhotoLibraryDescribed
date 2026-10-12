@@ -105,9 +105,10 @@ struct InfoView: View {
         case .asset(let asset):
             general = PhotoMetadata.general(for: asset, name: target.name)
             result = await PhotoMetadata.details(for: UncheckedBox(value: asset))
-        case .file(let file, let row):
-            general = PhotoMetadata.general(for: file, row: row)
-            result = await PhotoMetadata.details(for: file)
+        case .file(let file, let known):
+            let metadata = await PhotoMetadata.metadata(of: file, known: known)
+            general = PhotoMetadata.general(for: file, row: FileRow(file: file, metadata: metadata))
+            result = await PhotoMetadata.details(for: file, metadata: metadata)
         }
         details = result.fields
         imageData = result.imageData
@@ -228,12 +229,19 @@ enum PhotoMetadata {
         return fields
     }
 
+    /// A file's metadata: what the list already read, or read now off the main actor.
+    static func metadata(of file: MediaFile, known: FileMetadata?) async -> FileMetadata {
+        if let known { return known }
+        let url = file.url
+        if file.isVideo { return await FileMetadata.readVideo(url) }
+        return await Task.detached(priority: .userInitiated) { FileMetadata.read(url) }.value
+    }
+
     /// The slower details of a file: place name, type, size and camera settings, and its data for describing.
-    static func details(for file: MediaFile) async -> (fields: [InfoField], imageData: Data?) {
+    static func details(for file: MediaFile, metadata: FileMetadata) async -> (fields: [InfoField], imageData: Data?) {
         var fields: [InfoField] = []
         let url = file.url
         let isVideo = file.isVideo
-        let metadata = isVideo ? FileMetadata() : await Task.detached { FileMetadata.read(url) }.value
         if let lat = metadata.latitude, let lon = metadata.longitude,
            let place = await placeName(for: CLLocation(latitude: lat, longitude: lon)) {
             fields.append(InfoField(label: "Place Taken", value: place))
