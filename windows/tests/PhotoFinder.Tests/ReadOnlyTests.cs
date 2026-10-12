@@ -97,21 +97,21 @@ public sealed class ReadOnlyTests : IDisposable
         using var model = await StartAsync(new Settings());
         var window = new MainWindow(model) { ShowActivated = false };
         window.Show();
-        var original = QuestionDialog.AskRisky;
+        var original = QuestionDialog.AskSafely;
         try
         {
             Assert.EndsWith("Photo Finder - Read-Only", window.Title);
             Assert.True(window.ReadOnlyItem.IsChecked);
 
             var asked = new List<string>();
-            QuestionDialog.AskRisky = (_, _, question, _, yes, keep) => { asked.Add($"{question} [{yes}] [{keep}]"); return false; };
+            QuestionDialog.AskSafely = (_, _, question, _, yes, keep) => { asked.Add($"{question} [{yes}] [{keep}]"); return false; };
             window.SetReadOnly(false);
             Assert.Equal(["Let Photo Finder change your photos? [Allow Changes] [Keep Read-Only]"], asked);
             Assert.True(model.IsReadOnly);
             Assert.False(PhotoChanges.Allowed);
             Assert.True(window.ReadOnlyItem.IsChecked);
 
-            QuestionDialog.AskRisky = (_, _, _, _, _, _) => true;
+            QuestionDialog.AskSafely = (_, _, _, _, _, _) => true;
             window.SetReadOnly(false);
             Assert.False(model.IsReadOnly);
             Assert.True(PhotoChanges.Allowed);
@@ -121,7 +121,7 @@ public sealed class ReadOnlyTests : IDisposable
             Assert.Contains("Editing. Photo Finder can change your photos", _announced);
 
             // Going back to read-only doesn't ask.
-            QuestionDialog.AskRisky = (_, _, _, _, _, _) => throw new InvalidOperationException("Asked to turn read-only on");
+            QuestionDialog.AskSafely = (_, _, _, _, _, _) => throw new InvalidOperationException("Asked to turn read-only on");
             window.SetReadOnly(true);
             Assert.True(model.IsReadOnly);
             Assert.False(PhotoChanges.Allowed);
@@ -129,13 +129,13 @@ public sealed class ReadOnlyTests : IDisposable
 
             // And off again asks again.
             asked.Clear();
-            QuestionDialog.AskRisky = (_, _, question, _, _, _) => { asked.Add(question); return false; };
+            QuestionDialog.AskSafely = (_, _, question, _, _, _) => { asked.Add(question); return false; };
             window.SetReadOnly(false);
             Assert.Single(asked);
         }
         finally
         {
-            QuestionDialog.AskRisky = original;
+            QuestionDialog.AskSafely = original;
             window.Close();
         }
     }
@@ -186,12 +186,12 @@ public sealed class ReadOnlyTests : IDisposable
         using var model = await StartAsync(new Settings { SaveDescriptionsInPhotos = true });
         var window = new MainWindow(model) { ShowActivated = false };
         window.Show();
-        var original = QuestionDialog.AskRisky;
+        var original = QuestionDialog.AskSafely;
         try
         {
             Assert.False(window.SaveInPhotosItem.IsChecked);
             Assert.Equal("Paused while read-only", System.Windows.Automation.AutomationProperties.GetHelpText(window.SaveInPhotosItem));
-            QuestionDialog.AskRisky = (_, _, _, _, _, _) => true;
+            QuestionDialog.AskSafely = (_, _, _, _, _, _) => true;
             window.SetReadOnly(false);
             Assert.True(window.SaveInPhotosItem.IsChecked);
             Assert.Equal("", System.Windows.Automation.AutomationProperties.GetHelpText(window.SaveInPhotosItem));
@@ -199,7 +199,7 @@ public sealed class ReadOnlyTests : IDisposable
         }
         finally
         {
-            QuestionDialog.AskRisky = original;
+            QuestionDialog.AskSafely = original;
             window.Close();
         }
     }

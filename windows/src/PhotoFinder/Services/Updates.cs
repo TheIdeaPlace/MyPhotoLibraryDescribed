@@ -1,3 +1,5 @@
+using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using Windows.ApplicationModel;
 using Windows.Management.Deployment;
@@ -110,6 +112,80 @@ public static class Updates
             return ex.Message;
         }
     }
+
+    // MARK: The shared update experience (The-Idea-Place-Projects#12, #85)
+
+    /// <summary>The version people see: major.minor.build. The package's fourth number counts builds.</summary>
+    public static string ShortVersion(string version) =>
+        Version.TryParse(version, out var v) ? $"{v.Major}.{v.Minor}.{Math.Max(v.Build, 0)}" : version;
+
+    /// <summary>Two versions as people see them, with the build number when that's all that differs.</summary>
+    public static (string Running, string Other) Shown(string running, string other) =>
+        ShortVersion(running) == ShortVersion(other) && running != other
+            ? (running, other)
+            : (ShortVersion(running), ShortVersion(other));
+
+    /// <summary>Help's update item, which always says what's running, or what's available once an update is known.</summary>
+    public static string MenuTitle(string running, bool available, string? availableVersion)
+    {
+        if (!available) return $"Check for _Updates (running {ShortVersion(running)})…";
+        return availableVersion is null ? "_Update Available…" : $"_Update to {Shown(running, availableVersion).Other} available…";
+    }
+
+    /// <summary>Whether to say "updated" on this launch: only when a version ran here before and this one is newer. Never
+    /// on a first run or after going back to an older version.</summary>
+    public static bool JustUpdated(string? last, string current) =>
+        last is not null && Version.TryParse(last, out var before) && Version.TryParse(current, out var now) && now > before;
+
+    /// <summary>The version a .appinstaller file offers (its MainBundle's, or MainPackage's), or null when it doesn't say
+    /// one that reads as a version.</summary>
+    internal static string? VersionIn(string appInstaller)
+    {
+        try
+        {
+            var root = System.Xml.Linq.XDocument.Parse(appInstaller).Root;
+            var main = root?.Elements().FirstOrDefault(e => e.Name.LocalName is "MainBundle" or "MainPackage");
+            var version = main?.Attribute("Version")?.Value ?? root?.Attribute("Version")?.Value;
+            return version is not null && Version.TryParse(version, out _) ? version : null;
+        }
+        catch (System.Xml.XmlException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Whether a version is newer than the one running.</summary>
+    public static bool IsNewer(string? version, string running) =>
+        version is not null && Version.TryParse(version, out var v) && Version.TryParse(running, out var r) && v > r;
+
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
+
+    /// <summary>The version the .appinstaller at <paramref name="source"/> offers, or null when it can't be read.</summary>
+    public static async Task<string?> OfferedVersionAsync(Uri source)
+    {
+        try
+        {
+            var text = source.IsFile ? await File.ReadAllTextAsync(source.LocalPath) : await Http.GetStringAsync(source);
+            return VersionIn(text);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or HttpRequestException or TaskCanceledException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Quietly: the check's state and, when there's an update, which version. Nothing is said or shown.</summary>
+    public static async Task<(State State, string? Version)> CheckQuietlyAsync()
+    {
+        var result = await CheckAsync();
+        if (result.State != State.Available || result.Source is not { } source) return (result.State, null);
+        return (State.Available, await OfferedVersionAsync(source));
+    }
+
+    /// <summary>How the update experience reaches the system, replaceable in tests.</summary>
+    internal static Func<string?> InstalledVersion { get; set; } = () => PackageVersion;
+    internal static Func<bool> SelfUpdating { get; set; } = () => UpdatesItself;
+    internal static Func<Task<(State State, string? Version)>> QuietCheck { get; set; } = CheckQuietlyAsync;
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern int RegisterApplicationRestart(string? commandLine, int flags);

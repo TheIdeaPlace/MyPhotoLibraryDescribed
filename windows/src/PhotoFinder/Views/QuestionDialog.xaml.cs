@@ -33,8 +33,8 @@ public partial class QuestionDialog : Window
     internal static Func<Window, string, string, string, string, bool> Ask { get; set; } =
         (owner, title, question, details, yes) => new QuestionDialog(title, question, details, yes) { Owner = owner }.ShowDialog() == true;
 
-    /// <summary>Asks a risky question, where the safe answer (<c>keep</c>) is the default and has focus. True for yes.
-    /// Replaceable in tests.</summary>
-    internal static Func<Window, string, string, string, string, string, bool> AskRisky { get; set; } =
+    /// <summary>Asks where the other answer (<c>keep</c>) is the default and has focus, as for a risky yes or a dialog that
+    /// mostly just closes: Enter and Escape both give it. True for yes. Replaceable in tests.</summary>
+    internal static Func<Window, string, string, string, string, string, bool> AskSafely { get; set; } =
         (owner, title, question, details, yes, keep) => new QuestionDialog(title, question, details, yes, keep) { Owner = owner }.ShowDialog() == true;
 }
