@@ -992,7 +992,8 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     /// selection change, since a big selection in a big list makes it costly.</summary>
     public FileRow? FocusedRow => FocusedIndex >= 0 && FocusedIndex < Rows.Count ? Rows[FocusedIndex] : null;
 
-    private int FocusedIndex { get; set; } = -1;
+    /// <summary>The focused row's position in <see cref="Rows"/>, or -1.</summary>
+    public int FocusedIndex { get; private set; } = -1;
 
     private void UpdateFocusedRow()
     {
