@@ -43,6 +43,8 @@
                 <v:AppMenuItem Command="v:AppCommands.RemoveFolder" />
                 <v:AppMenuItem Command="v:AppCommands.Refresh" />
                 <Separator />
+                <v:AppMenuItem Header="Rea_d-Only" x:Name="ReadOnlyItem" IsCheckable="True" Click="ReadOnly_Click" />
+                <Separator />
                 <v:AppMenuItem Command="v:AppCommands.Exit" />
             </v:AppMenuItem>
             <v:AppMenuItem Header="_Edit">
@@ -58,6 +60,9 @@
                 <v:AppMenuItem x:Name="ShowDescriptionItem" Command="v:AppCommands.ShowDescription" IsCheckable="False" />
                 <v:AppMenuItem Command="v:AppCommands.ChooseColumns" />
                 <v:AppMenuItem Header="_Sort By" x:Name="SortMenu" />
+                <Separator />
+                <v:AppMenuItem Command="v:AppCommands.ReadStatusBar" />
+                <v:AppMenuItem Command="v:AppCommands.GoToStatusBar" />
             </v:AppMenuItem>
             <v:AppMenuItem Header="_Go">
                 <v:AppMenuItem Command="v:AppCommands.EnclosingFolder" />

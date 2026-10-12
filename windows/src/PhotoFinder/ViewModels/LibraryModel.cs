@@ -661,7 +661,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             if (kind == _settings.DescriptionKind && _rowsByPath.TryGetValue(path, out var row)) row.Description = text;
             DescriptionsChanged?.Invoke(path);
             // Online-only photos would have to be downloaded to be changed, which isn't done without asking.
-            if (!_settings.SaveDescriptionsInPhotos || item.IsVideo || item.IsOnlineOnly) return;
+            if (!_settings.SaveDescriptionsInPhotos || _settings.ReadOnly || item.IsVideo || item.IsOnlineOnly) return;
             _pendingCaptions[path] = text;
             if (!_writingCaptions) CaptionsWritten = WriteCaptionsFromDescriptionsAsync();
         }
@@ -687,7 +687,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             {
                 var batch = _pendingCaptions.ToList();
                 _pendingCaptions.Clear();
-                if (!_settings.SaveDescriptionsInPhotos) continue;
+                if (!_settings.SaveDescriptionsInPhotos || _settings.ReadOnly) continue;
                 var byPath = _items.ToDictionary(i => i.Path, StringComparer.OrdinalIgnoreCase);
                 var candidates = batch.Where(b => byPath.TryGetValue(b.Key, out var i) && !i.IsOnlineOnly)
                     .Select(b => (Item: byPath[b.Key], Text: b.Value.Trim())).ToList();
@@ -771,12 +771,37 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     private readonly Dictionary<string, DateTime> _ownChanges = new(StringComparer.OrdinalIgnoreCase);
     private bool _missedDiskChange;
 
+    /// <summary>File > Read-Only (#83): while it's on, nothing changes a photo file. Turning it off is the window's to ask
+    /// about first.</summary>
+    public bool IsReadOnly
+    {
+        get => _settings.ReadOnly;
+        set
+        {
+            if (_settings.ReadOnly == value) return;
+            _settings.ReadOnly = value;
+            PhotoChanges.Allowed = !value;
+            SaveSettings();
+            OnPropertyChanged();
+        }
+    }
+
     /// <summary>Writes to the files, then reads them back so the list shows what's really stored.</summary>
     /// <param name="quiet">For captions written from descriptions: nothing in the status bar or the sidebar, failures
     /// only traced rather than shown (they can come one after another while describing in the background), and the
     /// metadata cache saved once at the end of the queue rather than after every photo.</param>
     private async Task<WriteResult> WriteAsync(string label, List<MediaItem> files, Func<IReadOnlyList<MediaItem>, Task<WriteResult>> write, bool quiet = false)
     {
+        // Read-only (#83): nothing is written, and the person is told why. The writers check too.
+        if (IsReadOnly)
+        {
+            if (!quiet)
+            {
+                Beep();
+                Announcer.Announce(PhotoChanges.ReadOnlyMessage);
+            }
+            return new WriteResult(0, []);
+        }
         if (!quiet)
         {
             // Two of the person's own changes at once: the second says why it isn't done.

@@ -71,6 +71,7 @@ public static class XmpFields
     /// <see cref="SecondPictureException"/> for a photo holding a second picture that has no room for them.</summary>
     public static async Task WriteAsync(string path, string? caption, string? altText, string? extended)
     {
+        PhotoChanges.Check();
         if (!CanWrite(path)) throw new NotSupportedException($"{Path.GetExtension(path).TrimStart('.').ToUpperInvariant()} files can't hold these fields.");
         var root = Root(path);
         var set = new BitmapPropertySet();
@@ -277,6 +278,7 @@ public static class XmpFields
     /// </summary>
     public static async Task KeepingSecondPictureAsync(string path, Func<string, bool, Task> write)
     {
+        PhotoChanges.Check();
         if (!CanWrite(path) || IsTiff(path))
         {
             await write(path, false);

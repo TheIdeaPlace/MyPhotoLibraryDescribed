@@ -215,6 +215,7 @@ public class MetadataReaderTests
     public void ExposureText(double seconds, string expected) => Assert.Equal(expected, MetadataReader.ExposureText(seconds));
 }
 
+[Collection(SharedState.Name)]
 public class MetadataWriterTests
 {
     private static MediaItem ItemFor(string path)

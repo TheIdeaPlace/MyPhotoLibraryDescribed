@@ -20,6 +20,10 @@ public static class AppCommands
     public static readonly RoutedUICommand RemoveFolder = Make("_Remove Folder from Library", nameof(RemoveFolder));
     public static readonly RoutedUICommand Refresh = Make("Re_fresh", nameof(Refresh), new KeyGesture(Key.F5));
     public static readonly RoutedUICommand Exit = Make("E_xit", nameof(Exit), new KeyGesture(Key.F4, ModifierKeys.Alt));
+    /// <summary>Speaks the status bar from anywhere, as Kelly's other apps do.</summary>
+    public static readonly RoutedUICommand ReadStatusBar = Make("Read Status _Bar", nameof(ReadStatusBar), new KeyGesture(Key.F9, ModifierKeys.Control));
+    public static readonly RoutedUICommand GoToStatusBar = Make("Go to Status Ba_r", nameof(GoToStatusBar),
+        new KeyGesture(Key.F9, ModifierKeys.Control | ModifierKeys.Shift));
 
     public static readonly RoutedUICommand Find = Make("_Find", nameof(Find), new KeyGesture(Key.F, ModifierKeys.Control), new KeyGesture(Key.F3));
 

@@ -35,6 +35,7 @@ public static class MetadataWriter
     /// </summary>
     public static async Task<WriteResult> SetFieldsAsync(IReadOnlyList<FieldChanges> changes)
     {
+        PhotoChanges.Check();
         var failures = new List<(MediaItem Item, string Reason)>();
         foreach (var change in changes)
         {
@@ -77,6 +78,7 @@ public static class MetadataWriter
 
     private static async Task<WriteResult> WriteAsync(IReadOnlyList<MediaItem> items, string key, object? value)
     {
+        PhotoChanges.Check();
         var failures = new List<(MediaItem Item, string Reason)>();
         foreach (var item in items)
         {
