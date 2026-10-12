@@ -53,7 +53,7 @@ final class FolderLibraryTests: XCTestCase {
         XCTAssertEqual(FileDescriptionKey.ticks(epoch), 621_355_968_000_000_000)
         XCTAssertEqual(FileDescriptionKey.ticks(Date(timeIntervalSince1970: 1.5)), 621_355_968_015_000_000)
         XCTAssertEqual(FileDescriptionKey.key(path: "/Pictures/a.jpg", size: 2048, modified: epoch),
-                       "file:/Pictures/a.jpg|2048|621355968000000000")
+                       "file:/PICTURES/A.JPG|2048|621355968000000000")
     }
 
     func testAnEditedFileGetsANewKeyAndAnUntouchedOneKeepsIt() {

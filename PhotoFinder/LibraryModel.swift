@@ -105,7 +105,10 @@ final class LibraryModel {
     private(set) var folderRoots: [String] = FolderRoots.load()
     /// The Folders section's tree, from the last scan of the added folders.
     @ObservationIgnored private var folderNodes: [FolderNode] = []
-    @ObservationIgnored private var folderScan: Task<Void, Never>?
+    /// The scan of each added folder in progress, by lowercased path; a newer scan of the same folder cancels it.
+    @ObservationIgnored private var folderScans: [String: Task<FolderNode, Never>] = [:]
+    /// The folder being watched for changes, the one showing.
+    @ObservationIgnored private var watchedFolder: String?
     /// Metadata already read from files, so going back to a folder doesn't read it all again. Keyed like
     /// descriptions, so an edited file is read afresh.
     @ObservationIgnored private var fileMetadata: [String: FileMetadata] = [:]
@@ -742,16 +745,33 @@ final class LibraryModel {
 
     /// Scans the added folders off the main actor and rebuilds the Folders section. With `reloadCurrent`, the
     /// folder showing is listed again even if its counts didn't change (a file was replaced).
-    private func refreshFolders(reloadCurrent: Bool = false) {
-        let roots = folderRoots
-        folderScan?.cancel()
-        folderScan = Task {
-            let nodes = await Task.detached(priority: .utility) { roots.map(FolderScanner.scan) }.value
-            guard !Task.isCancelled else { return }
-            self.folderNodes = nodes
-            let reloaded = self.rebuildSidebar()
-            if reloadCurrent, !reloaded, self.currentItem?.isDirectory == true {
-                self.loadSelectedSource(keepSelection: true)
+    /// Scans the added folders (or just `root`, the one that changed) for the sidebar, off the main actor. A newer
+    /// scan of a folder cancels an older one still walking it, so a stream of changes in a big folder (a download,
+    /// Finder's .DS_Store) doesn't pile up scans.
+    private func refreshFolders(only root: String? = nil, reloadCurrent: Bool = false) {
+        let roots = root.map { [$0] } ?? folderRoots
+        let scans = roots.map { root -> Task<FolderNode, Never> in
+            let key = root.lowercased()
+            folderScans[key]?.cancel()
+            let scan = Task.detached(priority: .utility) { FolderScanner.scan(root) }
+            folderScans[key] = scan
+            return scan
+        }
+        Task {
+            var fresh: [String: FolderNode] = [:]
+            for scan in scans {
+                let node = await scan.value
+                guard !scan.isCancelled else { continue }
+                fresh[node.path.lowercased()] = node
+                if folderScans[node.path.lowercased()] == scan { folderScans[node.path.lowercased()] = nil }
+            }
+            guard !fresh.isEmpty else { return }
+            // In the order they were added; folders removed meanwhile drop out.
+            let old = Dictionary(folderNodes.map { ($0.path.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
+            folderNodes = folderRoots.compactMap { fresh[$0.lowercased()] ?? old[$0.lowercased()] }
+            let reloaded = rebuildSidebar()
+            if reloadCurrent, !reloaded, currentItem?.isDirectory == true {
+                loadSelectedSource(keepSelection: true)
             }
         }
     }
@@ -761,6 +781,7 @@ final class LibraryModel {
     private func watchFolder(_ path: String?) {
         folderWatcher?.cancel()
         folderWatcher = nil
+        watchedFolder = path
         guard let path else { return }
         let descriptor = Darwin.open(path, O_EVTONLY)
         guard descriptor >= 0 else { return }
@@ -780,7 +801,11 @@ final class LibraryModel {
             // Copying many files in sends many changes; wait for them to settle.
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
-            refreshFolders(reloadCurrent: true)
+            // Only the added folder holding the one that changed is scanned again.
+            let root = watchedFolder.flatMap { folder in
+                folderRoots.first { FolderRoots.same($0, folder) || FolderRoots.isInside(folder, $0) }
+            }
+            refreshFolders(only: root, reloadCurrent: true)
         }
     }
 

@@ -47,12 +47,13 @@ enum FolderID {
 }
 
 /// The key a file's description is saved under in the description cache, next to Photos' identifiers:
-/// `file:<path>|<size in bytes>|<modified time in .NET ticks, UTC>`. The same parts as Windows' DescriptionStore
-/// (without its description-kind suffix, since the Mac has one prompt), so an edited or replaced file is described
+/// `file:<PATH IN CAPITALS>|<size in bytes>|<modified time in .NET ticks, UTC>`. The same parts as Windows'
+/// DescriptionStore, path capitalized like its keys since Mac disks usually ignore case too (without its
+/// description-kind suffix, since the Mac has one prompt), so an edited or replaced file is described
 /// again while a file left alone keeps its description. Ticks are 100-nanosecond steps since 1 January 0001.
 enum FileDescriptionKey {
     static func key(path: String, size: Int64, modified: Date) -> String {
-        "file:\(path)|\(size)|\(ticks(modified))"
+        "file:\(path.uppercased())|\(size)|\(ticks(modified))"
     }
 
     static func ticks(_ date: Date) -> Int64 {
@@ -154,6 +155,8 @@ enum FolderScanner {
         let resolved = URL(fileURLWithPath: root).resolvingSymlinksInPath().path
         var paths: [String] = []
         for case let url as URL in enumerator where MediaFiles.isMedia(url.lastPathComponent) {
+            // A newer scan of this folder replaced this one: stop rather than walk a big folder for nothing.
+            if Task.isCancelled { return [] }
             guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
             let path = url.path
             for base in [root, resolved, "/private" + resolved] where FolderRoots.isInside(path, base) {
