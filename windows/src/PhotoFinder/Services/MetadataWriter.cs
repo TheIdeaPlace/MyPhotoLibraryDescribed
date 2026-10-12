@@ -53,17 +53,17 @@ public static class MetadataWriter
                         oldCaption = old.HasCaption ? old.Caption : title;
                     }
                     var follows = change.Caption is { } next && FileFields.TitleKeepsInStep(title!, oldCaption!) && title!.Trim() != next.Trim();
-                    if (XmpFields.IsJpeg(item.Path))
+                    if (XmpFields.EditsInPlace(item.Path))
                     {
                         // One change to the file: the caption, the accessibility fields, and the Title following the
                         // caption in XMP, with an EXIF title that held the old caption emptied in place.
-                        await XmpFields.WriteJpegAsync(item.Path, new JpegMetadata.Changes
+                        await XmpFields.WriteChangesAsync(item.Path, new MetadataChanges
                         {
                             Caption = change.Caption,
                             AltText = change.AltText,
                             ExtendedDescription = change.ExtendedDescription,
                             Title = follows ? change.Caption!.Trim() : null,
-                            ClearExifTitle = follows ? title : null,
+                            ClearOwnTitle = follows ? title : null,
                         });
                     }
                     else
@@ -109,7 +109,7 @@ public static class MetadataWriter
                     // Windows' handler rebuilds a JPEG's EXIF (re-encoding its thumbnail, dropping tags, moving its
                     // MakerNote) and loses a motion photo's video: JPEGs are changed segment by segment instead (#86).
                     // A JPEG's Title is written with its caption, in SetFieldsAsync.
-                    await XmpFields.WriteJpegAsync(item.Path, new JpegMetadata.Changes
+                    await XmpFields.WriteChangesAsync(item.Path, new MetadataChanges
                     {
                         Stars = MediaTypes.StarsFromRating(Convert.ToUInt32(value ?? 0u, System.Globalization.CultureInfo.InvariantCulture)),
                     });

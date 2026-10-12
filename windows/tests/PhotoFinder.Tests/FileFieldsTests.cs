@@ -282,7 +282,7 @@ public sealed class FileFieldsTests : IDisposable
             """;
         var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
         var jpeg = WithSegment(plain, 0xE1, [.. XmpSignature, .. System.Text.Encoding.UTF8.GetBytes(xmp)]);
-        var changed = JpegMetadata.Apply(jpeg, new JpegMetadata.Changes { Caption = "New", AltText = "New" });
+        var changed = JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = "New", AltText = "New" });
         var s = Segments(changed).Single(x => IsXmp(changed, x));
         var text = System.Text.Encoding.UTF8.GetString(changed, s.Offset + 4 + XmpSignature.Length, s.Length - 4 - XmpSignature.Length);
         Assert.Contains("GCamera:MotionPhoto=\"1\"", text);
@@ -298,10 +298,10 @@ public sealed class FileFieldsTests : IDisposable
     {
         var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
         var broken = WithSegment(plain, 0xE1, [.. XmpSignature, .. "<x:xmpmeta not xml"u8.ToArray()]);
-        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(broken, new JpegMetadata.Changes { Caption = "A" }));
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(broken, new MetadataChanges { Caption = "A" }));
         var extended = WithSegment(plain, 0xE1, [.. "http://ns.adobe.com/xmp/extension/\0"u8.ToArray(), 1, 2, 3]);
-        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(extended, new JpegMetadata.Changes { Caption = "A" }));
-        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply("not a jpeg"u8.ToArray(), new JpegMetadata.Changes { Caption = "A" }));
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(extended, new MetadataChanges { Caption = "A" }));
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply("not a jpeg"u8.ToArray(), new MetadataChanges { Caption = "A" }));
     }
 
     [Fact]
@@ -340,7 +340,7 @@ public sealed class FileFieldsTests : IDisposable
         var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
         byte[] latin = [.. "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:my=\"urn:my\" my:Name=\"Caf"u8.ToArray(), 0xE9, .. "\"/></rdf:RDF></x:xmpmeta>"u8.ToArray()];
         var jpeg = WithSegment(plain, 0xE1, [.. XmpSignature, .. latin]);
-        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(jpeg, new JpegMetadata.Changes { Caption = "A" }));
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = "A" }));
     }
 
     [Fact]
@@ -349,7 +349,7 @@ public sealed class FileFieldsTests : IDisposable
         var xmp = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:my=\"urn:my\"><my:Place>Kona&#xD;&#xA;HI</my:Place><dc:description><rdf:Alt><rdf:li xml:lang=\"en-US\">Old</rdf:li></rdf:Alt></dc:description></rdf:Description></rdf:RDF></x:xmpmeta>";
         var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
         var jpeg = WithSegment(plain, 0xE1, [.. XmpSignature, .. System.Text.Encoding.UTF8.GetBytes(xmp)]);
-        var changed = JpegMetadata.Apply(jpeg, new JpegMetadata.Changes { Caption = "New" });
+        var changed = JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = "New" });
         var seg = Segments(changed).Single(x => IsXmp(changed, x));
         var text = System.Text.Encoding.UTF8.GetString(changed, seg.Offset + 4 + XmpSignature.Length, seg.Length - 4 - XmpSignature.Length);
         Assert.DoesNotContain(">Old<", text);
@@ -383,6 +383,119 @@ public sealed class FileFieldsTests : IDisposable
         File.SetCreationTimeUtc(path, created);
         Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 4)).Succeeded);
         Assert.Equal(created, File.GetCreationTimeUtc(path));
+    }
+
+    // MARK: PNGs changed chunk by chunk (#82)
+
+    /// <summary>The PNG's chunks (type, offset, total length), up to and including IEND.</summary>
+    private static List<(string Type, int Offset, int Length)> PngChunks(byte[] b)
+    {
+        var list = new List<(string, int, int)>();
+        var at = 8;
+        while (at + 12 <= b.Length)
+        {
+            var length = (b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3];
+            var type = System.Text.Encoding.ASCII.GetString(b, at + 4, 4);
+            list.Add((type, at, length + 12));
+            at += length + 12;
+            if (type == "IEND") break;
+        }
+        return list;
+    }
+
+    private static bool IsXmpChunk(byte[] b, (string Type, int Offset, int Length) c) =>
+        c.Type == "iTXt" && b.AsSpan(c.Offset + 8).StartsWith("XML:com.adobe.xmp\0"u8);
+
+    /// <summary>The file without its XMP chunk: everything Photo Finder must leave as it was.</summary>
+    private static byte[] WithoutXmpChunk(byte[] b)
+    {
+        var output = new List<byte>(b[..8]);
+        var chunks = PngChunks(b);
+        foreach (var c in chunks.Where(c => !IsXmpChunk(b, c))) output.AddRange(b[c.Offset..(c.Offset + c.Length)]);
+        var end = chunks[^1].Offset + chunks[^1].Length;
+        output.AddRange(b[end..]);
+        return output.ToArray();
+    }
+
+    /// <summary>A chunk inserted after IHDR.</summary>
+    private static byte[] WithChunk(byte[] png, string type, byte[] data)
+    {
+        var ihdrEnd = 8 + 25;
+        var chunk = new byte[12 + data.Length];
+        chunk[0] = (byte)(data.Length >> 24); chunk[1] = (byte)(data.Length >> 16); chunk[2] = (byte)(data.Length >> 8); chunk[3] = (byte)data.Length;
+        System.Text.Encoding.ASCII.GetBytes(type).CopyTo(chunk, 4);
+        data.CopyTo(chunk, 8);
+        var crc = PngMetadata.Crc32(chunk.AsSpan(4, 4 + data.Length));
+        chunk[^4] = (byte)(crc >> 24); chunk[^3] = (byte)(crc >> 16); chunk[^2] = (byte)(crc >> 8); chunk[^1] = (byte)crc;
+        return [.. png[..ihdrEnd], .. chunk, .. png[ihdrEnd..]];
+    }
+
+    [Fact]
+    public async Task APngGetsItsCaptionAndAccessibilityFields_InItsXmpChunkOnly()
+    {
+        var path = _lib.AddPng("screenshot.png");
+        var original = WithChunk(File.ReadAllBytes(path), "tEXt", "Software\0Snipping Tool"u8.ToArray());
+        File.WriteAllBytes(path, [.. original, .. "after the end"u8.ToArray()]);
+        var before = File.ReadAllBytes(path);
+
+        Assert.Equal(1, (await MetadataWriter.SetFieldsAsync([MetadataWriter.FieldChanges.Replacing(ItemFor(path), "A settings window.")])).Succeeded);
+        var after = File.ReadAllBytes(path);
+        Assert.Equal(WithoutXmpChunk(before), WithoutXmpChunk(after));
+        var fields = await XmpFields.ReadAsync(path);
+        Assert.Equal(("A settings window.", "A settings window.", true), (fields.Caption, fields.AltText, fields.HasCaption));
+        Assert.Equal("A settings window.", (await MetadataReader.ReadAsync(path)).Caption);
+        // The XMP goes before the picture, where readers look first.
+        var chunks = PngChunks(after);
+        Assert.True(chunks.FindIndex(c => IsXmpChunk(after, c)) < chunks.FindIndex(c => c.Type == "IDAT"));
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+
+        // Changed again: still one XMP chunk.
+        await XmpFields.WriteAsync(path, "A dialog.", null, null);
+        var again = File.ReadAllBytes(path);
+        Assert.Single(PngChunks(again), c => IsXmpChunk(again, c));
+        Assert.Equal("A dialog.", (await XmpFields.ReadAsync(path)).Caption);
+    }
+
+    [Fact]
+    public async Task APngsTitle_FollowsTheCaption_UnlessSomeoneWroteADifferentOne()
+    {
+        // Windows keeps a PNG's Title in its XMP (dc:title): written there the old way, as Explorer would.
+        var path = _lib.AddPng("old.png");
+        var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
+        await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>("System.Title", "The old caption")]);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        Assert.Equal("The old caption", (await MetadataReader.ReadAsync(path)).Caption);
+        Assert.Equal(1, (await MetadataWriter.SetCaptionAsync([ItemFor(path)], "The new caption")).Succeeded);
+        Assert.Equal("The new caption", (await MetadataReader.ReadAsync(path)).Caption);
+        Assert.Equal("The new caption", await MetadataReader.ReadTitleAsync(path));
+
+        var mine = _lib.AddPng("mine.png");
+        var mineFile = await Windows.Storage.StorageFile.GetFileFromPathAsync(mine);
+        await mineFile.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>("System.Title", "A title of my own")]);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        await XmpFields.WriteAsync(mine, "An old caption", null, null);
+        await MetadataWriter.SetCaptionAsync([ItemFor(mine)], "A new caption");
+        Assert.Equal("A new caption", (await XmpFields.ReadAsync(mine)).Caption);
+        Assert.Equal("A title of my own", await MetadataReader.ReadTitleAsync(mine));
+    }
+
+    [Fact]
+    public void ACompressedXmpChunk_IsRead_AndADamagedPng_IsLeftAlone()
+    {
+        var png = File.ReadAllBytes(_lib.AddPng("a.png"));
+        var xmp = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">Packed</rdf:li></rdf:Alt></dc:description></rdf:Description></rdf:RDF></x:xmpmeta>"u8.ToArray();
+        var packed = new MemoryStream();
+        using (var z = new System.IO.Compression.ZLibStream(packed, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true)) z.Write(xmp);
+        var compressed = WithChunk(png, "iTXt", [.. "XML:com.adobe.xmp\0"u8.ToArray(), 1, 0, 0, 0, .. packed.ToArray()]);
+        Assert.Equal("Packed", PngMetadata.Fields(compressed).Caption);
+        var changed = PngMetadata.Apply(compressed, new MetadataChanges { Caption = "Unpacked" });
+        Assert.Equal("Unpacked", PngMetadata.Fields(changed).Caption);
+
+        var damaged = (byte[])png.Clone();
+        damaged[20] ^= 0xFF;  // inside IHDR: its CRC no longer matches
+        Assert.Throws<MetadataRefusedException>(() => PngMetadata.Apply(damaged, new MetadataChanges { Caption = "A" }));
     }
 
     [Fact]
@@ -466,11 +579,11 @@ public sealed class FileFieldsTests : IDisposable
     }
 
     [Fact]
-    public void OnlyJpegAndTiff_HoldTheFields()
+    public void JpegPngAndTiff_HoldTheFields()
     {
         Assert.True(XmpFields.CanWrite(@"C:\a.JPG"));
         Assert.True(XmpFields.CanWrite(@"C:\a.tiff"));
-        Assert.False(XmpFields.CanWrite(@"C:\a.png"));
+        Assert.True(XmpFields.CanWrite(@"C:\a.png"));
         Assert.False(XmpFields.CanWrite(@"C:\a.heic"));
         Assert.False(XmpFields.CanWrite(@"C:\a.mp4"));
     }

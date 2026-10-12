@@ -18,7 +18,8 @@ public sealed record MediaMetadata
     /// <summary>Which reader filled this in. Details cached by an older one are read again (they lack dc:description).</summary>
     public int Version { get; init; }
 
-    public const int CurrentVersion = 1;
+    /// <summary>2: PNG captions are read from their XMP too (#82).</summary>
+    public const int CurrentVersion = 2;
     public string Keywords { get; init; } = "";
     /// <summary>0 to 5 stars.</summary>
     public int Rating { get; init; }
