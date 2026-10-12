@@ -264,7 +264,7 @@ final class LibraryModel {
     }
 
     var currentItem: SidebarItem? { selectedSourceID.flatMap { itemsByID[$0] } }
-    var currentTitle: String { currentItem?.title ?? "Photo Finder" }
+    var currentTitle: String { currentItem?.title ?? AppInfo.name }
 
     var statusText: String {
         if isLoading { return "Loading…" }
@@ -942,6 +942,36 @@ final class LibraryModel {
             guard let text else { return }
             self?.say(text, ifStillOn: id)
         }
+    }
+
+    // MARK: - Help
+
+    /// Help > Check System.
+    func systemCheck() -> SystemCheck {
+#if arch(arm64)
+        let appleSilicon = true
+#else
+        let appleSilicon = false
+#endif
+        return SystemCheck(.init(
+            appName: AppInfo.name, appVersion: AppInfo.version,
+            osVersion: ProcessInfo.processInfo.operatingSystemVersion, appleSilicon: appleSilicon,
+            aiUnavailableReason: describeUnavailableReason,
+            photosAccess: PHPhotoLibrary.authorizationStatus(for: .readWrite),
+            savedDescriptions: descriptions.count,
+            describeAutomatically: describeAutomatically, describeInBackground: describeInBackground))
+    }
+
+    /// Help > Report a Bug…: a new GitHub issue with the system check filled in, and the same text on the clipboard
+    /// in case the page doesn't take it all. The app kit's relay replaces this once it's set up for the app (#33).
+    func reportBug() {
+        let body = SystemCheck.bugReportTemplate(systemText: systemCheck().text)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(body, forType: .string)
+        var components = URLComponents(url: AppInfo.issuesURL, resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "body", value: body), URLQueryItem(name: "labels", value: "bug,user-reported")]
+        if let url = components.url { NSWorkspace.shared.open(url) }
+        announce("Opening a new bug report in your browser. The details are also on the clipboard.")
     }
 
     /// Why photos can't be described on this Mac right now, or nil when they can. Never sets anything up.

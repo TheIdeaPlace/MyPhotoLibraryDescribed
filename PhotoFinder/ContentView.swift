@@ -458,7 +458,7 @@ struct AccessDeniedView: View {
         ContentUnavailableView {
             Label("No Access to Photos", systemImage: "photo.badge.exclamationmark")
         } description: {
-            Text("Photo Finder needs permission to read your photo library. Turn it on in System Settings, Privacy & Security, Photos, then reopen Photo Finder.")
+            Text("\(AppInfo.name) needs permission to read your photo library. Turn it on in System Settings, Privacy & Security, Photos, then reopen \(AppInfo.name).")
         } actions: {
             Button("Open Privacy Settings") {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos") {

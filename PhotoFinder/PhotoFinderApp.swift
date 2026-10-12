@@ -6,7 +6,7 @@ struct PhotoFinderApp: App {
     @State private var model = LibraryModel()
 
     var body: some Scene {
-        Window("Photo Finder", id: "main") {
+        Window(AppInfo.name, id: "main") {
             ContentView()
                 .environment(model)
                 .frame(minWidth: 720, minHeight: 420)
@@ -21,6 +21,12 @@ struct PhotoFinderApp: App {
         Settings {
             SettingsView()
         }
+
+        Window("Check System", id: "systemCheck") {
+            SystemCheckView()
+                .environment(model)
+        }
+        .windowResizability(.contentSize)
     }
 }
 
@@ -30,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct PhotoCommands: Commands {
     let model: LibraryModel
+    @Environment(\.openWindow) private var openWindow
     private static let f6 = KeyEquivalent(Character(UnicodeScalar(NSF6FunctionKey)!))
 
     var body: some Commands {
@@ -71,6 +78,12 @@ struct PhotoCommands: Commands {
                 }
             }
             Divider()
+        }
+        // Help: the same items as on Windows (#32, #33), plus macOS's own Help search. About stays in the app menu,
+        // where Mac apps keep it. Check for Updates comes with a signed release (#22).
+        CommandGroup(replacing: .help) {
+            Button("Check System…") { openWindow(id: "systemCheck") }
+            Button("Report a Bug…") { model.reportBug() }
         }
         CommandMenu("Go") {
             Button("Enclosing Folder") { model.goToEnclosingFolder() }

@@ -23,7 +23,7 @@ final class DescriptionCache: @unchecked Sendable {
 
     static var defaultURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PhotoFinder", isDirectory: true)
+            .appendingPathComponent(AppInfo.dataFolderName, isDirectory: true)
             .appendingPathComponent("Descriptions.json")
     }
 
@@ -47,6 +47,12 @@ final class DescriptionCache: @unchecked Sendable {
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [self] in save() }
         }
         DispatchQueue.main.async { NotificationCenter.default.post(name: Self.didChange, object: self) }
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.count
     }
 
     func description(for asset: PHAsset) -> String? { description(forKey: asset.localIdentifier) }
