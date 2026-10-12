@@ -63,5 +63,6 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 - **Gallery Home and End:** both go to the first and last item.
 - **Help > Check System…:** the Mac lists macOS, Apple silicon, Apple Intelligence, Photos access, saved descriptions and the describing settings, each OK or what to do, with Copy to Clipboard. Windows: to come (#32).
 - **Help > Report a Bug…:** the Mac opens a new GitHub issue with the system check filled in, and copies it. Windows: to come (#33). Both move to the app kit's relay later.
+- **Descriptions as captions:** the Mac has Photo > Use Description as Caption (asks before replacing a caption) and Settings > Save descriptions as captions: Never (default), Only When There's No Caption, Always. Windows: to come (#30).
 - **Describe Photo:** Ctrl+Shift+D on Windows (list, gallery and Preview), Shift-Command-D on the Mac (list and gallery), describing the photo you're on and speaking it.
 - **Choosing how photos are described:** Windows has Photo > Description Type, with Windows AI's four kinds (Accessible, Detailed, Brief, Diagram). The Mac's Settings has the prompt itself, since Apple Intelligence takes any prompt.
