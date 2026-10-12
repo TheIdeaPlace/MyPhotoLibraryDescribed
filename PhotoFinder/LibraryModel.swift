@@ -1154,6 +1154,37 @@ final class LibraryModel {
         }
     }
 
+    /// Photo > Rating (#20): sets the star rating of the chosen photos in Photos (macOS 27 lets apps write it), as
+    /// Windows does for files. 0 removes it. Files in added folders aren't rated yet.
+    func setRating(_ stars: Int, _ ids: Set<String>? = nil) {
+        guard canEditCaptions else {
+            errorMessage = "Rating photos requires macOS 27 or later."
+            return
+        }
+        let ids = ids ?? selection
+        let assets = assets(for: ids)
+        guard !assets.isEmpty else {
+            if !files(for: ids).isEmpty { announce("Ratings aren't available for files yet") } else { NSSound.beep() }
+            return
+        }
+        let stars = min(max(stars, 0), 5)
+        // Files chosen alongside library photos are left as they are, and that's said rather than skipped quietly.
+        let skippedFiles = !files(for: ids).isEmpty
+        let box = UncheckedBox(value: assets)
+        perform("Saving rating…") {
+            try await PHPhotoLibrary.shared().performChanges {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+                if #available(macOS 27, *) {
+                    for asset in box.value {
+                        PHAssetChangeRequest(for: asset).rating = PHAsset.Rating(rawValue: stars) ?? .unset
+                    }
+                }
+#endif
+            }
+            self.announce(RatingText.done(stars) + (skippedFiles ? ". Files aren't rated yet" : ""))
+        }
+    }
+
     func showInfo(_ ids: Set<String>? = nil) {
         let ids = ids ?? selection
         guard let row = rows.first(where: { ids.contains($0.id) && !$0.isContainer }) else {
@@ -2045,4 +2076,11 @@ final class LibraryObserver: NSObject, PHPhotoLibraryChangeObserver, @unchecked 
     func photoLibraryDidChange(_ changeInstance: PHChange) {
         handler(UncheckedBox(value: changeInstance))
     }
+}
+
+/// What Photo > Rating says and shows, in Windows' words (#20).
+enum RatingText {
+    static func stars(_ stars: Int) -> String { stars == 0 ? "" : stars == 1 ? "1 star" : "\(stars) stars" }
+    static func done(_ stars: Int) -> String { stars == 0 ? "Rating removed" : "Rated \(Self.stars(stars))" }
+    static func menuTitle(_ stars: Int) -> String { stars == 0 ? "No Rating" : stars == 1 ? "1 Star" : "\(stars) Stars" }
 }
