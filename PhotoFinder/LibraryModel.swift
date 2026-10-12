@@ -1915,10 +1915,17 @@ final class LibraryModel {
         defaults.set(current, forKey: "lastRunVersion")
         guard Updates.justUpdated(last: last, current: current) else { return }
         let alert = NSAlert()
-        alert.messageText = "\(AppInfo.name) Updated"
+        alert.messageText = "\(AppInfo.name) Update Installed"
         alert.informativeText = "\(AppInfo.name) is now version \(current)."
         alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "See What's New")
+        alert.addButton(withTitle: "See what's new")
+        // Escape closes it too, as the shared pattern asks; an alert only does that by itself for a Cancel button.
+        let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 53 else { return event }
+            NSApp.stopModal(withCode: .alertFirstButtonReturn)
+            return nil
+        }
+        defer { if let escape { NSEvent.removeMonitor(escape) } }
         if alert.runModal() == .alertSecondButtonReturn { NSWorkspace.shared.open(AppInfo.releaseNotesURL(current)) }
     }
 
