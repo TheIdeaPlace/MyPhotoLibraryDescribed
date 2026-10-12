@@ -117,7 +117,9 @@ public partial class MainWindow : Window
         Bind(AppCommands.GetInfo, ShowInfo, HasFiles);
         // Available on any row, so the shortcut on a folder or video says why it can't, rather than nothing.
         Bind(AppCommands.DescribePhoto, () => DescribePhoto(again: false), () => _model.FocusedRow is not null);
-        Bind(AppCommands.DescribeAgain, () => DescribePhoto(again: true), () => _model.FocusedRow is not null);
+        // Not while typing: Ctrl+Alt+Shift+D is AltGr+Shift+D, which types a character on some keyboard layouts (Ð on
+        // US-International), and the search box should get it.
+        Bind(AppCommands.DescribeAgain, () => DescribePhoto(again: true), () => _model.FocusedRow is not null && !IsTyping());
         Bind(AppCommands.ShowInExplorer, () => _model.ShowInExplorer(), () => _model.SelectedRows.Any(r => r.Item is not null || r.Container?.FolderPath is not null));
         Bind(AppCommands.Export, ExportSelection, HasFiles);
         Bind(AppCommands.AddFolder, AddFolder);
@@ -733,6 +735,9 @@ public partial class MainWindow : Window
         if (preview.CurrentRow is { } last && rows.Count == 1) Model_SelectionRequested([last.Id], false);
         FocusContent();
     }
+
+    /// <summary>Keyboard focus is in a box you can type in.</summary>
+    internal static bool IsTyping() => Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase { IsReadOnly: false };
 
     private void DescribePhoto(bool again)
     {

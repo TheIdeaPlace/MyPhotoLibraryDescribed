@@ -571,6 +571,58 @@ public sealed class AutoDescriberTests : IDisposable
     }
 
     [WpfFact]
+    public async Task DescribeAgain_ArrowingAwayAndBack_DoesntSayTheOldDescription_OrAskTwice()
+    {
+        var release = new TaskCompletionSource();
+        var (model, auto, store) = await StartAsync(describe: async _ => { await release.Task; return "The new one."; });
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            var row = model.FocusedRow!;
+            store.Put(row.Item!, "accessible", "The old one.");
+            await Settle(auto);
+            _announced.Clear();
+
+            var again = auto.DescribeNowAsync(row, () => true, again: true);
+            await WaitUntil(() => _described.Count == 1);
+            Select(model, "b.jpg");
+            Select(model, "a.jpg");
+            await Task.Delay(200);
+            Assert.DoesNotContain("The old one.", _announced);
+            release.SetResult();
+            await again;
+            await Settle(auto);
+
+            Assert.DoesNotContain("The old one.", _announced);
+            Assert.Equal(1, _described.Count(d => d.StartsWith("a.jpg")));
+            Assert.Equal("The new one.", store.Get(row.Item!, "accessible"));
+            Assert.Equal("The new one.", _announced[^1]);
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeAgain_TwiceOnOnePhoto_AfterAnotherPhoto_StillSaysStillDescribing()
+    {
+        var release = new TaskCompletionSource();
+        var (model, auto, _) = await StartAsync(settings: ManualOnly, describe: async _ => { await release.Task; return "Done."; });
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            var a = model.FocusedRow!;
+            var first = auto.DescribeNowAsync(a, () => true, again: true);
+            Select(model, "b.jpg");
+            var b = auto.DescribeNowAsync(model.FocusedRow!, () => true);
+            Select(model, "a.jpg");
+            var second = auto.DescribeNowAsync(a, () => true, again: true);
+            Assert.Contains("Still describing a.jpg", _announced);
+            Assert.Same(first, second);
+            release.SetResult();
+            await Task.WhenAll(first, b);
+            Assert.Equal(1, _described.Count(d => d.StartsWith("a.jpg")));
+        }
+    }
+
+    [WpfFact]
     public async Task DescribeNow_ACaughtFailureIsSpoken()
     {
         var (model, auto, _) = await StartAsync(settings: ManualOnly,

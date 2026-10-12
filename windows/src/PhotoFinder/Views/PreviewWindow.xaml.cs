@@ -83,7 +83,9 @@ public partial class PreviewWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.D && Keyboard.Modifiers is (ModifierKeys.Control | ModifierKeys.Shift) or (ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift))
+        // With Alt down, WPF may report the key as System, with the real one in SystemKey.
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key == Key.D && Keyboard.Modifiers is (ModifierKeys.Control | ModifierKeys.Shift) or (ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift))
         {
             var again = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
             if (CurrentRow is { } row && Describe is not null) _ = Describe(row, () => IsActive && CurrentRow == row, again);

@@ -176,7 +176,24 @@ public partial class InfoWindow : Window
     /// describing replaces, as on the Mac.</summary>
     private bool HasSaved => KindBox.SelectedValue is string kind && _store?.Get(_item, kind) is not null;
 
-    private void UpdateDescribeButton() => DescribeButton.Content = HasSaved ? "Describe _Again" : "_Describe Image";
+    private void UpdateDescribeButton() => DescribeButton.Content = HasSaved ? "Describe A_gain" : "_Describe Image";
+
+    /// <summary>After describing: renaming the focused button now would have screen readers say its new name over the
+    /// description, so it's renamed when focus leaves it.</summary>
+    private void UpdateDescribeButtonLater()
+    {
+        if (!DescribeButton.IsKeyboardFocused)
+        {
+            UpdateDescribeButton();
+            return;
+        }
+        void Renamed(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            DescribeButton.LostKeyboardFocus -= Renamed;
+            UpdateDescribeButton();
+        }
+        DescribeButton.LostKeyboardFocus += Renamed;
+    }
 
     private async Task DescribeAsync()
     {
@@ -222,7 +239,7 @@ public partial class InfoWindow : Window
             {
                 _store?.Put(_item, kind, text);
                 _row.Description = text;
-                UpdateDescribeButton();
+                UpdateDescribeButtonLater();
             }
             // Spoken whole, with focus left where it is, as the Mac app does: moving focus would cut the
             // speech off. The description box is next in Tab order for reading it line by line.
