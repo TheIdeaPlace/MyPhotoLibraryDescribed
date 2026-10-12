@@ -815,6 +815,19 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             Activity = files.Count > 1 ? $"{label.TrimEnd('…')} for {files.Count:N0} items…" : label;
         }
         await _writeGate.WaitAsync();
+        // Turned read-only while this waited its turn: stopped here, quietly for automatic saving, rather than refused
+        // by the writer with an error.
+        if (IsReadOnly)
+        {
+            _writeGate.Release();
+            if (!quiet)
+            {
+                IsWriting = false;
+                Activity = null;
+                Announcer.Announce(PhotoChanges.ReadOnlyMessage);
+            }
+            return new WriteResult(0, []);
+        }
         if (quiet)
         {
             IsWritingCaptions = true;

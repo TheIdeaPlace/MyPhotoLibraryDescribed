@@ -61,8 +61,14 @@ public partial class MainWindow : Window
         BuildColumns();
         BuildSortMenu();
         BuildKindMenu();
-        SaveInPhotosItem.IsChecked = model.Settings.SaveDescriptionsInPhotos;
         ReadOnlyItem.IsChecked = model.IsReadOnly;
+        ShowSaveInPhotos();
+        // Ctrl+F9 from Preview and Get Info too, which are modal over this window.
+        if (!_statusKeyRegistered)
+        {
+            _statusKeyRegistered = true;
+            EventManager.RegisterClassHandler(typeof(Window), Keyboard.PreviewKeyDownEvent, new KeyEventHandler(OtherWindow_PreviewKeyDown));
+        }
         UpdateTitle();
         SetUpDescriptionPanel();
         // WPF presses a button by its access key on a plain letter when focus is somewhere that doesn't take typing (the
@@ -496,9 +502,10 @@ public partial class MainWindow : Window
 
     internal void SetReadOnly(bool on)
     {
-        if (!on && !QuestionDialog.Ask(ActiveWindow, "Allow Changes to Photos", "Let Photo Finder change your photos?",
-                "Photo Finder will be able to write captions, alt text and ratings into your photo files, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to read-only at any time.",
-                "Allow Changes"))
+        // Keep Read-Only is the default and has focus: Enter alone never turns the protection off.
+        if (!on && !QuestionDialog.AskRisky(ActiveWindow, "Allow Changes to Photos", $"Let {AppInfo.Name} change your photos?",
+                $"{AppInfo.Name} will be able to write captions, alt text and ratings into your photo files, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to read-only at any time.",
+                "Allow Changes", "Keep Read-Only"))
         {
             ReadOnlyItem.IsChecked = true;
             return;
@@ -506,7 +513,17 @@ public partial class MainWindow : Window
         _model.IsReadOnly = on;
         ReadOnlyItem.IsChecked = on;
         // Queued behind the menu closing and focus returning, so it isn't cut off.
-        Services.Announcer.AnnounceAfter(on ? "Read-only. Photos won't be changed" : "Editing. Photo Finder can change your photos", "PhotoFinderSetting");
+        ShowSaveInPhotos();
+        Services.Announcer.AnnounceAfter(on ? "Read-only. Photos won't be changed" : $"Editing. {AppInfo.Name} can change your photos", "PhotoFinderSetting");
+    }
+
+    /// <summary>Save Descriptions in Photos reads as checked only when it's working: while read-only it's paused (the
+    /// choice is kept for when changes are allowed), and descriptions made meanwhile aren't saved into photos later.</summary>
+    private void ShowSaveInPhotos()
+    {
+        SaveInPhotosItem.IsChecked = _model.Settings.SaveDescriptionsInPhotos && !_model.IsReadOnly;
+        AutomationProperties.SetHelpText(SaveInPhotosItem,
+            _model.Settings.SaveDescriptionsInPhotos && _model.IsReadOnly ? "Paused while read-only" : "");
     }
 
     private void UpdateEmptyText()
@@ -793,6 +810,16 @@ public partial class MainWindow : Window
     /// <summary>The status bar's sections that have something to say, in order.</summary>
     internal List<TextBlock> StatusSections() =>
         new[] { StatusBarText, ActivityText, BackgroundText }.Where(t => t.IsVisible || t == StatusBarText).ToList();
+
+    private static bool _statusKeyRegistered;
+
+    private static void OtherWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Handled || sender is MainWindow || e.Key != Key.F9 || Keyboard.Modifiers != ModifierKeys.Control) return;
+        if (Application.Current?.Windows.OfType<MainWindow>().FirstOrDefault() is not { } main) return;
+        main.ReadStatusBar();
+        e.Handled = true;
+    }
 
     /// <summary>Ctrl+F9: the status bar's sections, spoken from wherever you are, without moving focus.</summary>
     internal void ReadStatusBar() =>
