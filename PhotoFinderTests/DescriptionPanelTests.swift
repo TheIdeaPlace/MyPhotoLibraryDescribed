@@ -35,6 +35,14 @@ final class DescriptionPanelTests: XCTestCase {
         XCTAssertEqual(saved, ["photo": "Mine"])
     }
 
+    func testDescribeAgainReplacesOnlyTheCorrectionAgreedTo() {
+        XCTAssertTrue(DescriptionCache.mayReplace(edited: false, saved: "A dog", agreed: nil))
+        XCTAssertFalse(DescriptionCache.mayReplace(edited: true, saved: "Rex", agreed: nil), "a correction is kept")
+        XCTAssertTrue(DescriptionCache.mayReplace(edited: true, saved: "Rex", agreed: "Rex"))
+        XCTAssertFalse(DescriptionCache.mayReplace(edited: true, saved: "Rex on the beach", agreed: "Rex"),
+                       "corrected again after agreeing: the newer correction is kept")
+    }
+
     func testOnlyWhatThePersonTypedCountsAsAChange() {
         XCTAssertFalse(DescriptionDraft.isChanged("A dog", from: "A dog"))
         XCTAssertFalse(DescriptionDraft.isChanged("A dog \n", from: "A dog"), "whitespace isn't a change")

@@ -31,6 +31,12 @@ final class DescriptionCache: @unchecked Sendable {
         }
     }
 
+    /// Whether a new description from Apple Intelligence may replace the saved one: always, unless the person
+    /// corrected it, in which case only the very correction they agreed Describe Again may replace.
+    static func mayReplace(edited: Bool, saved: String?, agreed: String?) -> Bool {
+        !edited || (agreed != nil && saved == agreed)
+    }
+
     /// Whether the person corrected this description, so Describe Again asks before replacing it.
     func isEdited(forKey key: String) -> Bool {
         lock.lock()
