@@ -30,8 +30,8 @@ public static class MetadataWriter
     /// <summary>
     /// The caption goes in the standard field, XMP's dc:description, in JPEG and TIFF files, with Explorer's Title kept in
     /// step when it's empty or still holds the old caption (so a title someone wrote is left alone). Other formats keep
-    /// the caption in the Title, as before. The accessibility fields are written to JPEG and TIFF only. A photo holding a
-    /// second picture (a motion photo, Ultra HDR) isn't changed at all, since every writer would lose that picture.
+    /// the caption in the Title, as before. The accessibility fields are written to JPEG and TIFF only. JPEGs are changed
+    /// segment by segment, keeping EXIF, the picture and a motion photo's video byte for byte (#86).
     /// </summary>
     public static async Task<WriteResult> SetFieldsAsync(IReadOnlyList<FieldChanges> changes)
     {
@@ -52,11 +52,28 @@ public static class MetadataWriter
                         var old = await XmpFields.ReadAsync(item.Path);
                         oldCaption = old.HasCaption ? old.Caption : title;
                     }
-                    await XmpFields.WriteAsync(item.Path, change.Caption, change.AltText, change.ExtendedDescription);
-                    // The caption is saved; a Title that can't follow isn't a failure, since Explorer also reads the
-                    // caption from dc:description when the file has no Title of its own.
-                    if (change.Caption is { } caption && FileFields.TitleKeepsInStep(title!, oldCaption!) && title!.Trim() != caption.Trim())
-                        await WriteAsync([item], "System.Title", caption.Trim().Length == 0 ? null : caption.Trim());
+                    var follows = change.Caption is { } next && FileFields.TitleKeepsInStep(title!, oldCaption!) && title!.Trim() != next.Trim();
+                    if (XmpFields.IsJpeg(item.Path))
+                    {
+                        // One change to the file: the caption, the accessibility fields, and the Title following the
+                        // caption in XMP, with an EXIF title that held the old caption emptied in place.
+                        await XmpFields.WriteJpegAsync(item.Path, new JpegMetadata.Changes
+                        {
+                            Caption = change.Caption,
+                            AltText = change.AltText,
+                            ExtendedDescription = change.ExtendedDescription,
+                            Title = follows ? change.Caption!.Trim() : null,
+                            ClearExifTitle = follows ? title : null,
+                        });
+                    }
+                    else
+                    {
+                        await XmpFields.WriteAsync(item.Path, change.Caption, change.AltText, change.ExtendedDescription);
+                        // The caption is saved; a Title that can't follow isn't a failure, since Explorer also reads the
+                        // caption from dc:description when the file has no Title of its own.
+                        if (follows)
+                            await WriteAsync([item], "System.Title", change.Caption!.Trim().Length == 0 ? null : change.Caption.Trim());
+                    }
                 }
                 else if (change.Caption is { } caption)
                 {
@@ -87,20 +104,27 @@ public static class MetadataWriter
                 // Saving properties rewrites the file, which changes its modified date. Put it back, so a
                 // photo without a Date Taken doesn't jump to today in the list.
                 // UTC, so the hour that repeats when daylight saving ends can't shift it.
-                var modified = File.GetLastWriteTimeUtc(item.Path);
-                // A motion photo is changed in a working copy, checked to still hold its video or HDR map, then swapped in.
-                await XmpFields.KeepingSecondPictureAsync(item.Path, async (target, _) =>
+                if (XmpFields.IsJpeg(item.Path) && key is "System.Rating" or "System.Title")
                 {
-                    var file = await StorageFile.GetFileFromPathAsync(target);
-                    await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>(key, value)]);
-                });
-                try
-                {
-                    File.SetLastWriteTimeUtc(item.Path, modified);
+                    // Windows' handler rebuilds a JPEG's EXIF (re-encoding its thumbnail, dropping tags, moving its
+                    // MakerNote) and loses a motion photo's video: JPEGs are changed segment by segment instead (#86).
+                    await XmpFields.WriteJpegAsync(item.Path, key == "System.Rating"
+                        ? new JpegMetadata.Changes { Stars = MediaTypes.StarsFromRating(Convert.ToUInt32(value ?? 0u, System.Globalization.CultureInfo.InvariantCulture)) }
+                        : new JpegMetadata.Changes { Title = (value as string) ?? "", ClearExifTitle = await MetadataReader.ReadTitleAsync(item.Path) });
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                else
                 {
-                    // Saved, but OneDrive or a virus scanner had the file a moment: it keeps today's date.
+                    var modified = File.GetLastWriteTimeUtc(item.Path);
+                    var file = await StorageFile.GetFileFromPathAsync(item.Path);
+                    await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>(key, value)]);
+                    try
+                    {
+                        File.SetLastWriteTimeUtc(item.Path, modified);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        // Saved, but OneDrive or a virus scanner had the file a moment: it keeps today's date.
+                    }
                 }
                 // Some handlers accept a write and store nothing. Read it back, from a fresh handle, before calling it saved.
                 var check = await StorageFile.GetFileFromPathAsync(item.Path);
@@ -128,7 +152,7 @@ public static class MetadataWriter
 
     private static string Reason(MediaItem item, Exception ex) => ex switch
     {
-        SecondPictureException => $"{item.Name} holds a second picture, such as a motion photo's video or an HDR map, that changing it would lose, so it was left as it is.",
+        SecondPictureException => $"{item.Name} holds a second picture, such as an HDR map, and there's no room to change it without breaking that, so it was left as it is.",
         InvalidDataException => $"{item.Name} isn't the kind of file its name says, so it was left as it is.",
         UnauthorizedAccessException => $"{item.Name} is read-only or in use.",
         FileNotFoundException => $"{item.Name} is no longer there.",
