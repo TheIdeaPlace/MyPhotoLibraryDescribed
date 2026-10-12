@@ -71,11 +71,13 @@ enum FileMetadataWriter {
     /// The formats ImageIO changes metadata in without touching the picture. GIF is refused by ImageIO ("not supported
     /// for lossless metadata modification"), WebP can't be written at all, and RAW files belong to the camera maker's
     /// format (#31's research).
+    // Not PNG for now (#61): ImageIO's copy of a PNG damages its EXIF UserComment (every screenshot has one), and
+    // can't replace the EXIF description screenshots carry. PNGs come back with a writer that edits their chunks.
     static let writableTypes: Set<String> = [
-        UTType.jpeg.identifier, UTType.png.identifier, UTType.tiff.identifier, UTType.heic.identifier,
+        UTType.jpeg.identifier, UTType.tiff.identifier, UTType.heic.identifier,
     ]
     /// The same by file name, for deciding before a file is read.
-    static let writableExtensions: Set<String> = ["jpg", "jpeg", "jpe", "jfif", "png", "tif", "tiff", "heic"]
+    static let writableExtensions: Set<String> = ["jpg", "jpeg", "jpe", "jfif", "tif", "tiff", "heic"]
 
     private static let iptcNamespace = "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/" as CFString
     static let altTextPath = "Iptc4xmpCore:AltTextAccessibility"
