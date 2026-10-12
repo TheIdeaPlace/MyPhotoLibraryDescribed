@@ -22,7 +22,17 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.photography</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Photo Finder lists the photos and videos in folders you add to its library.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Photo Finder lists the photos and videos in folders you add to its library.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Photo Finder lists the photos and videos in folders you add to its library.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Photo Finder lists the photos and videos in folders you add to its library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Photo Finder lists the photos and videos in your library so you can browse, preview and export them like files.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Photo Finder lists the photos and videos in folders you add to its library.</string>
 </dict>
 </plist>

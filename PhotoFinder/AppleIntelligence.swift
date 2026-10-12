@@ -167,7 +167,8 @@ enum PhotoDescriber {
 @available(macOS 27, *)
 struct AppleIntelligenceSection: View {
     let imageData: Data?
-    let asset: PHAsset
+    /// The key the photo's description is saved under: a Photos identifier, or a file's key (#36).
+    let descriptionKey: String
     @Environment(LibraryModel.self) private var model
     @State private var conversation: ImageConversation?
     @State private var question = ""
@@ -225,7 +226,7 @@ struct AppleIntelligenceSection: View {
 
     /// A description saved earlier shows as soon as the photo's data is in, without describing again.
     private func showSaved() {
-        guard conversation == nil, let imageData, let saved = model.descriptions.description(for: asset) else { return }
+        guard conversation == nil, let imageData, let saved = model.descriptions.description(forKey: descriptionKey) else { return }
         conversation = ImageConversation(imageData: imageData, saved: saved)
     }
 
@@ -244,9 +245,9 @@ struct AppleIntelligenceSection: View {
     private func start() {
         guard let imageData else { return }
         let cache = model.descriptions
-        let photo = UncheckedBox(value: asset)
+        let key = descriptionKey
         guard let conversation = conversation ?? ImageConversation(imageData: imageData, onDescribed: { text in
-            cache.remember(text, for: photo.value)
+            cache.remember(text, forKey: key)
         }) else {
             return
         }

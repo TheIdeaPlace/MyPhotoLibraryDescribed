@@ -80,6 +80,8 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Delete on an added folder removes it from the library (after asking), as on Windows (#36).
+        .onDeleteCommand { model.deleteInSidebar() }
         .focused(pane, equals: .sidebar)
         .accessibilityLabel("Sidebar")
     }

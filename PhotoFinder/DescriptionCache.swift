@@ -3,7 +3,8 @@ import Photos
 
 /// Apple Intelligence descriptions already made, saved to disk so a photo is described once: by Describe Image in
 /// Get Info, or behind the scenes when it's added to the library. Keyed by the photo's local identifier, so
-/// favoriting or captioning it (which changes its modification date) keeps its description.
+/// favoriting or captioning it (which changes its modification date) keeps its description. Files in added folders
+/// (#36) are keyed by path, size and modified time instead (see FileDescriptionKey), as on Windows.
 final class DescriptionCache: @unchecked Sendable {
     /// Posted (on the main queue) when a description is saved or replaced, so what's on screen can show it.
     static let didChange = Notification.Name("DescriptionCacheDidChange")

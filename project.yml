@@ -26,6 +26,12 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.photography
         NSPhotoLibraryUsageDescription: Photo Finder lists the photos and videos in your library so you can browse, preview and export them like files.
+        # Folders added with File > Add Folder to Library… can be in these places (#36); macOS asks once for each.
+        NSDesktopFolderUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
+        NSDocumentsFolderUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
+        NSDownloadsFolderUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
+        NSRemovableVolumesUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
+        NSNetworkVolumesUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.theideaplace.PhotoFinder
