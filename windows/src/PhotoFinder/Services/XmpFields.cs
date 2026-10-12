@@ -269,8 +269,8 @@ public static class XmpFields
     /// <summary>
     /// Runs <paramref name="write"/> on the file it's given, told whether the photo holds a second picture. For one that
     /// does, the write is made to a working copy beside the photo, never the photo itself. The copy is checked
-    /// (same size; the main picture's compressed data, everything after it and its Multi-Picture index byte for byte, in
-    /// the same place), flushed to disk, and only then swapped in whole. If anything rewrote or damaged it, or the photo
+    /// (same size; from the main picture's compressed data on, which takes in everything after it, and its Multi-Picture
+    /// index, byte for byte, in the same place; the tables before the compressed data aren't compared), flushed to disk, and only then swapped in whole. If anything rewrote or damaged it, or the photo
     /// changed meanwhile (OneDrive bringing a newer version), the copy is dropped and the photo is just as it was. WIC's
     /// in-place writer and Windows' property handler on a file with room keep the second picture; anything that rewrites
     /// the file doesn't.
@@ -303,7 +303,7 @@ public static class XmpFields
             await write(copy, true);
             if (!Kept(before, layout, File.ReadAllBytes(copy))) throw new SecondPictureException();
             // On disk before the swap, so a power cut can't leave the photo's name on data that was never written.
-            using (var flush = new FileStream(copy, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
+            using (var flush = new FileStream(copy, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete))
                 flush.Flush(flushToDisk: true);
             await SwapInAsync(copy, path, () => File.GetLastWriteTimeUtc(path) == stamp && new FileInfo(path).Length == before.Length);
         }
@@ -393,7 +393,7 @@ public static class XmpFields
 
 /// <summary>Windows stopped halfway through swapping a saved copy in: the photo is only in the copy, named here.</summary>
 public sealed class PhotoOnlyInCopyException(string path, string copy) : IOException(
-    $"Windows couldn't finish saving it. The photo is safe in the same folder as {Path.GetFileName(copy)}: rename that to {Path.GetFileName(path)} to get it back.");
+    $"Windows couldn't finish saving it. The photo is safe in the same folder as {Path.GetFileName(copy)}: in File Explorer, rename that to {Path.GetFileName(path)} to get it back.");
 
 /// <summary>A photo holding a second picture (a motion photo's video, an HDR gain map) that changing it would lose.</summary>
 public sealed class SecondPictureException() : Exception("It holds a second picture, such as a motion photo's video or an HDR map, that changing it would lose.");
