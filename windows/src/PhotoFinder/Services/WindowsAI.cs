@@ -134,9 +134,11 @@ public sealed class WindowsAI : IDisposable
     };
 
     /// <summary>Describes a photo. <paramref name="jpegAtSize"/> makes the JPEG to send at a given longest side,
-    /// so a failure can be tried again smaller.</summary>
-    public Task<string> DescribeAsync(Func<uint, Task<byte[]>> jpegAtSize, string kind, CancellationToken cancel = default) =>
-        WithRetriesAsync(jpegAtSize, jpeg => DescribeOnceAsync(jpeg, kind, cancel));
+    /// so a failure can be tried again smaller. <paramref name="drop"/> gives the request up only until it's sent: stopping it after that would mean a fresh helper
+    /// and a model reload, which costs more than letting it finish.</summary>
+    public Task<string> DescribeAsync(Func<uint, Task<byte[]>> jpegAtSize, string kind, CancellationToken cancel = default,
+        CancellationToken drop = default) =>
+        WithRetriesAsync(jpegAtSize, jpeg => DescribeOnceAsync(jpeg, kind, cancel, drop));
 
     /// <summary>Tries the first size, then smaller ones while the model reports an internal error.
     /// Any other failure (content filter, too much text) is final.</summary>
@@ -159,11 +161,13 @@ public sealed class WindowsAI : IDisposable
         throw last!;
     }
 
-    private async Task<string> DescribeOnceAsync(byte[] jpeg, string kind, CancellationToken cancel)
+    private async Task<string> DescribeOnceAsync(byte[] jpeg, string kind, CancellationToken cancel, CancellationToken drop)
     {
-        await _gate.WaitAsync(cancel);
+        using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancel, drop))
+            await _gate.WaitAsync(waiting.Token);
         try
         {
+            drop.ThrowIfCancellationRequested();
             var server = EnsureServer();
             var id = Interlocked.Increment(ref _nextId);
             string? line;

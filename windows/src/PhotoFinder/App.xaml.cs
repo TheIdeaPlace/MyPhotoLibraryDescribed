@@ -28,7 +28,8 @@ public partial class App : Application
         var descriptions = new DescriptionStore(DescriptionStore.DefaultPath);
         var model = new LibraryModel(settings, Settings.DefaultPath, new MetadataCache(MetadataCache.DefaultPath),
             LibraryRoots.PicturesLibraryAsync) { Descriptions = descriptions };
-        var autoDescriber = new AutoDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
+        var autoDescriber = new AutoDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync,
+            describeAhead: DescribeAheadAsync) { MayDescribeAhead = () => !EnergySaverOn() };
         var backgroundDescriber = new BackgroundDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
         backgroundDescriber.ForegroundBusy = () => autoDescriber.IsBusy;
         MainWindow = new MainWindow(model) { AutoDescriber = autoDescriber, BackgroundDescriber = backgroundDescriber };
@@ -41,6 +42,30 @@ public partial class App : Application
             using var bitmap = await ImageDecoding.DecodeAsync(item.Path, size);
             return await ImageDecoding.ToJpegAsync(bitmap);
         }, kind, cancel);
+
+    /// <summary>Describes a photo ahead (#64): <paramref name="drop"/> gives it up while it's being decoded or waiting its
+    /// turn, but not once Windows has it.</summary>
+    private static Task<string> DescribeAheadAsync(Models.MediaItem item, string kind, CancellationToken drop) =>
+        WindowsAI.DescribeAsync(async size =>
+        {
+            drop.ThrowIfCancellationRequested();
+            using var bitmap = await ImageDecoding.DecodeAsync(item.Path, size);
+            drop.ThrowIfCancellationRequested();
+            return await ImageDecoding.ToJpegAsync(bitmap);
+        }, kind, drop: drop);
+
+    /// <summary>Windows' energy saver (battery saver) is on: work ahead waits.</summary>
+    private static bool EnergySaverOn()
+    {
+        try
+        {
+            return global::Windows.System.Power.PowerManager.EnergySaverStatus == global::Windows.System.Power.EnergySaverStatus.On;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 
     protected override void OnExit(ExitEventArgs e)
     {

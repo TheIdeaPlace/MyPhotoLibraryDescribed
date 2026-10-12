@@ -33,7 +33,7 @@ public sealed class AutoDescriberTests : IDisposable
 
     private async Task<(LibraryModel Model, AutoDescriber Auto, DescriptionStore Store)> StartAsync(
         AIReadiness? readiness = null, Func<MediaItem, Task<string>>? describe = null, Settings? settings = null,
-        AIReadiness? afterPrepare = null)
+        AIReadiness? afterPrepare = null, AutoDescriber.DescribeFunc? describeAhead = null)
     {
         var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
         var model = new LibraryModel(settings ?? new Settings(), _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
@@ -49,7 +49,7 @@ public sealed class AutoDescriberTests : IDisposable
             },
             _ => Task.FromResult(_prepared > 0 ? afterPrepare ?? Ready : readiness ?? Ready),
             _ => { _prepared++; return Task.FromResult(afterPrepare ?? Ready); },
-            TimeSpan.FromMilliseconds(30));
+            TimeSpan.FromMilliseconds(30), describeAhead);
         return (model, auto, store);
     }
 
@@ -102,7 +102,8 @@ public sealed class AutoDescriberTests : IDisposable
             Assert.DoesNotContain("A picture called a.jpg.", _announced);
             await Settle(auto);
             Assert.Contains("A picture called a.jpg.", _announced);
-            Assert.Equal(["a.jpg:accessible", "b.jpg:accessible"], _described);
+            // c.jpg was described ahead while stepping from a to b; going back doesn't look ahead to b again.
+            Assert.Equal(["a.jpg:accessible", "b.jpg:accessible", "c.jpg:accessible"], _described);
             Assert.NotNull(store.Get(model.FocusedRow!.Item!, "accessible"));
         }
     }
@@ -662,6 +663,218 @@ public sealed class AutoDescriberTests : IDisposable
             await auto.DescribeNowAsync(model.FocusedRow!, () => true);
             Assert.Equal("Windows declined to describe this photo.", _announced[^1]);
             Assert.False(auto.IsBusy);
+        }
+    }
+
+    // MARK: Describing ahead (#64)
+
+    /// <summary>The three photos in list order, which these tests step through: they're next to each other.</summary>
+    private static string[] PhotoOrder(LibraryModel model)
+    {
+        var photos = model.Rows.Where(r => r.Name.EndsWith(".jpg")).ToList();
+        var first = model.Rows.IndexOf(photos[0]);
+        Assert.Equal([first, first + 1, first + 2], photos.Select(r => model.Rows.IndexOf(r)));
+        return photos.Select(r => r.Name).ToArray();
+    }
+
+    [WpfFact]
+    public async Task SteppingToAPhoto_DescribesTheNextOneAhead_Quietly_AndArrivingSpeaksItWithoutAskingAgain()
+    {
+        var (model, auto, store) = await StartAsync();
+        using (model) using (auto)
+        {
+            var (first, second, third) = PhotoOrder(model) is var o ? (o[0], o[1], o[2]) : default;
+            Select(model, first);
+            await Settle(auto);
+            // Landing on a photo (not a step) doesn't look ahead.
+            Assert.Equal([$"{first}:accessible"], _described);
+            Select(model, second);
+            await Settle(auto);
+            Assert.Equal([$"{first}:accessible", $"{second}:accessible", $"{third}:accessible"], _described);
+            Assert.DoesNotContain($"A picture called {third}.", _announced);
+            var ahead = model.Rows.Single(r => r.Name == third);
+            Assert.Equal($"A picture called {third}.", store.Get(ahead.Item!, "accessible"));
+            Assert.Equal($"A picture called {third}.", ahead.Description);
+
+            Select(model, third);
+            await Settle(auto);
+            Assert.Contains($"A picture called {third}.", _announced);
+            Assert.Single(_described, d => d.StartsWith(third));
+        }
+    }
+
+    [WpfFact]
+    public async Task SteppingBack_LooksAheadBackwards()
+    {
+        var (model, auto, _) = await StartAsync();
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            Select(model, o[2]);
+            await Settle(auto);
+            Select(model, o[1]);
+            await Settle(auto);
+            Assert.Equal([$"{o[2]}:accessible", $"{o[1]}:accessible", $"{o[0]}:accessible"], _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task JumpingToAPhoto_DoesntLookAhead()
+    {
+        var (model, auto, _) = await StartAsync();
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            Select(model, o[0]);
+            await Settle(auto);
+            Select(model, o[2]);
+            await Settle(auto);
+            Assert.Equal([$"{o[0]}:accessible", $"{o[2]}:accessible"], _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task ARefreshBetweenSteps_StillCountsAsAStep()
+    {
+        var (model, auto, _) = await StartAsync();
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            Select(model, o[0]);
+            await Settle(auto);
+            // A caption write or rescan replaces the rows without moving them.
+            await model.RescanAsync();
+            Select(model, o[1]);
+            await Settle(auto);
+            Assert.Contains($"{o[2]}:accessible", _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task OnEnergySaverOrAwayFromTheList_NothingIsDescribedAhead()
+    {
+        var (model, auto, _) = await StartAsync();
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            auto.MayDescribeAhead = () => false;
+            Select(model, o[0]);
+            await Settle(auto);
+            Select(model, o[1]);
+            await Settle(auto);
+            Assert.DoesNotContain($"{o[2]}:accessible", _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task VideosAndDescribedPhotos_ArentDescribedAhead()
+    {
+        var (model, auto, store) = await StartAsync();
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            store.Put(model.Rows.Single(r => r.Name == o[2]).Item!, "accessible", "Already described.");
+            Select(model, o[0]);
+            await Settle(auto);
+            Select(model, o[1]);
+            await Settle(auto);
+            Assert.DoesNotContain($"{o[2]}:accessible", _described);
+
+            // From the video's neighbour toward it.
+            var clip = model.Rows.FindIndex(r => r.Name == "clip.mp4");
+            if (clip > 0 && model.Rows[clip - 1].Item is { IsVideo: false } before && clip >= 2 && model.Rows[clip - 2].Item is { IsVideo: false } start)
+            {
+                _described.Clear();
+                Select(model, start.Name);
+                await Settle(auto);
+                Select(model, before.Name);
+                await Settle(auto);
+                Assert.DoesNotContain(_described, d => d.StartsWith("clip"));
+            }
+        }
+    }
+
+    [WpfFact]
+    public async Task LandingElsewhere_DropsTheWorkAhead_BeforeWindowsIsAsked_AndArrivingLaterDescribesIt()
+    {
+        var turn = new TaskCompletionSource();
+        var asked = new List<string>();
+        var (model, auto, store) = await StartAsync(describeAhead: async (item, kind, drop) =>
+        {
+            await turn.Task.WaitAsync(drop);   // decoding, or waiting for the helper
+            asked.Add(item.Name);
+            return $"Ahead {item.Name}";
+        });
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            Select(model, o[0]);
+            await Settle(auto);
+            Select(model, o[1]);
+            await WaitUntil(() => auto.IsDescribing(model.Rows.Single(r => r.Name == o[2]).Item!.Path));
+            Select(model, o[0]);
+            await Settle(auto);
+            turn.SetResult();
+            Assert.Empty(asked);
+            Assert.Null(store.Get(model.Rows.Single(r => r.Name == o[2]).Item!, "accessible"));
+
+            Select(model, o[2]);
+            await Settle(auto);
+            Assert.Contains($"A picture called {o[2]}.", _announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task ArrivingWhileItsBeingDescribedAhead_WaitsForThat_AndSpeaksIt()
+    {
+        var finish = new TaskCompletionSource();
+        var (model, auto, store) = await StartAsync(describeAhead: async (item, kind, _) =>
+        {
+            _described.Add($"{item.Name}:ahead");
+            await finish.Task;   // Windows has it: dropping no longer stops it
+            return $"Ahead {item.Name}";
+        });
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            Select(model, o[0]);
+            await Settle(auto);
+            Select(model, o[1]);
+            await WaitUntil(() => _described.Contains($"{o[2]}:ahead"));
+            Select(model, o[2]);
+            await Task.Delay(150);
+            Assert.True(auto.IsBusy);
+            finish.SetResult();
+            await Settle(auto);
+            Assert.Contains($"Ahead {o[2]}", _announced);
+            Assert.DoesNotContain($"{o[2]}:accessible", _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribePhoto_OnAPhotoBeingDescribedAhead_WaitsForThat()
+    {
+        var finish = new TaskCompletionSource();
+        var (model, auto, _) = await StartAsync(describeAhead: async (item, kind, _) =>
+        {
+            _described.Add($"{item.Name}:ahead");
+            await finish.Task;
+            return $"Ahead {item.Name}";
+        });
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            Select(model, o[0]);
+            await Settle(auto);
+            Select(model, o[1]);
+            await WaitUntil(() => _described.Contains($"{o[2]}:ahead"));
+            var row = model.Rows.Single(r => r.Name == o[2]);
+            var asking = auto.DescribeNowAsync(row, () => true);
+            await Task.Delay(100);
+            finish.SetResult();
+            await asking;
+            Assert.Contains($"Ahead {o[2]}", _announced);
+            Assert.DoesNotContain($"{o[2]}:accessible", _described);
         }
     }
 }
