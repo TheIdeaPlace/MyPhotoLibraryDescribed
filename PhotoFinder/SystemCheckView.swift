@@ -30,6 +30,7 @@ struct SystemCheckView: View {
                     .tag(item.id)
                 }
                 .focused($listFocused)
+                .defaultFocus($listFocused, true)
                 .accessibilityLabel("Checks")
                 HStack {
                     Button("Check Again") { refresh() }
@@ -53,10 +54,15 @@ struct SystemCheckView: View {
     }
 
     private func refresh() {
+        let first = check == nil
         check = model.systemCheck()
-        // On the first check, ready to arrow through, and VoiceOver starts there.
-        selected = check?.items.first?.id
-        listFocused = true
+        // On the first check, ready to arrow through, and VoiceOver starts there. Checking again keeps your place.
+        if selected == nil || !(check?.items.contains { $0.id == selected } ?? false) {
+            selected = check?.items.first?.id
+        }
+        // Set a moment later the first time: the list has only just appeared, and focus set in the same update is
+        // often lost.
+        if first { Task { @MainActor in listFocused = true } }
         if let check { AccessibilityNotification.Announcement(check.summary).post() }
     }
 
