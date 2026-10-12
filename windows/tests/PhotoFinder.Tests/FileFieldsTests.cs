@@ -233,7 +233,8 @@ public sealed class FileFieldsTests : IDisposable
         {
             Assert.True(holds);
             target = copy;
-            File.WriteAllBytes(copy, before[..^23]);   // what a rewrite does: the video's gone
+            using (var f = new FileStream(copy, FileMode.Open))
+                f.SetLength(before.Length - 23);   // what a rewrite does: the video's gone
             return Task.CompletedTask;
         }));
         Assert.NotEqual(path, target);
@@ -248,9 +249,11 @@ public sealed class FileFieldsTests : IDisposable
         var before = File.ReadAllBytes(path);
         await Assert.ThrowsAsync<InvalidOperationException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
         {
-            var damaged = File.ReadAllBytes(copy);
-            Array.Clear(damaged, 20, 200);
-            File.WriteAllBytes(copy, damaged);
+            using (var f = new FileStream(copy, FileMode.Open))
+            {
+                f.Position = 20;
+                f.Write(new byte[200]);
+            }
             throw new InvalidOperationException("Failed partway.");
         }));
         Assert.Equal(before, File.ReadAllBytes(path));
@@ -269,6 +272,59 @@ public sealed class FileFieldsTests : IDisposable
         }));
         Assert.EndsWith(" newer", File.ReadAllText(path));
         Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public async Task AWriteThatDamagesTheCompressedPictureQuietly_IsCaught()
+    {
+        var path = MotionPhoto("motion.jpg");
+        var before = File.ReadAllBytes(path);
+        await Assert.ThrowsAsync<SecondPictureException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
+        {
+            using var f = new FileStream(copy, FileMode.Open);
+            f.Position = f.Length - 40;   // inside the picture's compressed data, same size
+            f.Write(new byte[] { 1, 2, 3, 4 });
+            return Task.CompletedTask;
+        }));
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public async Task APhotoChangedWhileWaitingToSwapIn_IsntReplacedWithTheOldCopy()
+    {
+        var path = MotionPhoto("motion.jpg");
+        Task? oneDrive = null;
+        await Assert.ThrowsAsync<IOException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
+        {
+            // OneDrive has the photo open (so the swap waits), then writes a newer version.
+            var held = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+            oneDrive = Task.Run(async () =>
+            {
+                await Task.Delay(250);
+                held.Write(" newer"u8);
+                held.Dispose();
+            });
+            return Task.CompletedTask;
+        }));
+        await oneDrive!;
+        Assert.EndsWith(" newer", File.ReadAllText(path));
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public async Task AMotionPhotosCreationTimeAndAttributes_SurviveASave()
+    {
+        var path = _lib.AddJpeg("motion.jpg");
+        File.WriteAllBytes(path, WithoutRoom(File.ReadAllBytes(path)));
+        await XmpFields.WriteAsync(path, "First.", null, null);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. "ftypmp42 the video part"u8.ToArray()]);
+        var created = new DateTime(2019, 5, 6, 7, 8, 9, DateTimeKind.Utc);
+        File.SetCreationTimeUtc(path, created);
+        Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 4)).Succeeded);
+        Assert.Equal(created, File.GetCreationTimeUtc(path));
+        Assert.False(File.GetAttributes(path).HasFlag(System.IO.FileAttributes.Hidden));
     }
 
     [Fact]

@@ -27,10 +27,14 @@ public static class MediaTypes
         ".mp4", ".m4v", ".mov", ".avi", ".wmv", ".mkv", ".webm", ".3gp", ".3g2", ".mts", ".m2ts", ".mpg", ".mpeg",
     };
 
+    /// <summary>The start of a working copy's name while a photo is saved: the "~$" Office uses for its own working files.
+    /// Photo Finder doesn't list them.</summary>
+    public const string WorkingCopyPrefix = "~$pf";
+
     public static bool IsMedia(string path)
     {
         // Photo Finder's own working copy of a photo being saved (XmpFields), never a photo of yours.
-        if (Path.GetFileName(path).StartsWith(Services.XmpFields.WorkingCopyPrefix, StringComparison.Ordinal)) return false;
+        if (Path.GetFileName(path).StartsWith(WorkingCopyPrefix, StringComparison.Ordinal)) return false;
         var ext = Path.GetExtension(path);
         return ImageExtensions.Contains(ext) || VideoExtensions.Contains(ext) || RawExtensions.Contains(ext);
     }
