@@ -174,7 +174,7 @@ public sealed class BackgroundDescriberTests : IDisposable
             await WaitUntil(() => _described.Count == 1);
             Assert.True(background.IsRunning);
             background.Stop();
-            Assert.Contains("Stopped describing in the background. 1 photo not described.", _announced);
+            Assert.Contains("Stopped describing in the background. 1 photo not described; it carries on the next time Photo Finder starts.", _announced);
             release.SetResult();
             await background.WhenIdleAsync();
             Assert.Single(_described);
@@ -351,6 +351,116 @@ public sealed class BackgroundDescriberTests : IDisposable
             await background.WhenIdleAsync();
             Assert.Empty(_described);
             Assert.Empty(_announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task TurningItOffAndOnMidPhoto_CountsRight_AndSaysFinishedOnlyAtTheEnd()
+    {
+        var gate = new TaskCompletionSource();
+        var first = true;
+        var (model, background, _) = await StartAsync(enabled: true, describe: async item =>
+        {
+            if (first) { first = false; await gate.Task; }
+            return $"About {item.Name}";
+        });
+        using (model) using (background)
+        {
+            await model.AddFolderAsync(_added.Root);
+            await WaitUntil(() => _described.Count == 1);
+            background.Enabled = false;
+            background.Enabled = true;
+            await WaitUntil(() => model.BackgroundProgress is not null);
+            gate.SetResult();
+            await background.WhenIdleAsync();
+            // Every photo described once, and "finished" said once, at the end.
+            Assert.Equal(_described.Distinct().Count(), _described.Count);
+            Assert.Equal(["a.jpg", "b.jpg", "home.jpg"], _described.Order());
+            Assert.Single(_announced, s => s == "Finished describing the library's photos");
+            Assert.Null(model.BackgroundProgress);
+        }
+    }
+
+    [WpfFact]
+    public async Task AFolderAddedDuringALibraryRun_GoesFirst()
+    {
+        var gate = new TaskCompletionSource();
+        var first = true;
+        var (model, background, _) = await StartAsync(enabled: false, describe: async item =>
+        {
+            if (first) { first = false; await gate.Task; }
+            return $"About {item.Name}";
+        });
+        using (model) using (background)
+        {
+            _lib.AddJpeg("older1.jpg");
+            _lib.AddJpeg("older2.jpg");
+            await model.RescanAsync();
+            background.Enabled = true;
+            await WaitUntil(() => _described.Count == 1);
+            await model.AddFolderAsync(_added.Root);
+            gate.SetResult();
+            await background.WhenIdleAsync();
+            // After the photo already being described, the added folder's photos come before the rest of the library.
+            Assert.Equal(["a.jpg", "b.jpg"], _described.Skip(1).Take(2).Order());
+            Assert.Contains(_announced, s => s.StartsWith("Finished describing the photos in"));
+        }
+    }
+
+    [WpfFact]
+    public async Task ManyPhotosFailingInARow_StopsTheRun_AndSaysWhyOnce()
+    {
+        for (var i = 0; i < 8; i++) _lib.AddJpeg($"heic{i}.jpg");
+        var (model, background, _) = await StartAsync(enabled: false,
+            describe: _ => throw new DescriptionException("decode_failed", "The picture couldn't be read."));
+        using (model) using (background)
+        {
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Equal(BackgroundDescriber.FailuresInARow, _described.Count);
+            Assert.Single(_announced, s => s.StartsWith("Background describing stopped:") && s.Contains("The picture couldn't be read."));
+            Assert.Null(model.BackgroundProgress);
+            // The ones that failed aren't tried again this session.
+            _described.Clear();
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.DoesNotContain(_described, n => _described.Count(m => m == n) > 1);
+        }
+    }
+
+    [WpfFact]
+    public async Task OnEnergySaver_ItWaits_AndSaysSoInTheStatusBar()
+    {
+        var (model, background, _) = await StartAsync(enabled: false);
+        using (model) using (background)
+        {
+            var saving = true;
+            background.MayRun = () => !saving;
+            background.Enabled = true;
+            await WaitUntil(() => model.BackgroundProgress == "Background describing paused on energy saver");
+            Assert.Empty(_described);
+            saving = false;
+            await background.WhenIdleAsync();
+            Assert.Equal(["home.jpg"], _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task NewestPhotosAreDescribedFirst()
+    {
+        var older = _lib.AddJpeg("older.jpg");
+        var newer = _lib.AddJpeg("newer.jpg");
+        File.SetLastWriteTime(older, new DateTime(2020, 1, 1));
+        File.SetLastWriteTime(newer, new DateTime(2025, 1, 1));
+        File.SetLastWriteTime(_lib.PathOf("home.jpg"), new DateTime(2022, 1, 1));
+        var (model, background, _) = await StartAsync(enabled: false);
+        using (model) using (background)
+        {
+            // Before details are read, "newest" is the file's date.
+            foreach (var item in model.AllItems) item.Metadata = null;
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Equal(["newer.jpg", "home.jpg", "older.jpg"], _described);
         }
     }
 }

@@ -105,7 +105,7 @@ public partial class MainWindow : Window
             UpdateEmptyText();
             FocusContent();
             // Background describing picks up where it left off: the library's photos not described yet (#96).
-            if (BackgroundDescriber is { } background) _ = background.DescribeLibraryAsync();
+            BackgroundDescriber?.Resume();
             // Once the library is showing and focus is on it: say so if this is the first launch after an update. Closing
             // that puts focus back on the photo.
             _ = Dispatcher.BeginInvoke(() =>
