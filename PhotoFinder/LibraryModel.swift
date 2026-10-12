@@ -1300,9 +1300,10 @@ final class LibraryModel {
     private func confirmReplacingInFiles(_ replacing: [(name: String, field: String, current: String)]) -> Bool {
         guard !replacing.isEmpty else { return true }
         let alert = NSAlert()
-        if replacing.count == 1 {
-            alert.messageText = "Replace the \(replacing[0].field) of \(replacing[0].name)?"
-            alert.informativeText = "Its \(replacing[0].field) is: \(replacing[0].current)"
+        if Set(replacing.map(\.name)).count == 1 {
+            let fields = replacing.map(\.field)
+            alert.messageText = "Replace the \(fields.joined(separator: " and ")) of \(replacing[0].name)?"
+            alert.informativeText = replacing.map { "Its \($0.field) is: \($0.current)" }.joined(separator: "\n")
         } else {
             alert.messageText = "Replace what's already in \(Set(replacing.map(\.name)).count) photos?"
             alert.informativeText = "Their captions or alt text will be replaced with their descriptions."
@@ -1479,7 +1480,9 @@ final class LibraryModel {
         guard filesByID[id] != nil else { return }
         filesByID[id] = now
         if let index = rows.firstIndex(where: { $0.id == id }) {
-            rows[index] = FileRow(file: now, metadata: metadata).withDescription(rows[index].descriptionText)
+            // From the cache under the file's new key: the column may have been refilled while the row still had the old.
+            let description = showsDescriptionColumn ? descriptions.description(forKey: now.descriptionKey) ?? "" : ""
+            rows[index] = FileRow(file: now, metadata: metadata).withDescription(description)
         }
     }
 

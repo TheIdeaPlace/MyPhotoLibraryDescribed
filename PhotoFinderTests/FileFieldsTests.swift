@@ -20,7 +20,8 @@ final class FileFieldsTests: XCTestCase {
 
     func testAutomaticCaptionsLeaveOtherAppsAltTextAloneUnlessAlways() {
         XCTAssertTrue(FileFields.mayWriteAltText("A dog.", over: "", policy: .whenEmpty))
-        XCTAssertTrue(FileFields.mayWriteAltText("A dog.", over: "A dog.", policy: .whenEmpty))
+        XCTAssertFalse(FileFields.mayWriteAltText("A dog.", over: "A dog.", policy: .whenEmpty), "already there")
+        XCTAssertFalse(FileFields.mayWriteAltText("A dog.", over: "A dog.", policy: .always), "already there")
         XCTAssertFalse(FileFields.mayWriteAltText("A dog.", over: "Rex (Lightroom)", policy: .whenEmpty))
         XCTAssertTrue(FileFields.mayWriteAltText("A dog.", over: "Rex (Lightroom)", policy: .always))
         XCTAssertFalse(FileFields.mayWriteAltText("A dog.", over: "", policy: .never))

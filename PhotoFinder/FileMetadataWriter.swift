@@ -267,8 +267,9 @@ enum FileFields {
     static func mayWriteAltText(_ description: String, over existing: String, policy: CaptionPolicy) -> Bool {
         switch policy {
         case .never: false
-        case .always: true
-        case .whenEmpty: existing.isEmpty || existing == AccessibilityText.altText(from: description)
+        case .always: existing != AccessibilityText.altText(from: description)
+        // Already this description's alt text: nothing to write.
+        case .whenEmpty: existing.isEmpty
         }
     }
 }
