@@ -1141,8 +1141,16 @@ final class LibraryModel {
         }
         let chosen = rows.filter { ids.contains($0.id) && !$0.isContainer && assetsByID[$0.id] != nil }
         guard !chosen.isEmpty else { NSSound.beep(); return }
-        captionTarget = CaptionTarget(assetIDs: chosen.map(\.id),
-                                      initialText: chosen.count == 1 ? chosen[0].caption : "")
+        guard chosen.count == 1, let asset = assetsByID[chosen[0].id] else {
+            captionTarget = CaptionTarget(assetIDs: chosen.map(\.id), initialText: "")
+            return
+        }
+        // The caption as Photos has it, not the list's copy: that's empty until the list's details load, and saving
+        // an empty field would remove the real caption.
+        Task {
+            let caption = await currentCaptions(of: [asset])[asset.localIdentifier] ?? chosen[0].caption
+            captionTarget = CaptionTarget(assetIDs: [chosen[0].id], initialText: caption)
+        }
     }
 
     func saveCaption(_ text: String, for target: CaptionTarget) {
@@ -1191,7 +1199,7 @@ final class LibraryModel {
         guard !chosen.isEmpty else { announce("Select a photo"); return }
         let described = chosen.compactMap { row -> (FileRow, PHAsset, String)? in
             guard let asset = assetsByID[row.id], let text = descriptions.description(for: asset) else { return nil }
-            return (row, asset, text)
+            return (row, asset, text.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         guard !described.isEmpty else {
             announce(chosen.count == 1 ? "\(chosen[0].name) hasn't been described yet. Describe it first."
@@ -1203,7 +1211,7 @@ final class LibraryModel {
             // The captions as Photos has them now, not the list's copy, which is empty until its details load.
             let existing = await currentCaptions(of: described.map(\.1))
             let replacing = described.compactMap { row, asset, text -> (String, String)? in
-                let caption = existing[asset.localIdentifier] ?? ""
+                let caption = (existing[asset.localIdentifier] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 return caption.isEmpty || caption == text ? nil : (row.name, caption)
             }
             if !replacing.isEmpty {
@@ -1250,7 +1258,7 @@ final class LibraryModel {
             else { return }
             let existing = AssetDetails.load(for: asset, names: names).caption
             guard policy.shouldWrite(text, over: existing) else { return }
-            await Self.writeCaptionQuietly(UncheckedBox(value: asset), text)
+            await Self.writeCaptionQuietly(UncheckedBox(value: asset), text.trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
 
