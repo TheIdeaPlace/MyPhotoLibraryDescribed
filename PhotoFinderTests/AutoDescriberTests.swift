@@ -248,4 +248,39 @@ final class AutoDescriberTests: XCTestCase {
         await describer.whenIdle()
         XCTAssertEqual(describedAhead, [])
     }
+
+    func testMovingAwayAndBackWhileItsDescribedAheadStillDescribesIt() async {
+        holdAhead = true
+        let describer = make()
+        step(describer, to: "a", by: 1)
+        for _ in 0..<200 where aheadGates.isEmpty { try? await Task.sleep(for: .milliseconds(5)) }
+        step(describer, to: "b", by: 1)
+        try? await Task.sleep(for: .milliseconds(40))  // settled on b: waiting for the work ahead
+        step(describer, to: "c", by: 1)  // away, which drops it...
+        step(describer, to: "b", by: -1)  // ...and straight back
+        holdAhead = false
+        aheadGates.forEach { $0.resume() }
+        aheadGates = []
+        await describer.whenIdle()
+        XCTAssertTrue(spoken.contains("Description of b"), "b is described after all, not left silent")
+    }
+
+    func testAnOldDroppedTaskCantClearANewerOne() async {
+        holdAhead = true
+        let describer = make()
+        step(describer, to: "a", by: 1)
+        for _ in 0..<200 where aheadGates.isEmpty { try? await Task.sleep(for: .milliseconds(5)) }
+        let first = aheadGates.removeFirst()  // the first look ahead at b, held
+        move(describer, to: "e")              // dropped
+        step(describer, to: "a", by: 1)       // back on a (described), looking ahead at b again
+        for _ in 0..<200 where aheadGates.isEmpty { try? await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(describer.aheadID, "b")
+        first.resume()                        // the old one finishes late
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(describer.aheadID, "b", "the newer work ahead is still known")
+        holdAhead = false
+        aheadGates.forEach { $0.resume() }
+        aheadGates = []
+        await describer.whenIdle()
+    }
 }

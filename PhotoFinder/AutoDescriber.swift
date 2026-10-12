@@ -57,6 +57,8 @@ final class AutoDescriber {
     /// The photo being described ahead, and its work.
     private(set) var aheadID: String?
     private var aheadTask: Task<Void, Never>?
+    /// Counts the work started ahead, so a dropped task finishing late can't clear a newer one's.
+    private var aheadGeneration = 0
 
     init(isEnabled: Bool, pause: Duration = .milliseconds(700)) {
         self.isEnabled = isEnabled
@@ -138,9 +140,16 @@ final class AutoDescriber {
             describingID = id
             let text: String?
             if aheadID == id, let ahead = aheadTask {
-                // Already being described ahead: wait for that rather than start again.
+                // Already being described ahead: wait for that rather than start again. If it was dropped meanwhile
+                // (you moved away and back) or saved nothing, it's described here after all.
                 await ahead.value
-                text = saved(id)
+                if let done = saved(id) {
+                    text = done
+                } else if isEnabled, isStillOn(id) {
+                    text = await describe(id)
+                } else {
+                    text = nil
+                }
             } else {
                 text = await describe(id)
             }
@@ -156,16 +165,19 @@ final class AutoDescriber {
     private func lookAhead(from id: String) {
         guard isEnabled, step != 0, aheadTask == nil, mayDescribeAhead(), unavailableReason() == nil,
               let next = nextPhoto(id, step), next != describingID, saved(next) == nil else { return }
+        aheadGeneration += 1
+        let generation = aheadGeneration
         aheadID = next
         aheadTask = Task { [weak self] in
             await self?.describeAhead(next)
-            guard let self, self.aheadID == next else { return }
+            guard let self, self.aheadGeneration == generation else { return }
             self.aheadID = nil
             self.aheadTask = nil
         }
     }
 
     private func cancelAhead() {
+        aheadGeneration += 1
         aheadTask?.cancel()
         aheadTask = nil
         aheadID = nil

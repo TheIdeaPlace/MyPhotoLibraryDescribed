@@ -60,7 +60,11 @@ final class LibraryModel {
     }
 
     private(set) var rows: [FileRow] = [] {
-        didSet { if !fillingDescriptions, showsDescriptionColumn { fillDescriptions() } }
+        didSet {
+            // Reloaded or re-sorted: the photo's old position no longer tells a step from a jump.
+            if !fillingDescriptions { lastPhotoIndex = nil }
+            if !fillingDescriptions, showsDescriptionColumn { fillDescriptions() }
+        }
     }
     @ObservationIgnored private var fillingDescriptions = false
     /// View > Show Description: the Description panel beside the list or gallery (#50). On unless turned off.
@@ -81,7 +85,9 @@ final class LibraryModel {
         didSet { if selection != oldValue { movedSelection() } }
     }
     var searchText = "" {
-        didSet { if searchText != oldValue { announceResultsAfterPause() } }
+        didSet {
+            if searchText != oldValue { announceResultsAfterPause(); lastPhotoIndex = nil }
+        }
     }
     @ObservationIgnored private var resultsAnnouncement: Task<Void, Never>?
     var searchFocusRequest = 0
@@ -265,19 +271,14 @@ final class LibraryModel {
         autoDescriber.moved(to: id, step: step)
     }
 
-    /// The photo to describe ahead of `id`, going `step` (1 or -1): the first of the next three rows that's a photo
-    /// with no description yet, so a video or an already described photo is passed over.
+    /// The photo to describe ahead of `id`, going `step` (1 or -1): the very next row, if it's a photo with no
+    /// description yet. Not past a video or folder: landing on that drops any work ahead anyway.
     private func photoAhead(of id: String, step: Int) -> String? {
         let list = searchText.isEmpty ? rows : visibleRows
-        guard let index = list.firstIndex(where: { $0.id == id }) else { return nil }
-        for offset in 1...3 {
-            let i = index + offset * step
-            guard list.indices.contains(i) else { return nil }
-            let row = list[i]
-            guard !row.isContainer, isPhoto(row.id) else { continue }
-            return savedDescription(for: row.id) == nil ? row.id : nil
-        }
-        return nil
+        guard let index = list.firstIndex(where: { $0.id == id }), list.indices.contains(index + step) else { return nil }
+        let row = list[index + step]
+        guard !row.isContainer, isPhoto(row.id), savedDescription(for: row.id) == nil else { return nil }
+        return row.id
     }
 
     /// The photo automatic describing is about: the one photo selected and shown. Nothing for folders, videos,
@@ -1660,7 +1661,7 @@ final class LibraryModel {
             return
         }
         // Already being described automatically: its description is spoken when it's ready.
-        if autoDescriber.describingID == row.id {
+        if autoDescriber.describingID == row.id || autoDescriber.aheadID == row.id {
             announce("Describing \(row.name)")
             return
         }
@@ -1834,6 +1835,8 @@ final class LibraryModel {
             } else {
                 return nil
             }
+            // Dropped while loading (describing ahead, and you landed elsewhere): stop before the model is asked.
+            guard !Task.isCancelled else { return nil }
             guard let data else { return "This photo couldn't be loaded" }
             do {
                 guard let text = try await PhotoDescriber.describe(data), !text.isEmpty else {
