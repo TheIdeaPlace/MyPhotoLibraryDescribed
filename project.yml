@@ -17,6 +17,12 @@ targets:
         - PhotoFinderTests
     sources:
       - PhotoFinder
+    # Under the hardened runtime (Release, for notarization) Photos access needs this entitlement, or the library is
+    # refused without asking (#22's review).
+    entitlements:
+      path: PhotoFinder/PhotoFinder.entitlements
+      properties:
+        com.apple.security.personal-information.photos-library: true
     info:
       path: PhotoFinder/Info.plist
       properties:
@@ -41,6 +47,10 @@ targets:
         DEVELOPMENT_TEAM: P887QF74N8
         ENABLE_HARDENED_RUNTIME: NO
         GENERATE_INFOPLIST_FILE: NO
+      configs:
+        # Notarization needs the hardened runtime; releases are built in Release (scripts/release-mac.sh, #22).
+        Release:
+          ENABLE_HARDENED_RUNTIME: YES
   PhotoFinderTests:
     type: bundle.unit-test
     platform: macOS

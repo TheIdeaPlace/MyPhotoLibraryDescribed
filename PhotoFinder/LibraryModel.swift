@@ -1766,6 +1766,54 @@ final class LibraryModel {
 
     // MARK: - Help
 
+    /// A newer Mac release, found by the quiet check at launch or by Check for Updates.
+    private(set) var availableUpdate: Updates.Release?
+
+    /// Once a day at most, a moment after launch: is there a newer release? Says nothing; the Help menu item changes.
+    func checkForUpdatesQuietly() {
+        let defaults = UserDefaults.standard
+        if let last = defaults.object(forKey: "lastUpdateCheck") as? Date, Date().timeIntervalSince(last) < 86_400 { return }
+        Task {
+            try? await Task.sleep(for: .seconds(5))
+            guard case .some(let release) = await Updates.latest(newerThan: AppInfo.shortVersion) else { return }
+            defaults.set(Date(), forKey: "lastUpdateCheck")
+            availableUpdate = release
+        }
+    }
+
+    /// Help > Check for Updates…: says whether there's a newer version, and opens its download page if you want it.
+    func checkForUpdates() {
+        if let release = availableUpdate {
+            offer(release)
+            return
+        }
+        announce("Checking for updates")
+        Task {
+            switch await Updates.latest(newerThan: AppInfo.shortVersion) {
+            case .none:
+                errorMessage = "Couldn't check for updates. Check your internet connection and try again."
+            case .some(.none):
+                UserDefaults.standard.set(Date(), forKey: "lastUpdateCheck")
+                let alert = NSAlert()
+                alert.messageText = "\(AppInfo.name) is up to date"
+                alert.informativeText = "Version \(AppInfo.shortVersion) is the newest."
+                alert.runModal()
+            case .some(.some(let release)):
+                availableUpdate = release
+                offer(release)
+            }
+        }
+    }
+
+    private func offer(_ release: Updates.Release) {
+        let alert = NSAlert()
+        alert.messageText = "Version \(release.version) of \(AppInfo.name) is available"
+        alert.informativeText = "You have version \(AppInfo.shortVersion). The download page opens in your browser: open the disk image and drag \(AppInfo.name) to Applications, replacing the old one. Your descriptions and settings are kept."
+        alert.addButton(withTitle: "Download")
+        alert.addButton(withTitle: "Not Now")
+        if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(release.page) }
+    }
+
     /// Help > Check System chosen; an open Check System window checks again.
     var systemCheckRequest = 0
 
