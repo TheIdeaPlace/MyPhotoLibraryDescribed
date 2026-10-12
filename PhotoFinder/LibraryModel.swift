@@ -93,8 +93,14 @@ final class LibraryModel {
     @ObservationIgnored private var backgroundDescriber: AnyObject?
     /// Describe Photo in progress; a newer one replaces it.
     @ObservationIgnored private var describeTask: Task<Void, Never>?
+    /// Photos Describe Again is describing: an automatic description of one finishing meanwhile is older, so it's
+    /// neither saved nor spoken.
+    @ObservationIgnored private var describingAgain: [String: Int] = [:]
     @ObservationIgnored private var terminationObserver: NSObjectProtocol?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
+    @ObservationIgnored private var descriptionObserver: NSObjectProtocol?
+    /// Changes whenever a description is saved, so views showing one (the gallery) update.
+    private(set) var descriptionRevision = 0
     /// Photo > Describe Photos Automatically; on unless turned off.
     var describeAutomatically: Bool = UserDefaults.standard.object(forKey: "describeAutomatically") as? Bool ?? true {
         didSet { UserDefaults.standard.set(describeAutomatically, forKey: "describeAutomatically") }
@@ -138,6 +144,17 @@ final class LibraryModel {
                 self.autoDescriber.refocused(currentID: self.autoDescribeCandidate)
             }
         }
+        descriptionObserver = NotificationCenter.default.addObserver(
+            forName: DescriptionCache.didChange, object: cache, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.descriptionRevision += 1 }
+        }
+    }
+
+    /// The saved description of a photo, for showing it. Updates when one is saved.
+    func savedDescription(for id: String) -> String? {
+        _ = descriptionRevision
+        guard let asset = assetsByID[id] else { return nil }
+        return descriptions.description(for: asset)
     }
 
     // MARK: - Describe Photos Automatically
@@ -172,7 +189,9 @@ final class LibraryModel {
         describer.describe = { [weak self] id in
             guard let self, let asset = self.assetsByID[id] else { return nil }
             // Not downloaded from iCloud just because you arrowed past it, as on Windows; Describe Photo does.
-            return await self.describeAndRemember(asset, allowNetwork: false)
+            return await self.describeAndRemember(asset, allowNetwork: false) { [weak self] in
+                (self?.describingAgain[id] ?? 0) == 0
+            }
         }
         describer.isStillOn = { [weak self] id in
             // Not while another app, Get Info or a sheet is in front: you've moved on from the photo for now.
@@ -859,6 +878,35 @@ final class LibraryModel {
         }
     }
 
+    /// Photo > Describe Again (Shift-Option-Command-D): describes the photo you're on afresh, replaces its saved
+    /// description, and speaks the new one. For a saved description that's poor, or from before the photo was edited
+    /// or the prompt changed.
+    func describeFocusedPhotoAgain() {
+        guard let row = focusedRow, !row.isContainer, let asset = assetsByID[row.id] else {
+            announce("Select a photo to describe")
+            return
+        }
+        guard asset.mediaType == .image else {
+            announce("Videos can't be described")
+            return
+        }
+        if let reason = describeUnavailableReason {
+            announce(reason)
+            return
+        }
+        let id = row.id
+        autoDescriber.describingManually(id)
+        describingAgain[id, default: 0] += 1
+        describeTask?.cancel()
+        announce("Describing \(row.name) again")
+        describeTask = Task { [weak self] in
+            let text = await self?.describeAndRemember(asset, allowNetwork: true)
+            self?.describingAgain[id, default: 1] -= 1
+            guard let text else { return }
+            self?.say(text, ifStillOn: id)
+        }
+    }
+
     /// Why photos can't be described on this Mac right now, or nil when they can. Never sets anything up.
     private var describeUnavailableReason: String? {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
@@ -870,7 +918,8 @@ final class LibraryModel {
     /// Describes the photo with Apple Intelligence and saves the description. Returns what to say: the description,
     /// or why there isn't one. Nil, saying nothing, when the photo is only in iCloud and `allowNetwork` is false,
     /// or when a newer request replaced this one.
-    private func describeAndRemember(_ asset: PHAsset, allowNetwork: Bool) async -> String? {
+    private func describeAndRemember(_ asset: PHAsset, allowNetwork: Bool,
+                                     keep: @MainActor () -> Bool = { true }) async -> String? {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
             let box = UncheckedBox(value: asset)
@@ -882,7 +931,7 @@ final class LibraryModel {
                     return "Apple Intelligence returned an empty description"
                 }
                 // A newer Describe Photo replaced this one: its description is the one to keep.
-                guard !Task.isCancelled else { return nil }
+                guard !Task.isCancelled, keep() else { return nil }
                 descriptions.remember(text, for: box.value)
                 return text
             } catch {
