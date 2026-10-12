@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Photo Finder's package: the app and its Windows AI helper, so one install from App Installer gives Photo Finder,
      its Start menu entry, its uninstall entry in Settings, updates, and the package identity Windows' AI APIs require.
-     scripts\build-msix.ps1 fills in $ARCH$, $VERSION$ (four numbers) and $PUBLISHER$, which must equal the signing
+     scripts\build-msix.ps1 fills in $ARCH$, $VERSION$ (four numbers), $DISPLAYNAME$ (AppInfo.Name, #34) and $PUBLISHER$, which must equal the signing
      certificate's subject exactly or Windows won't install it.
 
      The app is App\PhotoFinder.exe; the helper is AI\PhotoFinderAI.exe, started by the app through its
@@ -21,7 +21,7 @@
   <Identity Name="TheIdeaPlace.PhotoFinder" Publisher="$PUBLISHER$" Version="$VERSION$" ProcessorArchitecture="$ARCH$" />
 
   <Properties>
-    <DisplayName>Photo Finder</DisplayName>
+    <DisplayName>$DISPLAYNAME$</DisplayName>
     <PublisherDisplayName>Kelly Ford</PublisherDisplayName>
     <Description>Browse your photos like folders, made for screen readers.</Description>
     <Logo>Assets\StoreLogo.png</Logo>
@@ -39,15 +39,15 @@
 
   <Applications>
     <Application Id="PhotoFinder" Executable="App\PhotoFinder.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements DisplayName="Photo Finder" Description="Browse your photos like folders, made for screen readers"
+      <uap:VisualElements DisplayName="$DISPLAYNAME$" Description="Browse your photos like folders, made for screen readers"
                           BackgroundColor="transparent" Square150x150Logo="Assets\Square150x150Logo.png"
                           Square44x44Logo="Assets\Square44x44Logo.png">
-        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" ShortName="Photo Finder" />
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" ShortName="$DISPLAYNAME$" />
       </uap:VisualElements>
     </Application>
     <Application Id="PhotoFinderAI" Executable="AI\PhotoFinderAI.exe" EntryPoint="Windows.FullTrustApplication"
                  desktop4:Subsystem="console" desktop4:SupportsMultipleInstances="true">
-      <uap:VisualElements DisplayName="Photo Finder AI helper" Description="Describes photos for Photo Finder with Windows' on-device model"
+      <uap:VisualElements DisplayName="$DISPLAYNAME$ AI helper" Description="Describes photos for $DISPLAYNAME$ with Windows' on-device model"
                           BackgroundColor="transparent" Square150x150Logo="Assets\Square150x150Logo.png"
                           Square44x44Logo="Assets\Square44x44Logo.png" AppListEntry="none" />
       <Extensions>

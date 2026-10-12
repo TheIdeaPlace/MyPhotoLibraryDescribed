@@ -27,6 +27,15 @@ public sealed class DescriptionStore
         lock (_lock) return Entries.TryGetValue(Key(item, kind), out var text) ? text : null;
     }
 
+    /// <summary>How many photos have a saved description, of any type.</summary>
+    public int PhotoCount
+    {
+        get
+        {
+            lock (_lock) return Entries.Keys.Select(k => k[..Math.Max(0, k.LastIndexOf('|'))]).Distinct().Count();
+        }
+    }
+
     private bool _saveScheduled;
 
     public void Put(MediaItem item, string kind, string text)

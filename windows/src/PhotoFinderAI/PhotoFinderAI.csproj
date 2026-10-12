@@ -31,6 +31,10 @@
     <WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>
   </PropertyGroup>
   <ItemGroup>
+    <!-- The app's name, from one place (#34). -->
+    <Compile Include="..\PhotoFinder\AppInfo.cs" Link="AppInfo.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Kept whole by the trimmer. These reach the model through Windows Runtime activation,
          which the trimmer can't see: trimmed, every description fails with InternalError
          (found on a Copilot+ PC, 10/6/2026). -->

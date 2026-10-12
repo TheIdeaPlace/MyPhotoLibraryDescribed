@@ -16,10 +16,10 @@ Kelly's goals for the app, from 11 October 2026 (status updated later that day, 
 | — | Keep what the app already does well: export, search, the library concept and the rest. | Kept. | |
 | 7 | The user can put a description into a field of the photo (the caption). | Mac: Photo > Use Description as Caption (#43). Windows: not yet. Files in added folders: waits on #31. | #30, #31 |
 | 8 | A setting to use the generated description automatically. | Mac: Settings > Save descriptions as captions (#43). Windows: not yet. | #30 |
-| 9 | The Help menu, or somewhere else, checks the computer meets the requirements and everything is installed. | Mac: Help > Check System (#42). Windows: not yet. | #32 |
+| 9 | The Help menu, or somewhere else, checks the computer meets the requirements and everything is installed. | Done on both: Help > Check System (Mac in #42). | #32 |
 | 10 | Some image formats have more fields worth offering, such as IPTC's accessibility Alt Text and Extended Description. IDT already writes descriptions into files. | Caption only. | #31 |
-| 11 | Follow the emerging standards for all of Kelly's apps: automatic updates, bug reporting and the rest (The Idea Place app kit). | Mac: Help > Report a Bug (#42), no updates yet. Windows: MSIX updates, no Report a Bug. The app kit relay needs Kelly. | #33, #22 |
-| 12 | Built so the name can change: Photo Finder isn't the final name. | Mac: the name comes from one place, `AppInfo.name` (#42). Windows: still hard-coded. | #34 |
+| 11 | Follow the emerging standards for all of Kelly's apps: automatic updates, bug reporting and the rest (The Idea Place app kit). | Help > Report a Bug on both (Mac in #42). Updates: Windows through MSIX, the Mac not yet. The app kit relay needs Kelly. | #33, #22 |
+| 12 | Built so the name can change: Photo Finder isn't the final name. | Done on both: the name comes from one place, `AppInfo.name` on the Mac (#42), `AppInfo.Name` on Windows (also used for the package's display names). | #34 |
 | 13 | The app is checked visually. A photo app that looks like garbage isn't good. | Not done yet. | #35 |
 | 14 | Usable today, and a proof of concept for Apple and Microsoft. | | All of the above |
 

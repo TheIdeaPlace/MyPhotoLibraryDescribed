@@ -78,6 +78,11 @@ $arches = if ($Arch -eq 'both') { @('x64', 'arm64') } else { @($Arch) }
 $certificateSubject = 'CN=kelly ford, O=kelly ford, L=Madison, S=wi, C=US'
 $publisher = if ($Sign) { $certificateSubject } else { 'CN=Photo Finder Development' }
 
+# The display name, from the one place the app keeps it (AppInfo.Name, #34).
+$appInfo = Get-Content -LiteralPath (Join-Path $windows 'src\PhotoFinder\AppInfo.cs') -Raw
+if ($appInfo -notmatch 'const string Name = "([^"]+)"') { throw "AppInfo.cs has no Name constant." }
+$displayName = [Security.SecurityElement]::Escape($Matches[1])
+
 $text = (Get-Content -LiteralPath (Join-Path $windows 'VERSION') -Raw).Trim()
 if ($text -notmatch '^(\d+)\.(\d+)\.(\d+)$') { throw "windows\VERSION should be three numbers, not '$text'." }
 if ($Revision -lt 0) {
@@ -159,7 +164,7 @@ foreach ($node in @($config.SelectNodes('//packaging'))) { [void]$node.ParentNod
 $config.Save($priConfig)
 # makepri needs a manifest to name the package's resources.
 (Get-Content -LiteralPath (Join-Path $packaging 'AppxManifest.xml') -Raw).Replace('$ARCH$', 'x64').Replace('$VERSION$', $version).
-    Replace('$PUBLISHER$', [Security.SecurityElement]::Escape($publisher)) |
+    Replace('$PUBLISHER$', [Security.SecurityElement]::Escape($publisher)).Replace('$DISPLAYNAME$', $displayName) |
     Set-Content -LiteralPath (Join-Path $priRoot 'AppxManifest.xml') -Encoding UTF8
 Invoke-Tool $makepri @('new', '/pr', $priRoot, '/cf', $priConfig, '/mn', (Join-Path $priRoot 'AppxManifest.xml'),
     '/of', (Join-Path $work 'resources.pri'), '/o') 'makepri new'
@@ -181,7 +186,7 @@ foreach ($a in $arches) {
         Where-Object { $_.Extension -eq '.pdb' -or $_.Name -in 'AppxManifest.xml', 'resources.pri' } | Remove-Item -Force
 
     (Get-Content -LiteralPath (Join-Path $packaging 'AppxManifest.xml') -Raw).
-        Replace('$ARCH$', $a).Replace('$VERSION$', $version).Replace('$PUBLISHER$', [Security.SecurityElement]::Escape($publisher)) |
+        Replace('$ARCH$', $a).Replace('$VERSION$', $version).Replace('$PUBLISHER$', [Security.SecurityElement]::Escape($publisher)).Replace('$DISPLAYNAME$', $displayName) |
         Set-Content -LiteralPath (Join-Path $layout 'AppxManifest.xml') -Encoding UTF8
     Copy-Item -LiteralPath (Join-Path $packaging 'Assets') -Destination (Join-Path $layout 'Assets') -Recurse
     Copy-Item -LiteralPath (Join-Path $work 'resources.pri') -Destination $layout

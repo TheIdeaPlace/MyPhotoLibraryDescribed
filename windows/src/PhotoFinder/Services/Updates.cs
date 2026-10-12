@@ -34,6 +34,26 @@ public static class Updates
         }
     }
 
+    /// <summary>The installed package's version, or the build's when Photo Finder isn't running from its package.</summary>
+    public static string AppVersion =>
+        PackageVersion ?? typeof(Updates).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+
+    /// <summary>Installed from PhotoFinder.appinstaller, so Windows knows where its updates are.</summary>
+    public static bool UpdatesItself
+    {
+        get
+        {
+            try
+            {
+                return Package.Current.GetAppInstallerInfo() is not null;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+    }
+
     public static async Task<Result> CheckAsync()
     {
         Package package;

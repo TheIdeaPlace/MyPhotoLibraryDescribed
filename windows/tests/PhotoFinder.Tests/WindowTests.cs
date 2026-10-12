@@ -443,6 +443,12 @@ public sealed class WindowTests : IDisposable
 
             Assert.Contains(items, m => m.Command == AppCommands.DescribePhoto);
 
+            // The Help menu in the order both apps use (#33).
+            var help = window.MainMenu.Items.OfType<MenuItem>().Last();
+            Assert.Equal([AppCommands.CheckForUpdates, AppCommands.ReportBug, AppCommands.CheckSystem, null, AppCommands.About],
+                help.Items.Cast<object>().Select(i => (i as MenuItem)?.Command));
+            Assert.Equal($"_About {AppInfo.Name}", AppCommands.About.Text);
+
             // No two items in one menu share an access key, so Alt+letter always chooses.
             foreach (var menu in items.Where(m => m.Items.Count > 0).Cast<ItemsControl>().Append(window.MainMenu).Append(window.FileList.ContextMenu))
             {
