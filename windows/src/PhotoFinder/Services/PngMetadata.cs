@@ -46,7 +46,7 @@ public static class PngMetadata
         var (chunks, end) = Chunks(png);
         var xmpChunks = chunks.Where(c => IsXmp(png, c)).ToList();
         // The picture's first chunk: IDAT, or an animated PNG's acTL or fcTL before it.
-        var firstIdat = chunks.FindIndex(c => c.Type is "IDAT" or "acTL" or "fcTL");
+        var pictureStart = chunks.FindIndex(c => c.Type is "IDAT" or "acTL" or "fcTL");
         var document = xmpChunks.Count > 0 ? XmpPacket.Parse(Packet(png, xmpChunks[0])) : XmpPacket.New();
         XmpPacket.Edit(document, changes);
         var packet = XmpPacket.Serialize(document, padded: false);
@@ -54,7 +54,7 @@ public static class PngMetadata
         var xmpChunk = Build("iTXt", [.. XmpKeyword, 0, 0, 0, 0, 0, .. packet]);
         // Where the old XMP was when it came before the picture, otherwise just before it, where readers look first.
         var oldAt = xmpChunks.Count > 0 ? chunks.IndexOf(xmpChunks[0]) : -1;
-        var insertAt = oldAt >= 0 && oldAt < firstIdat ? oldAt : firstIdat;
+        var insertAt = oldAt >= 0 && oldAt < pictureStart ? oldAt : pictureStart;
 
         var output = new MemoryStream(png.Length + xmpChunk.Length);
         output.Write(Signature);

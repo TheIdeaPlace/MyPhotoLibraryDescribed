@@ -246,7 +246,8 @@ public static class XmpPacket
                 if (tag == 0x4746) Put16(entry + 8, Math.Clamp(stars, 0, 5));
                 else if (tag == 0x4749) Put16(entry + 8, (int)Models.MediaTypes.RatingFromStars(stars));
             }
-            // ImageDescription (ASCII) and XPTitle (UTF-16 bytes): emptied when they hold the old title.
+            // ImageDescription (ASCII) and XPTitle (UTF-16 bytes): emptied when they hold the old title, and ImageDescription
+            // whatever it holds with clearDescription.
             var old = changes.ClearOwnTitle ?? "";
             if ((old.Length > 0 || (clearDescription && tag == 0x010E)) && ((tag == 0x010E && type == 2) || (tag == 0x9C9B && type == 1)) && n > 0)
             {
