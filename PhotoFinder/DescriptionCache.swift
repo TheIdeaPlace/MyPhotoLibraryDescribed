@@ -7,6 +7,8 @@ import Photos
 final class DescriptionCache: @unchecked Sendable {
     /// Posted (on the main queue) when a description is saved or replaced, so what's on screen can show it.
     static let didChange = Notification.Name("DescriptionCacheDidChange")
+    /// In didChange's userInfo: the photo's key and its new description.
+    static let keyInfo = "key", textInfo = "text"
 
     private var entries: [String: String] = [:]
     private let lock = NSLock()
@@ -46,7 +48,9 @@ final class DescriptionCache: @unchecked Sendable {
         if schedule {
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [self] in save() }
         }
-        DispatchQueue.main.async { NotificationCenter.default.post(name: Self.didChange, object: self) }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.didChange, object: self, userInfo: [Self.keyInfo: key, Self.textInfo: trimmed])
+        }
     }
 
     var count: Int {

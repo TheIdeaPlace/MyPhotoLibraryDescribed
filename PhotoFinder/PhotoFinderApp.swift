@@ -108,6 +108,7 @@ struct PhotoCommands: Commands {
                 .keyboardShortcut("f", modifiers: [.command, .shift])
             Button("Edit Caption…") { model.editCaption() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
+            Button("Use Description as Caption") { model.useDescriptionAsCaption() }
             Divider()
             Button("Describe Photo") { model.describeFocusedPhoto() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
