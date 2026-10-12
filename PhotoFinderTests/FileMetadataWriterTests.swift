@@ -17,7 +17,7 @@ final class FileMetadataWriterTests: XCTestCase {
         try? FileManager.default.removeItem(at: temp)
     }
 
-    private static let formats: [(String, UTType)] = [("jpg", .jpeg), ("tiff", .tiff), ("heic", .heic)]
+    private static let formats: [(String, UTType)] = [("jpg", .jpeg), ("png", .png), ("tiff", .tiff), ("heic", .heic)]
 
     /// A small photo with a camera date, a title and keywords, like one a camera or another app wrote.
     private func makePhoto(_ name: String, type: UTType, caption: String? = nil, title: String? = "Original title") throws -> URL {
@@ -223,13 +223,14 @@ final class FileMetadataWriterTests: XCTestCase {
         XCTAssertEqual(FileMetadataWriter.formatName(of: "a.webp"), "WEBP")
     }
 
-    func testPNGsAreLeftAloneUntilTheirOwnWriterComes() throws {
-        // ImageIO's copy damaged a PNG's EXIF UserComment (#61), so PNGs are refused, untouched, for now.
+    func testPNGsAreWrittenByTheirOwnWriter() throws {
+        // ImageIO's copy damaged a PNG's EXIF UserComment (#61); PNGMetadata edits the chunks instead
+        // (PNGMetadataTests covers it in depth).
+        XCTAssertTrue(FileMetadataWriter.canWrite(name: "Screenshot.PNG"))
         let url = try makePhoto("shot.png", type: .png)
-        let before = try Data(contentsOf: url)
-        XCTAssertFalse(FileMetadataWriter.canWrite(name: "shot.png"))
-        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: "A dog"), to: url))
-        XCTAssertEqual(try Data(contentsOf: url), before)
+        let read = try FileMetadataWriter.write(.init(caption: "A dog", accessibilityDescription: "A dog"), to: url)
+        XCTAssertEqual(read.caption, "A dog")
+        XCTAssertEqual(read.altText, "A dog")
     }
 
     func testAGIFNamedLikeAJPEGIsRefusedToo() throws {

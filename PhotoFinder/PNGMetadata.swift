@@ -1,0 +1,266 @@
+import Foundation
+import ImageIO
+import zlib
+
+/// Changes a PNG's caption and accessibility fields by editing its chunks (#61), never through ImageIO's copy, which
+/// damages a PNG's EXIF UserComment and can't replace the EXIF description every macOS and iOS screenshot carries.
+///
+/// The file's XMP (the iTXt chunk "XML:com.adobe.xmp") is read, changed and written back as one uncompressed chunk.
+/// When the caption changes, the EXIF description (IFD0's ImageDescription in the eXIf chunk) is removed, since ImageIO
+/// reads it as the caption ahead of the XMP. Every other byte of the file is copied as it was, the picture included.
+/// Anything that doesn't parse is refused, so the caller leaves the file alone.
+enum PNGMetadata {
+    enum Failure: Error, Equatable {
+        case malformed(String)
+    }
+
+    static let signature: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+    static let xmpKeyword = Array("XML:com.adobe.xmp".utf8)
+
+    /// A chunk as it is in the file: length, type, data and CRC.
+    struct Chunk: Equatable {
+        let type: String
+        let raw: [UInt8]
+
+        var body: ArraySlice<UInt8> { raw[8..<(raw.count - 4)] }
+
+        init(type: String, raw: [UInt8]) {
+            self.type = type
+            self.raw = raw
+        }
+
+        /// A new chunk, with its length and CRC worked out.
+        init(type: String, body: [UInt8]) {
+            let typeBytes = Array(type.utf8)
+            var raw = PNGMetadata.bigEndian(UInt32(body.count))
+            raw += typeBytes
+            raw += body
+            raw += PNGMetadata.bigEndian(PNGMetadata.crc(typeBytes + body))
+            self.init(type: type, raw: raw)
+        }
+    }
+
+    // MARK: - Reading the chunks
+
+    /// The file's chunks up to and including IEND, and whatever follows IEND (kept as it is).
+    static func chunks(of data: Data) throws -> (chunks: [Chunk], trailing: [UInt8]) {
+        let bytes = [UInt8](data)
+        guard bytes.count >= 8, Array(bytes[0..<8]) == signature else { throw Failure.malformed("Not a PNG file.") }
+        var chunks: [Chunk] = []
+        var position = 8
+        while true {
+            guard position + 12 <= bytes.count else { throw Failure.malformed("The file ends before its last chunk.") }
+            let length = Int(readUInt32(bytes, position, bigEndian: true))
+            guard length <= 0x7FFF_FFFF, position + 12 + length <= bytes.count else {
+                throw Failure.malformed("A chunk runs past the end of the file.")
+            }
+            let typeBytes = Array(bytes[(position + 4)..<(position + 8)])
+            guard typeBytes.allSatisfy({ (0x41...0x5A).contains($0) || (0x61...0x7A).contains($0) }),
+                  let type = String(bytes: typeBytes, encoding: .ascii) else {
+                throw Failure.malformed("A chunk has an invalid name.")
+            }
+            let end = position + 12 + length
+            let stored = readUInt32(bytes, end - 4, bigEndian: true)
+            guard stored == crc(Array(bytes[(position + 4)..<(end - 4)])) else {
+                throw Failure.malformed("The \(type) chunk is damaged.")
+            }
+            if chunks.isEmpty, type != "IHDR" { throw Failure.malformed("The file doesn't start with its header.") }
+            chunks.append(Chunk(type: type, raw: Array(bytes[position..<end])))
+            position = end
+            if type == "IEND" { break }
+        }
+        guard chunks.contains(where: { $0.type == "IDAT" }) else { throw Failure.malformed("The file has no picture data.") }
+        return (chunks, Array(bytes[position...]))
+    }
+
+    // MARK: - Rewriting
+
+    /// The file with `values` set in its XMP (nil removes a field) and, when `removingEXIFDescription`, the EXIF
+    /// description taken out. Every other chunk, and anything after IEND, is copied byte for byte.
+    static func rewrite(_ data: Data, setting values: [String: String?], removingEXIFDescription: Bool) throws -> Data {
+        let (chunks, trailing) = try chunks(of: data)
+        let xmpIndices = chunks.indices.filter { chunks[$0].type == "iTXt" && isXMP(chunks[$0]) }
+        guard let firstIDAT = chunks.firstIndex(where: { $0.type == "IDAT" }) else { throw Failure.malformed("No picture data.") }
+
+        let metadata: CGMutableImageMetadata
+        if let first = xmpIndices.first {
+            let packet = try xmpPacket(chunks[first])
+            guard let parsed = parseXMP(packet), let copy = CGImageMetadataCreateMutableCopy(parsed) else {
+                throw Failure.malformed("Its XMP couldn't be read.")
+            }
+            metadata = copy
+        } else {
+            metadata = CGImageMetadataCreateMutable()
+        }
+        set(values, in: metadata)
+        guard let xmp = CGImageMetadataCreateXMPData(metadata, nil) as Data? else {
+            throw Failure.malformed("Its XMP couldn't be written.")
+        }
+        // Keyword, its terminator, uncompressed, compression method, no language, no translated keyword.
+        let xmpChunk = Chunk(type: "iTXt", body: xmpKeyword + [0, 0, 0, 0, 0] + [UInt8](xmp))
+        // Where the old XMP was when it came before the picture, otherwise just before it, where readers look first.
+        let insertAt = xmpIndices.first.map { $0 < firstIDAT ? $0 : firstIDAT } ?? firstIDAT
+
+        var output = Data(signature)
+        for (index, chunk) in chunks.enumerated() {
+            if index == insertAt { output.append(contentsOf: xmpChunk.raw) }
+            if xmpIndices.contains(index) { continue }
+            if chunk.type == "eXIf", removingEXIFDescription,
+               let exif = try removingImageDescription(fromEXIF: Array(chunk.body)) {
+                output.append(contentsOf: Chunk(type: "eXIf", body: exif).raw)
+            } else {
+                output.append(contentsOf: chunk.raw)
+            }
+        }
+        output.append(contentsOf: trailing)
+        return output
+    }
+
+    /// Sets each field through its `[x-default]` path, as FileMetadataWriter does, or removes it for nil.
+    private static func set(_ values: [String: String?], in metadata: CGMutableImageMetadata) {
+        _ = CGImageMetadataRegisterNamespaceForPrefix(metadata, FileMetadataWriter.iptcNamespace, "Iptc4xmpCore" as CFString, nil)
+        for (path, text) in values {
+            if let text {
+                _ = CGImageMetadataSetValueWithPath(metadata, nil, "\(path)[x-default]" as CFString, text as CFString)
+            } else {
+                _ = CGImageMetadataRemoveTagWithPath(metadata, nil, path as CFString)
+            }
+        }
+    }
+
+    // MARK: - XMP
+
+    static func isXMP(_ chunk: Chunk) -> Bool {
+        let body = chunk.body
+        guard body.count > xmpKeyword.count else { return false }
+        let start = body.startIndex
+        return Array(body[start..<(start + xmpKeyword.count)]) == xmpKeyword && body[start + xmpKeyword.count] == 0
+    }
+
+    /// The XMP in the file's own XMP chunk, without what ImageIO adds from the EXIF (which reads a screenshot's EXIF
+    /// description as its caption). Nil when the file has none or doesn't parse.
+    static func xmp(of data: Data) -> CGImageMetadata? {
+        guard let chunks = try? chunks(of: data).chunks, let chunk = chunks.first(where: { $0.type == "iTXt" && isXMP($0) }),
+              let packet = try? xmpPacket(chunk) else { return nil }
+        return parseXMP(packet)
+    }
+
+    /// The XMP read by ImageIO. Its parser refuses a packet whose x:xmpmeta namespace is in single quotes, as ExifTool
+    /// writes it (`xmlns:x='adobe:ns:meta/'`), so that one attribute is tried again in double quotes, which is the
+    /// same XML.
+    static func parseXMP(_ packet: [UInt8]) -> CGImageMetadata? {
+        if let parsed = CGImageMetadataCreateFromXMPData(Data(packet) as CFData) { return parsed }
+        let single = Data("xmlns:x='adobe:ns:meta/'".utf8), double = Data("xmlns:x=\"adobe:ns:meta/\"".utf8)
+        var data = Data(packet)
+        guard let range = data.range(of: single) else { return nil }
+        data.replaceSubrange(range, with: double)
+        return CGImageMetadataCreateFromXMPData(data as CFData)
+    }
+
+    /// The XMP text of an iTXt XMP chunk, inflated when it's compressed.
+    static func xmpPacket(_ chunk: Chunk) throws -> [UInt8] {
+        let body = Array(chunk.body)
+        var position = xmpKeyword.count + 1
+        guard position + 2 <= body.count else { throw Failure.malformed("Its XMP chunk is cut short.") }
+        let compressed = body[position], method = body[position + 1]
+        position += 2
+        // The language tag and the translated keyword, each ending in a zero.
+        for _ in 0..<2 {
+            guard let zero = body[position...].firstIndex(of: 0) else { throw Failure.malformed("Its XMP chunk is cut short.") }
+            position = zero + 1
+        }
+        let text = Array(body[position...])
+        switch (compressed, method) {
+        case (0, _): return text
+        case (1, 0): return try inflate(text)
+        default: throw Failure.malformed("Its XMP is compressed in an unknown way.")
+        }
+    }
+
+    static func inflate(_ input: [UInt8]) throws -> [UInt8] {
+        var capacity = max(input.count * 4, 64 * 1024)
+        while capacity <= 256 * 1024 * 1024 {
+            var output = [UInt8](repeating: 0, count: capacity)
+            var length = uLongf(capacity)
+            let status = output.withUnsafeMutableBufferPointer { out in
+                input.withUnsafeBufferPointer { uncompress(out.baseAddress, &length, $0.baseAddress, uLong(input.count)) }
+            }
+            switch status {
+            case Z_OK: return Array(output[0..<Int(length)])
+            case Z_BUF_ERROR: capacity *= 2
+            default: throw Failure.malformed("Its compressed XMP is damaged.")
+            }
+        }
+        throw Failure.malformed("Its compressed XMP is too large.")
+    }
+
+    // MARK: - EXIF
+
+    /// The EXIF with IFD0's ImageDescription (0x010E) taken out, or nil when it has none. The entries after it move
+    /// up, the freed bytes and the old text become zeros, and everything else stays exactly where it was, so every
+    /// offset in the EXIF still points at the same thing.
+    static func removingImageDescription(fromEXIF input: [UInt8]) throws -> [UInt8]? {
+        var exif = input
+        guard exif.count >= 8 else { throw Failure.malformed("Its EXIF is cut short.") }
+        let big: Bool
+        switch (exif[0], exif[1]) {
+        case (0x4D, 0x4D): big = true
+        case (0x49, 0x49): big = false
+        default: throw Failure.malformed("Its EXIF has an unknown byte order.")
+        }
+        guard readUInt16(exif, 2, bigEndian: big) == 42 else { throw Failure.malformed("Its EXIF isn't TIFF data.") }
+        let ifd = Int(readUInt32(exif, 4, bigEndian: big))
+        guard ifd >= 8, ifd + 2 <= exif.count else { throw Failure.malformed("Its EXIF's first directory is missing.") }
+        let count = Int(readUInt16(exif, ifd, bigEndian: big))
+        let entries = ifd + 2
+        let tableEnd = entries + count * 12 + 4  // with the next directory's offset
+        guard tableEnd <= exif.count else { throw Failure.malformed("Its EXIF's first directory is cut short.") }
+
+        guard let index = (0..<count).first(where: { readUInt16(exif, entries + $0 * 12, bigEndian: big) == 0x010E }) else {
+            return nil
+        }
+        let entry = entries + index * 12
+        // The text, when it's too long to sit in the entry itself.
+        let sizes: [UInt16: Int] = [1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8]
+        let type = readUInt16(exif, entry + 2, bigEndian: big)
+        let valueCount = Int(readUInt32(exif, entry + 4, bigEndian: big))
+        if let size = sizes[type] {
+            let (byteCount, overflow) = valueCount.multipliedReportingOverflow(by: size)
+            if !overflow, byteCount > 4 {
+                let offset = Int(readUInt32(exif, entry + 8, bigEndian: big))
+                let (end, past) = offset.addingReportingOverflow(byteCount)
+                guard !past, offset >= 8, end <= exif.count, end <= ifd || offset >= tableEnd else {
+                    throw Failure.malformed("Its EXIF description is out of place.")
+                }
+                for i in offset..<end { exif[i] = 0 }
+            }
+        }
+        // The entries after it, and the next directory's offset, move up one place.
+        exif.replaceSubrange(entry..<(tableEnd - 12), with: exif[(entry + 12)..<tableEnd])
+        for i in (tableEnd - 12)..<tableEnd { exif[i] = 0 }
+        let newCount = UInt16(count - 1)
+        exif.replaceSubrange(ifd..<(ifd + 2), with: big ? [UInt8(newCount >> 8), UInt8(newCount & 0xFF)]
+                                                       : [UInt8(newCount & 0xFF), UInt8(newCount >> 8)])
+        return exif
+    }
+
+    // MARK: - Bytes
+
+    static func crc(_ bytes: [UInt8]) -> UInt32 {
+        bytes.withUnsafeBufferPointer { UInt32(zlib.crc32(0, $0.baseAddress, uInt($0.count))) }
+    }
+
+    static func bigEndian(_ value: UInt32) -> [UInt8] {
+        [UInt8(value >> 24), UInt8((value >> 16) & 0xFF), UInt8((value >> 8) & 0xFF), UInt8(value & 0xFF)]
+    }
+
+    private static func readUInt16(_ bytes: [UInt8], _ at: Int, bigEndian: Bool) -> UInt16 {
+        let a = UInt16(bytes[at]), b = UInt16(bytes[at + 1])
+        return bigEndian ? a << 8 | b : b << 8 | a
+    }
+
+    private static func readUInt32(_ bytes: [UInt8], _ at: Int, bigEndian: Bool) -> UInt32 {
+        let b = (0..<4).map { UInt32(bytes[at + $0]) }
+        return bigEndian ? b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3] : b[3] << 24 | b[2] << 16 | b[1] << 8 | b[0]
+    }
+}
