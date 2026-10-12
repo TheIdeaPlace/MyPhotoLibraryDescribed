@@ -91,9 +91,8 @@ public partial class MainWindow : Window
             UpdateTitle();
             ApplyViewMode();
             FileList.Focus();
+            RememberedUpdate();
             ShowUpdatesItem();
-            // Once the window has settled: say so if this is the first launch after an update, then look for updates.
-            _ = Dispatcher.BeginInvoke(SayIfJustUpdated, System.Windows.Threading.DispatcherPriority.ContextIdle);
             _ = LookForUpdatesQuietlyAsync();
             try
             {
@@ -105,6 +104,12 @@ public partial class MainWindow : Window
             }
             UpdateEmptyText();
             FocusContent();
+            // Once the library is showing and focus is on it: say so if this is the first launch after an update. Closing
+            // that puts focus back on the photo.
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (SayIfJustUpdated()) FocusContent();
+            }, System.Windows.Threading.DispatcherPriority.Input);
         };
         model.FilesChanged += paths => { foreach (var p in paths) _thumbnails.Forget(p); };
         Closing += async (_, e) =>
@@ -1155,48 +1160,85 @@ public partial class MainWindow : Window
     /// <summary>Help's update item always says what's running ("Check for Updates (running 0.2.0)…"), or "Update to 0.3.0
     /// available…" once one is found (The-Idea-Place-Projects#12).</summary>
     private void ShowUpdatesItem() =>
-        UpdatesItem.Header = Services.Updates.MenuTitle(Services.Updates.AppVersion, _update.Available, _update.Version);
+        UpdatesItem.Header = Services.Updates.MenuTitle(Services.Updates.InstalledVersion() ?? Services.Updates.AppVersion, _update.Available, _update.Version);
 
-    /// <summary>A quiet look for an update, a few seconds after starting and at most once a day: nothing is said, only
-    /// Help's item changes. Only for copies that update themselves.</summary>
-    private async Task LookForUpdatesQuietlyAsync()
+    /// <summary>An update found earlier and not installed yet is still said after a restart.</summary>
+    private void RememberedUpdate()
     {
-        if (!Services.Updates.UpdatesItself) return;
-        if (_model.Settings.LastUpdateCheck is { } last && DateTime.UtcNow - last < TimeSpan.FromDays(1)) return;
-        await Task.Delay(TimeSpan.FromSeconds(5));
-        var found = await Services.Updates.CheckQuietlyAsync();
+        var remembered = _model.Settings.AvailableUpdate;
+        if (remembered is not null && Services.Updates.InstalledVersion() is { } running && Services.Updates.IsNewer(remembered, running))
+            _update = (true, remembered);
+    }
+
+    /// <summary>What a check found out, kept for Help's item and remembered. A check that couldn't reach the feed isn't
+    /// counted, so the next launch tries again.</summary>
+    private void Found(Services.Updates.State state, string? version)
+    {
+        if (state is not (Services.Updates.State.UpToDate or Services.Updates.State.Available)) return;
+        var running = Services.Updates.InstalledVersion() ?? Services.Updates.AppVersion;
+        // An offered version that isn't newer (a feed that went back) isn't an update to show.
+        var available = state == Services.Updates.State.Available && (version is null || Services.Updates.IsNewer(version, running));
+        _update = (available, available ? version : null);
         _model.Settings.LastUpdateCheck = DateTime.UtcNow;
+        _model.Settings.AvailableUpdate = available ? version : null;
         _model.SaveSettings();
-        _update = found;
         ShowUpdatesItem();
     }
 
-    /// <summary>The first launch after an update: "Photo Finder Update Installed", with See What's New, as the apps' shared
-    /// update experience asks. Only for installed copies, and not on a first run or after going back to an older version.
-    /// OK is the default, so Enter and Escape close it.</summary>
-    internal void SayIfJustUpdated()
+    /// <summary>A quiet look for an update, a few seconds after starting and at most once a day (sooner when the clock was
+    /// set back): nothing is said, only Help's item changes. Only for copies that update themselves.</summary>
+    internal async Task LookForUpdatesQuietlyAsync(TimeSpan? wait = null)
     {
-        if (Services.Updates.PackageVersion is not { } current) return;
-        var last = _model.Settings.LastRunVersion;
-        if (last == current) return;
-        _model.Settings.LastRunVersion = current;
-        _model.SaveSettings();
-        if (!Services.Updates.JustUpdated(last, current)) return;
-        var shown = Services.Updates.Shown(current, last!).Running;
-        if (QuestionDialog.AskSafely(this, $"{AppInfo.Name} Update Installed", $"{AppInfo.Name} is now version {shown}.",
-                "See What's New opens this version's release notes in your browser.", "See What's New", "OK"))
-            OpenInBrowser(AppInfo.ReleaseNotesUrl(Services.Updates.ShortVersion(current)));
+        if (!Services.Updates.SelfUpdating()) return;
+        if (_model.Settings.LastUpdateCheck is { } last && DateTime.UtcNow - last is { } since && since >= TimeSpan.Zero && since < TimeSpan.FromDays(1)) return;
+        await Task.Delay(wait ?? TimeSpan.FromSeconds(5));
+        var (state, version) = await Services.Updates.QuietCheck();
+        // Help > Check for Updates ran meanwhile: its answer is the newer one.
+        if (_updating) return;
+        Found(state, version);
     }
 
-    private void OpenInBrowser(string url)
+    /// <summary>The first launch after an update: "Photo Finder Update Installed", with See what's new, as the apps' shared
+    /// update experience asks. Only for installed copies, and not on a first run or after going back to an older version.
+    /// OK is the default, so Enter and Escape close it. True when it was shown.</summary>
+    internal bool SayIfJustUpdated()
+    {
+        if (Services.Updates.InstalledVersion() is not { } current) return false;
+        var last = _model.Settings.LastRunVersion;
+        if (last == current) return false;
+        // Recorded before asking, so it's said once even if the app is closed with the note open.
+        _model.Settings.LastRunVersion = current;
+        if (_model.Settings.AvailableUpdate is { } pending && !Services.Updates.IsNewer(pending, current)) _model.Settings.AvailableUpdate = null;
+        _model.SaveSettings();
+        if (!Services.Updates.JustUpdated(last, current)) return false;
+        RememberedUpdate();
+        _update = Services.Updates.IsNewer(_update.Version, current) ? _update : (false, null);
+        ShowUpdatesItem();
+        var shown = Services.Updates.Shown(current, last!).Running;
+        // Release notes are per version (windows-v0.2.0); a build of the same version has none of its own, so the list.
+        var notes = Services.Updates.ShortVersion(current) == Services.Updates.ShortVersion(last!)
+            ? AppInfo.ReleasesUrl
+            : AppInfo.ReleaseNotesUrl(Services.Updates.ShortVersion(current));
+        if (QuestionDialog.AskSafely(this, $"{AppInfo.Name} Update Installed", $"{AppInfo.Name} is now version {shown}.",
+                "See what's new opens the release notes in your browser.", "_See what's new", "OK"))
+            OpenInBrowser(notes, "The release notes");
+        return true;
+    }
+
+    /// <summary>Opens a web page; when the browser can't be opened, says where it is.</summary>
+    internal static Action<string> OpenUrl { get; set; } = url => Services.FileActions.Open(url);
+
+    private bool OpenInBrowser(string url, string what)
     {
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+            OpenUrl(url);
+            return true;
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            ShowError($"The browser couldn't be opened. The release notes are at {url}.");
+            ShowError($"The browser couldn't be opened. {what} are at {url}.");
+            return false;
         }
     }
 
@@ -1222,14 +1264,15 @@ public partial class MainWindow : Window
                            "Open PhotoFinder.appinstaller to install it again; your settings are kept.");
                     break;
                 case Services.Updates.State.UpToDate:
-                    _update = (false, null);
-                    ShowUpdatesItem();
+                    Found(result.State, null);
                     Inform($"{AppInfo.Name} is up to date (version {Services.Updates.ShortVersion(Services.Updates.AppVersion)}).");
                     break;
                 case Services.Updates.State.Failed:
                     ShowError($"{AppInfo.Name} couldn't check for updates. {result.Message}");
                     break;
                 case Services.Updates.State.Available:
+                    // Help says so from now on, even if it isn't installed now.
+                    Found(result.State, await Services.Updates.OfferedVersionAsync(result.Source!));
                     await InstallUpdateAsync(result.Source!);
                     break;
             }
@@ -1330,7 +1373,7 @@ public partial class MainWindow : Window
             var uri = Services.BugReport.NewIssueUri(body, out var includesBody);
             try
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+                OpenUrl(uri.AbsoluteUri);
                 Services.Announcer.Announce(
                     includesBody && copied ? "Opening a new bug report in your browser. The details are also on the clipboard."
                     : includesBody ? "Opening a new bug report in your browser."

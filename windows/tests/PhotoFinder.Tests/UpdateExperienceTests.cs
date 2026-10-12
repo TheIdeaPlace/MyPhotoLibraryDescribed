@@ -11,7 +11,18 @@ public sealed class UpdateExperienceTests : IDisposable
 {
     private readonly TestLibrary _lib = new();
 
-    public void Dispose() => _lib.Dispose();
+    public void Dispose()
+    {
+        Updates.InstalledVersion = () => Updates.PackageVersion;
+        Updates.SelfUpdating = () => Updates.UpdatesItself;
+        Updates.QuietCheck = Updates.CheckQuietlyAsync;
+        MainWindow.OpenUrl = url => FileActions.Open(url);
+        _lib.Dispose();
+    }
+
+    private LibraryModel NewModel(Settings? settings = null) =>
+        new(settings ?? new Settings(), _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
+            () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1));
 
     [Fact]
     public void HelpsItem_SaysWhatsRunning_OrWhatsAvailable()
@@ -42,6 +53,12 @@ public sealed class UpdateExperienceTests : IDisposable
             </AppInstaller>
             """));
         Assert.Null(Updates.VersionIn("not xml"));
+        // The bundle's version, and only one that reads as a version.
+        Assert.Equal("0.3.0.400", Updates.VersionIn("""<AppInstaller Version="9.9.9.9"><MainBundle Version="0.3.0.400" /></AppInstaller>"""));
+        Assert.Null(Updates.VersionIn("""<AppInstaller><MainBundle Version="" /></AppInstaller>"""));
+        Assert.True(Updates.IsNewer("0.3.0.400", "0.2.0.310"));
+        Assert.False(Updates.IsNewer("0.2.0.310", "0.2.0.310"));
+        Assert.False(Updates.IsNewer("junk", "0.2.0.310"));
     }
 
     [Fact]
@@ -68,6 +85,92 @@ public sealed class UpdateExperienceTests : IDisposable
             // Not installed (a test run has no package): nothing recorded, nothing shown.
             window.SayIfJustUpdated();
             Assert.Null(model.Settings.LastRunVersion);
+        }
+        finally
+        {
+            QuestionDialog.AskSafely = original;
+            window.Close();
+            model.Dispose();
+        }
+    }
+
+    [WpfFact]
+    public async Task TheQuietCheck_IsRememberedWhenItFindsOut_AndTriedAgainWhenItCouldnt()
+    {
+        Updates.InstalledVersion = () => "0.2.0.310";
+        Updates.SelfUpdating = () => true;
+        var answer = (Updates.State.Failed, (string?)null);
+        var checks = 0;
+        Updates.QuietCheck = () => { checks++; return Task.FromResult(answer); };
+        var model = NewModel();
+        var window = new MainWindow(model) { ShowActivated = false };
+        try
+        {
+            window.Show();
+            // Offline: nothing recorded, so the next launch tries again.
+            await window.LookForUpdatesQuietlyAsync(TimeSpan.Zero);
+            Assert.Null(model.Settings.LastUpdateCheck);
+            answer = (Updates.State.Available, "0.3.0.400");
+            await window.LookForUpdatesQuietlyAsync(TimeSpan.Zero);
+            Assert.Equal("_Update to 0.3.0 available…", window.UpdatesItem.Header);
+            Assert.Equal("0.3.0.400", Settings.Load(_lib.PathOf(@"data\Settings.json")).AvailableUpdate);
+            // Within the day, no check; and a new window still says what was found.
+            await window.LookForUpdatesQuietlyAsync(TimeSpan.Zero);
+            Assert.Equal(2, checks);
+        }
+        finally
+        {
+            window.Close();
+            model.Dispose();
+        }
+        var again = NewModel(Settings.Load(_lib.PathOf(@"data\Settings.json")));
+        var second = new MainWindow(again) { ShowActivated = false };
+        try
+        {
+            second.Show();
+            await Task.Delay(200);
+            Assert.Equal("_Update to 0.3.0 available…", second.UpdatesItem.Header);
+        }
+        finally
+        {
+            second.Close();
+            again.Dispose();
+        }
+    }
+
+    [WpfFact]
+    public async Task TheFirstLaunchAfterAnUpdate_SaysSoOnce_AndSeeWhatsNewOpensTheReleaseNotes()
+    {
+        Updates.InstalledVersion = () => "0.3.0.400";
+        var opened = new List<string>();
+        MainWindow.OpenUrl = opened.Add;
+        var asked = new List<string>();
+        var original = QuestionDialog.AskSafely;
+        var model = NewModel(new Settings { LastRunVersion = "0.2.0.310", AvailableUpdate = "0.3.0.400" });
+        var window = new MainWindow(model) { ShowActivated = false };
+        try
+        {
+            QuestionDialog.AskSafely = (_, title, question, _, yes, keep) => { asked.Add($"{title}|{question}|{yes}|{keep}"); return true; };
+            window.Show();
+            await Task.Delay(300);
+            asked.Clear();
+            opened.Clear();
+            model.Settings.LastRunVersion = "0.2.0.310";
+            Assert.True(window.SayIfJustUpdated());
+            Assert.Equal(["Photo Finder Update Installed|Photo Finder is now version 0.3.0.|_See what's new|OK"], asked);
+            Assert.Equal(["https://github.com/kellylford/PhotoFinder/releases/tag/windows-v0.3.0"], opened);
+            Assert.Equal("0.3.0.400", Settings.Load(_lib.PathOf(@"data\Settings.json")).LastRunVersion);
+            // The update that was waiting is the one now running.
+            Assert.Null(model.Settings.AvailableUpdate);
+            Assert.StartsWith("Check for _Updates (running ", window.UpdatesItem.Header as string);
+            // Once only.
+            Assert.False(window.SayIfJustUpdated());
+
+            // A newer build of the same version: the releases list, since it has no notes of its own.
+            opened.Clear();
+            Updates.InstalledVersion = () => "0.3.0.410";
+            Assert.True(window.SayIfJustUpdated());
+            Assert.Equal(["https://github.com/kellylford/PhotoFinder/releases"], opened);
         }
         finally
         {

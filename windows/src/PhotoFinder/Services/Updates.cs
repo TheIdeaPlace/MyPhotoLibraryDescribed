@@ -137,12 +137,16 @@ public static class Updates
     public static bool JustUpdated(string? last, string current) =>
         last is not null && Version.TryParse(last, out var before) && Version.TryParse(current, out var now) && now > before;
 
-    /// <summary>The version a .appinstaller file offers, or null.</summary>
+    /// <summary>The version a .appinstaller file offers (its MainBundle's, or MainPackage's), or null when it doesn't say
+    /// one that reads as a version.</summary>
     internal static string? VersionIn(string appInstaller)
     {
         try
         {
-            return System.Xml.Linq.XDocument.Parse(appInstaller).Root?.Attribute("Version")?.Value;
+            var root = System.Xml.Linq.XDocument.Parse(appInstaller).Root;
+            var main = root?.Elements().FirstOrDefault(e => e.Name.LocalName is "MainBundle" or "MainPackage");
+            var version = main?.Attribute("Version")?.Value ?? root?.Attribute("Version")?.Value;
+            return version is not null && Version.TryParse(version, out _) ? version : null;
         }
         catch (System.Xml.XmlException)
         {
@@ -150,24 +154,38 @@ public static class Updates
         }
     }
 
+    /// <summary>Whether a version is newer than the one running.</summary>
+    public static bool IsNewer(string? version, string running) =>
+        version is not null && Version.TryParse(version, out var v) && Version.TryParse(running, out var r) && v > r;
+
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
 
-    /// <summary>Quietly: whether there's an update and, from the .appinstaller it comes from, which version. Nothing is
-    /// said or shown; Help's update item changes.</summary>
-    public static async Task<(bool Available, string? Version)> CheckQuietlyAsync()
+    /// <summary>The version the .appinstaller at <paramref name="source"/> offers, or null when it can't be read.</summary>
+    public static async Task<string?> OfferedVersionAsync(Uri source)
     {
-        var result = await CheckAsync();
-        if (result.State != State.Available || result.Source is not { } source) return (false, null);
         try
         {
             var text = source.IsFile ? await File.ReadAllTextAsync(source.LocalPath) : await Http.GetStringAsync(source);
-            return (true, VersionIn(text));
+            return VersionIn(text);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or HttpRequestException or TaskCanceledException)
         {
-            return (true, null);
+            return null;
         }
     }
+
+    /// <summary>Quietly: the check's state and, when there's an update, which version. Nothing is said or shown.</summary>
+    public static async Task<(State State, string? Version)> CheckQuietlyAsync()
+    {
+        var result = await CheckAsync();
+        if (result.State != State.Available || result.Source is not { } source) return (result.State, null);
+        return (State.Available, await OfferedVersionAsync(source));
+    }
+
+    /// <summary>How the update experience reaches the system, replaceable in tests.</summary>
+    internal static Func<string?> InstalledVersion { get; set; } = () => PackageVersion;
+    internal static Func<bool> SelfUpdating { get; set; } = () => UpdatesItself;
+    internal static Func<Task<(State State, string? Version)>> QuietCheck { get; set; } = CheckQuietlyAsync;
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern int RegisterApplicationRestart(string? commandLine, int flags);

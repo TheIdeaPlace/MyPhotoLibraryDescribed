@@ -27,6 +27,9 @@ internal static class AppInfo
     /// <summary>Windows releases are tagged windows-v&lt;version&gt;, as the Mac's are mac-v&lt;version&gt;.</summary>
     public const string ReleaseTagPrefix = "windows-v";
 
-    /// <summary>A version's release notes, for See What's New.</summary>
+    /// <summary>All the releases.</summary>
+    public const string ReleasesUrl = $"https://github.com/{Repository}/releases";
+
+    /// <summary>A version's release notes, for See what's new.</summary>
     public static string ReleaseNotesUrl(string version) => $"https://github.com/{Repository}/releases/tag/{ReleaseTagPrefix}{version}";
 }
