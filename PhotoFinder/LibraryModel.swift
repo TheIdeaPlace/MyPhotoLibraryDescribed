@@ -67,8 +67,12 @@ final class LibraryModel {
     /// Photos being described right now, by row id and how many describes are running on each, so the Description
     /// panel can say "Describing…" until the last one finishes.
     private(set) var describingIDs: [String: Int] = [:]
-    var sortOrder: [KeyPathComparator<FileRow>] = [KeyPathComparator(\FileRow.sortDate, order: .reverse)] {
-        didSet { rows.sort(using: sortOrder) }
+    /// The list's sort, remembered between launches as a column and a direction, as Windows does (#46).
+    var sortOrder: [KeyPathComparator<FileRow>] = ColumnOrder.savedSort(UserDefaults.standard) {
+        didSet {
+            rows.sort(using: sortOrder)
+            ColumnOrder.saveSort(sortOrder, to: UserDefaults.standard)
+        }
     }
     var selection: Set<String> = [] {
         didSet { if selection != oldValue { autoDescriber.moved(to: autoDescribeCandidate) } }

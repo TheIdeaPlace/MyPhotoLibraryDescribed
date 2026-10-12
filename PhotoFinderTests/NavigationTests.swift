@@ -29,4 +29,22 @@ final class NavigationTests: XCTestCase {
             XCTAssertEqual(ColumnOrder.sortColumn(of: [ColumnOrder.comparator(column.id)]), column.id, column.title)
         }
     }
+
+    func testTheSortIsRememberedBetweenLaunches() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "NavigationTests.sort"))
+        defaults.removePersistentDomain(forName: "NavigationTests.sort")
+        XCTAssertEqual(ColumnOrder.sortColumn(of: ColumnOrder.savedSort(defaults)), "date")
+        XCTAssertEqual(ColumnOrder.savedSort(defaults).first?.order, .reverse, "newest first, as Windows starts")
+
+        var byName = ColumnOrder.comparator("name")
+        byName.order = .reverse
+        ColumnOrder.saveSort([byName], to: defaults)
+        let restored = ColumnOrder.savedSort(defaults)
+        XCTAssertEqual(ColumnOrder.sortColumn(of: restored), "name")
+        XCTAssertEqual(restored.first?.order, .reverse)
+
+        defaults.set("noSuchColumn", forKey: ColumnOrder.sortColumnKey)
+        XCTAssertEqual(ColumnOrder.sortColumn(of: ColumnOrder.savedSort(defaults)), "date")
+        defaults.removePersistentDomain(forName: "NavigationTests.sort")
+    }
 }
