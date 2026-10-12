@@ -1,8 +1,8 @@
 .DS_Store
 build/
 DerivedData/
-*.xcodeproj/xcuserdata/
-*.xcodeproj/project.xcworkspace/xcuserdata/
+# Generated from project.yml by XcodeGen (PhotoFinder#23): run `xcodegen generate`, never edit or commit it.
+*.xcodeproj/
 
 # Windows app
 windows/**/bin/
