@@ -60,11 +60,7 @@ final class LibraryModel {
     }
 
     private(set) var rows: [FileRow] = [] {
-        didSet {
-            // Reloaded or re-sorted: the photo's old position no longer tells a step from a jump.
-            if !fillingDescriptions { lastPhotoIndex = nil }
-            if !fillingDescriptions, showsDescriptionColumn { fillDescriptions() }
-        }
+        didSet { if !fillingDescriptions, showsDescriptionColumn { fillDescriptions() } }
     }
     @ObservationIgnored private var fillingDescriptions = false
     /// View > Show Description: the Description panel beside the list or gallery (#50). On unless turned off.
@@ -86,7 +82,7 @@ final class LibraryModel {
     }
     var searchText = "" {
         didSet {
-            if searchText != oldValue { announceResultsAfterPause(); lastPhotoIndex = nil }
+            if searchText != oldValue { announceResultsAfterPause() }
         }
     }
     @ObservationIgnored private var resultsAnnouncement: Task<Void, Never>?
@@ -259,15 +255,20 @@ final class LibraryModel {
         }
     }
 
-    /// Where the photo you were on was in the list, to tell a step to the next or previous photo from a jump.
-    @ObservationIgnored private var lastPhotoIndex: Int?
+    /// The photo you were on and where it was in the list, to tell a step to the next or previous photo from a jump.
+    @ObservationIgnored private var lastPhoto: (id: String, index: Int)?
 
     private func movedSelection() {
         let id = autoDescribeCandidate
         let list = searchText.isEmpty ? rows : visibleRows
         let index = id.flatMap { id in list.firstIndex { $0.id == id } }
-        let step = (index.flatMap { i in lastPhotoIndex.map { i - $0 } }) ?? 0
-        lastPhotoIndex = index
+        var step = 0
+        // Only if that photo is still where it was: after a re-sort, reload or search, a ±1 would be a coincidence.
+        // Rows updated in place (a caption written, details read) leave it where it was, so stepping carries on.
+        if let index, let last = lastPhoto, list.indices.contains(last.index), list[last.index].id == last.id {
+            step = index - last.index
+        }
+        lastPhoto = index.map { (id!, $0) }
         autoDescriber.moved(to: id, step: step)
     }
 
