@@ -14,7 +14,7 @@ These follow from what each operating system offers apps, and aren't gaps to clo
 | Kinds | Live Photo, Portrait Photo, Burst Photo, HDR Photo, Slo-mo Video, Time-lapse Video, Cinematic Video and the rest, from Photos | Photo, Screenshot, RAW Photo, Animated Image, Panorama, Video, Screen Recording |
 | Favorites | Photos' Favorite flag, synced with iCloud Photos | A five-star rating in the file, so it's the same in File Explorer |
 | Captions | Photos' caption (macOS 27 and later), synced with iCloud Photos. Files in added folders: the file's XMP description (`dc:description`, which ImageIO also copies to the IPTC caption), the field Photos, Preview and Spotlight read | The file's Title, the one File Explorer shows |
-| Ratings | Shown (macOS 27 and later); can't be changed | Shown, and set from Photo > Rating |
+| Ratings | Shown, and set from Photo > Rating (macOS 27); files in added folders not yet | Shown, and set from Photo > Rating |
 | Keywords | Shown (macOS 27 and later) | Shown, from the file's Tags |
 | Files in the cloud | Downloaded from iCloud when opened, previewed or exported | OneDrive online-only files keep their file dates until refreshed after opening, because reading their details would download them |
 | Opening and previewing | Exports the current version (with edits) to a temporary file, then opens it or shows it in Quick Look. Files in added folders open as they are. | Opens the original file. Preview (Space) is Photo Finder's own window, which plays videos too. |
@@ -34,7 +34,6 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 
 ### On the Mac, from Windows
 
-- **Setting ratings.** Windows sets ratings from Photo > Rating. PhotoKit may not allow apps to write ratings; check before building.
 - **Moving between panes.** Both have F6 and Shift+F6 (Go > Next Pane and Previous Pane on the Mac) for the sidebar, the list or gallery, search and the status bar, with Left and Right Arrow between status bar sections. On Windows the status bar is reached only with F6, not Tab, as in QuickMail; on the Mac, SwiftUI's focusable status sections may also be Tab stops.
 - **Tests.** Windows has about 270 tests; the Mac has a handful (columns and the description cache). Mac CI can't compile the macOS 27 code until GitHub's runners have Xcode 27.
 - **Favorites and ratings in files in added folders.** Windows sets favorites (a five-star rating) and ratings in the files themselves. On the Mac, Toggle Favorite says it isn't available for files yet. Captions are written into files on the Mac too (#31).

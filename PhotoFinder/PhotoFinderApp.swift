@@ -125,6 +125,12 @@ struct PhotoCommands: Commands {
         CommandMenu("Photo") {
             Button("Toggle Favorite") { model.toggleFavorite() }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
+            // As on Windows: No Rating, then 1 to 5 stars (#20).
+            Menu("Rating") {
+                ForEach(0...5, id: \.self) { stars in
+                    Button(RatingText.menuTitle(stars)) { model.setRating(stars) }
+                }
+            }
             Button("Edit Caption…") { model.editCaption() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             Button("Use Description as Caption") { model.useDescriptionAsCaption() }
