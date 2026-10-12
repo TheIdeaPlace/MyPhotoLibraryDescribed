@@ -40,6 +40,8 @@ struct SystemCheckView: View {
         .padding()
         .frame(minWidth: 520, minHeight: 360)
         .onAppear(perform: refresh)
+        // Chosen again from the Help menu while open: check again rather than show old results.
+        .onChange(of: model.systemCheckRequest) { refresh() }
     }
 
     private func refresh() {

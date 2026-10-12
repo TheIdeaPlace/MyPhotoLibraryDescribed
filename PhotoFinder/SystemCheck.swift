@@ -62,7 +62,10 @@ struct SystemCheck: Equatable {
                 : Item(name: "Processor", status: .problem,
                        detail: "Intel. Apple Intelligence needs a Mac with Apple silicon."),
         ]
-        if let reason = facts.aiUnavailableReason {
+        if os.majorVersion < 27 {
+            // Already said in the macOS line: one cause, one problem.
+            items.append(Item(name: "Apple Intelligence", status: .info, detail: "Not checked: describing needs macOS 27."))
+        } else if let reason = facts.aiUnavailableReason {
             items.append(Item(name: "Apple Intelligence", status: .problem, detail: reason))
         } else {
             items.append(Item(name: "Apple Intelligence", status: .ok, detail: "Ready to describe photos, on this Mac."))
@@ -73,6 +76,9 @@ struct SystemCheck: Equatable {
         case .limited:
             items.append(Item(name: "Photos library", status: .problem, detail:
                 "Limited to the photos you chose. To see them all: System Settings, Privacy & Security, Photos."))
+        case .restricted:
+            items.append(Item(name: "Photos library", status: .problem, detail:
+                "Blocked by Screen Time or your organization's device management. Ask whoever manages this Mac."))
         case .notDetermined:
             items.append(Item(name: "Photos library", status: .problem, detail:
                 "Not asked yet. \(facts.appName) asks when it opens the library."))

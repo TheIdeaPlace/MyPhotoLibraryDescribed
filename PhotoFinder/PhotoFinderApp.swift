@@ -82,7 +82,10 @@ struct PhotoCommands: Commands {
         // Help: the same items as on Windows (#32, #33), plus macOS's own Help search. About stays in the app menu,
         // where Mac apps keep it. Check for Updates comes with a signed release (#22).
         CommandGroup(replacing: .help) {
-            Button("Check System…") { openWindow(id: "systemCheck") }
+            Button("Check System…") {
+                model.systemCheckRequest += 1
+                openWindow(id: "systemCheck")
+            }
             Button("Report a Bug…") { model.reportBug() }
         }
         CommandMenu("Go") {

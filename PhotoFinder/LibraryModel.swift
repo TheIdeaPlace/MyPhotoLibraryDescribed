@@ -946,6 +946,9 @@ final class LibraryModel {
 
     // MARK: - Help
 
+    /// Help > Check System chosen; an open Check System window checks again.
+    var systemCheckRequest = 0
+
     /// Help > Check System.
     func systemCheck() -> SystemCheck {
 #if arch(arm64)
@@ -969,7 +972,9 @@ final class LibraryModel {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(body, forType: .string)
         var components = URLComponents(url: AppInfo.issuesURL, resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "body", value: body), URLQueryItem(name: "labels", value: "bug,user-reported")]
+        // GitHub only applies labels for people who can triage the repo, so the title says it's from the Mac too.
+        components.queryItems = [URLQueryItem(name: "title", value: "[Mac] "), URLQueryItem(name: "body", value: body),
+                                 URLQueryItem(name: "labels", value: "bug,user-reported,mac")]
         if let url = components.url { NSWorkspace.shared.open(url) }
         announce("Opening a new bug report in your browser. The details are also on the clipboard.")
     }

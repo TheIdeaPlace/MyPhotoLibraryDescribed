@@ -22,11 +22,20 @@ final class SystemCheckTests: XCTestCase {
     func testEachProblemSaysWhatToDo() {
         let check = SystemCheck(facts(os: 26, silicon: false, ai: "Turn on Apple Intelligence in System Settings to describe images.",
                                       photos: .denied))
-        XCTAssertEqual(check.summary, "4 things need attention.")
+        XCTAssertEqual(check.summary, "3 things need attention.", "macOS 26 is one problem, not two")
+        XCTAssertTrue(check.text.contains("Apple Intelligence: Not checked: describing needs macOS 27."))
         XCTAssertTrue(check.text.contains("macOS: Needs attention. macOS 26.1. Describing photos needs macOS 27 or later."))
         XCTAssertTrue(check.text.contains("Processor: Needs attention. Intel."))
-        XCTAssertTrue(check.text.contains("Apple Intelligence: Needs attention. Turn on Apple Intelligence"))
         XCTAssertTrue(check.text.contains("Photos library: Needs attention. No access."))
+    }
+
+    func testAppleIntelligenceProblemsShowOnMacOS27() {
+        let check = SystemCheck(facts(ai: "Turn on Apple Intelligence in System Settings to describe images."))
+        XCTAssertTrue(check.text.contains("Apple Intelligence: Needs attention. Turn on Apple Intelligence"))
+    }
+
+    func testRestrictedAccessSaysWhoCanChangeIt() {
+        XCTAssertTrue(SystemCheck(facts(photos: .restricted)).text.contains("Ask whoever manages this Mac."))
     }
 
     func testOneProblemIsSingular() {
