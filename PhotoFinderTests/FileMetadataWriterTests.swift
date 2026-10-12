@@ -17,7 +17,7 @@ final class FileMetadataWriterTests: XCTestCase {
         try? FileManager.default.removeItem(at: temp)
     }
 
-    private static let formats: [(String, UTType)] = [("jpg", .jpeg), ("png", .png), ("tiff", .tiff), ("heic", .heic)]
+    private static let formats: [(String, UTType)] = [("jpg", .jpeg), ("tiff", .tiff), ("heic", .heic)]
 
     /// A small photo with a camera date, a title and keywords, like one a camera or another app wrote.
     private func makePhoto(_ name: String, type: UTType, caption: String? = nil, title: String? = "Original title") throws -> URL {
@@ -123,10 +123,10 @@ final class FileMetadataWriterTests: XCTestCase {
     }
 
     func testNoTemporaryFileIsLeftBehind() throws {
-        let url = try makePhoto("photo.png", type: .png)
+        let url = try makePhoto("photo.jpg", type: .jpeg)
         try FileMetadataWriter.write(.init(accessibilityDescription: short), to: url)
         let names = try FileManager.default.contentsOfDirectory(atPath: temp.path)
-        XCTAssertEqual(names, ["photo.png"])
+        XCTAssertEqual(names, ["photo.jpg"])
     }
 
     func testALongDescriptionGoesInBothFieldsAndAShortOneRemovesTheExtendedOne() throws {
@@ -221,6 +221,15 @@ final class FileMetadataWriterTests: XCTestCase {
         XCTAssertTrue(FileMetadataWriter.canWrite(name: "IMG_1.HEIC"))
         XCTAssertEqual(FileMetadataWriter.formatName(of: "DSC_1.NEF"), "RAW")
         XCTAssertEqual(FileMetadataWriter.formatName(of: "a.webp"), "WEBP")
+    }
+
+    func testPNGsAreLeftAloneUntilTheirOwnWriterComes() throws {
+        // ImageIO's copy damaged a PNG's EXIF UserComment (#61), so PNGs are refused, untouched, for now.
+        let url = try makePhoto("shot.png", type: .png)
+        let before = try Data(contentsOf: url)
+        XCTAssertFalse(FileMetadataWriter.canWrite(name: "shot.png"))
+        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: "A dog"), to: url))
+        XCTAssertEqual(try Data(contentsOf: url), before)
     }
 
     func testAGIFNamedLikeAJPEGIsRefusedToo() throws {
