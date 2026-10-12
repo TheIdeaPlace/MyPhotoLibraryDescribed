@@ -61,6 +61,15 @@ struct PhotoCommands: Commands {
             ))
             .keyboardShortcut("4")
             Button("Columns…") { model.columnsSheetShown = true }
+            // As on Windows: sorting without a column header. The checked column is the current sort.
+            Menu("Sort By") {
+                ForEach(ColumnOrder.all) { column in
+                    Toggle(column.title, isOn: Binding(
+                        get: { model.sortColumnID == column.id },
+                        set: { _ in model.sortBy(column.id) }
+                    ))
+                }
+            }
             Divider()
         }
         CommandMenu("Go") {

@@ -42,7 +42,10 @@ final class LibraryModel {
     var selection: Set<String> = [] {
         didSet { if selection != oldValue { autoDescriber.moved(to: autoDescribeCandidate) } }
     }
-    var searchText = ""
+    var searchText = "" {
+        didSet { if searchText != oldValue { announceResultsAfterPause() } }
+    }
+    @ObservationIgnored private var resultsAnnouncement: Task<Void, Never>?
     var searchFocusRequest = 0
     /// Go > Next Pane and Previous Pane; the browser moves focus when this changes.
     private(set) var paneRequest = PaneRequest()
@@ -201,6 +204,40 @@ final class LibraryModel {
         }
         describer.speak = { [weak self] text in self?.announce(text, queued: true) }
         return describer
+    }
+
+    // MARK: - Search and sort
+
+    /// How many results a search found, once typing pauses, as on Windows: "No results", "1 result", "12 results".
+    private func announceResultsAfterPause() {
+        resultsAnnouncement?.cancel()
+        guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        resultsAnnouncement = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            // Still loading the list (a big album or folder): count once it's in, not "No results" now.
+            for _ in 0..<150 where self?.isLoading == true && !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.announce(Self.resultCount(self.visibleRows.count), queued: true)
+        }
+    }
+
+    nonisolated static func resultCount(_ count: Int) -> String {
+        count == 0 ? "No results" : count == 1 ? "1 result" : "\(count.formatted()) results"
+    }
+
+    /// The column the list is sorted by, for View > Sort By's checkmark.
+    var sortColumnID: String? { ColumnOrder.sortColumn(of: sortOrder) }
+
+    /// View > Sort By: sorts by a column without its header. Choosing the current column again reverses it.
+    func sortBy(_ id: String) {
+        let descending = sortColumnID == id ? sortOrder.first?.order != .reverse : ColumnOrder.sortsDescendingFirst(id)
+        var comparator = ColumnOrder.comparator(id)
+        comparator.order = descending ? .reverse : .forward
+        sortOrder = [comparator]
+        let title = ColumnOrder.info(id)?.title ?? id
+        announce("Sorted by \(title), \(descending ? "descending" : "ascending")")
     }
 
     // MARK: - Columns
@@ -969,15 +1006,26 @@ final class LibraryModel {
         cacheNeighbors(of: 0, in: visibleRows)
     }
 
+    /// Home and End in the gallery: the first or last item, whatever's selected now (even a photo Search hides).
+    func moveSelectionToEnd(last: Bool) {
+        let rows = visibleRows
+        guard !rows.isEmpty else { NSSound.beep(); return }
+        select(at: last ? rows.count - 1 : 0, in: rows)
+    }
+
     func moveSelection(by delta: Int) {
         let rows = visibleRows
         guard !rows.isEmpty else { NSSound.beep(); return }
         let current = rows.firstIndex { selection.contains($0.id) }
         let next = current.map { $0 + delta } ?? 0
         guard rows.indices.contains(next) else { NSSound.beep(); return }
-        selection = [rows[next].id]
-        cacheNeighbors(of: next, in: rows)
-        announce("\(rows[next].name), \(next + 1) of \(rows.count)")
+        select(at: next, in: rows)
+    }
+
+    private func select(at index: Int, in rows: [FileRow]) {
+        selection = [rows[index].id]
+        cacheNeighbors(of: index, in: rows)
+        announce("\(rows[index].name), \(index + 1) of \(rows.count)")
     }
 
     /// Starts loading the images on either side so moving through the gallery feels instant.

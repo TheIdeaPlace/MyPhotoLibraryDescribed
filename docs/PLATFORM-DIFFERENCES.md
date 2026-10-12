@@ -36,10 +36,7 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 ### On the Mac, from Windows
 
 - **Setting ratings.** Windows sets ratings from Photo > Rating. PhotoKit may not allow apps to write ratings; check before building.
-- **Sort By menu.** Windows has View > Sort By for sorting without a column header. On the Mac, sorting is only by clicking column headers.
-- **Search result count.** Windows speaks how many results a search found. The Mac doesn't announce it.
 - **Moving between panes.** Both have F6 and Shift+F6 (Go > Next Pane and Previous Pane on the Mac) for the sidebar, the list or gallery, search and the status bar, with Left and Right Arrow between status bar sections. On Windows the status bar is reached only with F6, not Tab, as in QuickMail; on the Mac, SwiftUI's focusable status sections may also be Tab stops.
-- **Gallery Home and End.** Windows' gallery goes to the first and last item with Home and End.
 - **Tests.** Windows has about 270 tests; the Mac has a handful (columns and the description cache). Mac CI can't compile the macOS 27 code until GitHub's runners have Xcode 27.
 - **Installer.** Windows installs from a signed MSIX package through App Installer (`windows/scripts/build-msix.ps1`), with updates. The Mac is built from Xcode.
 
@@ -61,5 +58,8 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 - **Describe Photos Automatically:** Photo > Describe Photos Automatically on both, on by default. The photo you arrow to in the list or gallery is described after a short pause (700 ms) and the description is spoken behind other speech, only while you're still on that photo. Saved descriptions are spoken the same way.
 - **Describe Again:** Photo > Describe Again on the Mac (Shift-Option-Command-D) describes the photo you're on afresh and replaces its saved description; Get Info's button says Describe Again once a description is saved. Windows: to come (#29).
 - **The gallery shows the description:** under the photo, with its name, kind, date and caption, on both. The image itself is named just for the photo.
+- **Search result count:** both say "No results", "1 result" or "12 results" once typing in Search pauses.
+- **View > Sort By:** both sort by any column without its header, with a checkmark on the current one. Choosing it again reverses it, and both say "Sorted by Date Taken, descending".
+- **Gallery Home and End:** both go to the first and last item.
 - **Describe Photo:** Ctrl+Shift+D on Windows (list, gallery and Preview), Shift-Command-D on the Mac (list and gallery), describing the photo you're on and speaking it.
 - **Choosing how photos are described:** Windows has Photo > Description Type, with Windows AI's four kinds (Accessible, Detailed, Brief, Diagram). The Mac's Settings has the prompt itself, since Apple Intelligence takes any prompt.
