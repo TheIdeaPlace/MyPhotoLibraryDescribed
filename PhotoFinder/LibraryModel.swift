@@ -1256,7 +1256,11 @@ final class LibraryModel {
             alert.informativeText = "From now on, each new description is also saved in the photo: as its caption when it has none, and in the file's accessibility fields for photos in added folders. Captions and alt text that you or other apps wrote are never replaced. You can turn this off at any time."
             alert.addButton(withTitle: "Save in Photos")
             alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                // Set again, so a switch already showing on (Settings' checkbox) redraws as off.
+                saveInPhotos = false
+                return
+            }
         }
         saveInPhotos = on
         UserDefaults.standard.set(on, forKey: CaptionPolicy.key)
@@ -1479,7 +1483,7 @@ final class LibraryModel {
         }.value
     }
 
-    /// A description was just saved: with Save descriptions as captions on, it goes into the caption too, quietly.
+    /// A description was just saved: with Save Descriptions in Photos on, it fills an empty caption too, quietly.
     private func captionFromNewDescription(_ text: String, key: String) {
         let policy = captionPolicy
         guard policy != .never else { return }
@@ -1491,7 +1495,7 @@ final class LibraryModel {
         let names = self.names
         Task.detached(priority: .utility) {
             // The caption as Photos has it now: never the list's copy, which is empty until its details load, so
-            // "Only When There's No Caption" can't mistake an unloaded caption for none.
+            // an unloaded caption is never mistaken for none.
             guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [key], options: RowBuilder.fetchOptions()).firstObject
             else { return }
             let existing = AssetDetails.load(for: asset, names: names).caption
@@ -1500,7 +1504,7 @@ final class LibraryModel {
         }
     }
 
-    /// Save descriptions as captions for a file in an added folder (#31): the description goes into the file's caption
+    /// Save Descriptions in Photos for a file in an added folder (#31): the description goes into the file's caption
     /// and accessibility fields, as Use Description as Caption does, quietly. Only for a file still listed: its key
     /// holds its path in capitals, which can't be turned back into the path itself.
     private func captionFileFromNewDescription(_ text: String, key: String, policy: CaptionPolicy) {
@@ -1514,7 +1518,7 @@ final class LibraryModel {
             let existing = await Task.detached(priority: .utility) { FileMetadata.read(url) }.value
             var changes = FileMetadataChanges()
             if policy.shouldWrite(trimmed, over: existing.caption) { changes.caption = trimmed }
-            // Alt text another app wrote is only replaced under Always, as a caption is.
+            // Only empty alt text is filled; what another app wrote is left alone, as a caption is.
             if FileFields.mayWriteAltText(trimmed, over: existing.altText, policy: policy) { changes.accessibilityDescription = trimmed }
             guard changes != FileMetadataChanges() else { return }
             // Without the status bar or an error dialog, as for Photos; failures are logged.
