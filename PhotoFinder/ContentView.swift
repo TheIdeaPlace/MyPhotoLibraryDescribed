@@ -52,6 +52,11 @@ struct BrowserView: View {
                                    showingDescription: model.showDescriptionPanel)
             if target == .search {
                 searchFocused = true
+            } else if case .status = target {
+                // Focusable first, then focused a moment later, once SwiftUI has made the sections focus targets.
+                searchFocused = false
+                model.statusBarReachable = true
+                Task { @MainActor in pane = target }
             } else {
                 searchFocused = false
                 pane = target
@@ -436,7 +441,7 @@ private struct StatusBar: View {
             }
             ForEach(shown, id: \.self) { section in
                 Text(text(section) ?? "")
-                    .focusable()
+                    .focusable(model.statusBarReachable)
                     .focused(pane, equals: .status(section))
             }
             Spacer()
@@ -460,6 +465,8 @@ private struct StatusBar: View {
         }
         .onChange(of: pane.wrappedValue) { old, new in
             if new == nil, case let .status(section)? = old, !shown.contains(section) { pane.wrappedValue = .status(.status) }
+            // Left the status bar (F6, Escape, a click): out of the Tab order again.
+            if case .status? = new {} else if case .status? = old, new != nil { model.statusBarReachable = false }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status bar")

@@ -89,6 +89,9 @@ final class LibraryModel {
     var searchFocusRequest = 0
     /// Go > Next Pane and Previous Pane; the browser moves focus when this changes.
     private(set) var paneRequest = PaneRequest()
+    /// Whether the status bar's sections can take focus: only while F6 is taking you there, so Tab passes them by,
+    /// as on Windows (#19). VoiceOver still reads them, being text.
+    var statusBarReachable = false
     private(set) var isLoading = false
     private(set) var activity: String?
     private(set) var nameProgress: String?
