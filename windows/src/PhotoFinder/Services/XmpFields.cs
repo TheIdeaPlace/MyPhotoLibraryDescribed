@@ -14,7 +14,7 @@ namespace PhotoFinder.Services;
 /// - PNG is changed chunk by chunk (<see cref="PngMetadata"/>, #82): only the XMP chunk is replaced.
 /// - TIFF goes through WIC: its in-place encoder when the file has room, otherwise its transcoder, which rewrites the file
 ///   without decoding the picture.
-/// - Either way the new file is written beside the photo, flushed, and swapped in whole, so a failure partway leaves the
+/// - Every way, the new file is written beside the photo, flushed, and swapped in whole, so a failure partway leaves the
 ///   photo as it was; and the fields are read back before they count as saved.
 /// </summary>
 public static class XmpFields
@@ -50,7 +50,9 @@ public static class XmpFields
         if (IsPng(path))
         {
             // Read from the XMP chunk itself; the picture isn't decoded.
-            var (caption, alt, extended) = PngMetadata.Fields(await File.ReadAllBytesAsync(path));
+            var bytes = await File.ReadAllBytesAsync(path);
+            if (!PngMetadata.LooksLikePng(bytes)) throw new InvalidDataException("The file isn't the kind its name says.");
+            var (caption, alt, extended) = PngMetadata.Fields(bytes);
             return new Fields(caption ?? "", alt ?? "", extended ?? "", caption is not null);
         }
         var file = await StorageFile.GetFileFromPathAsync(path);

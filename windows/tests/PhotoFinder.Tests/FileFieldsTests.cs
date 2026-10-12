@@ -498,6 +498,90 @@ public sealed class FileFieldsTests : IDisposable
         Assert.Throws<MetadataRefusedException>(() => PngMetadata.Apply(damaged, new MetadataChanges { Caption = "A" }));
     }
 
+    /// <summary>EXIF (little-endian TIFF) with only an ImageDescription, as every Mac screenshot carries.</summary>
+    private static byte[] ExifWithDescription(string text)
+    {
+        var value = System.Text.Encoding.ASCII.GetBytes(text + "\0");
+        var exif = new List<byte> { (byte)'I', (byte)'I', 42, 0, 8, 0, 0, 0, 1, 0 };
+        exif.AddRange([0x0E, 0x01, 2, 0, (byte)value.Length, 0, 0, 0, 26, 0, 0, 0]);
+        exif.AddRange([0, 0, 0, 0]);
+        exif.AddRange(value);
+        return exif.ToArray();
+    }
+
+    [Fact]
+    public async Task APngsRating_GoesInItsXmp_AndExplorerReadsIt_WithNothingElseChanged()
+    {
+        var path = _lib.AddPng("rated.png");
+        File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. "after the end"u8.ToArray()]);
+        var before = File.ReadAllBytes(path);
+        Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 4)).Succeeded);
+        Assert.Equal(4, (await MetadataReader.ReadAsync(path)).Rating);
+        Assert.Equal(WithoutXmpChunk(before), WithoutXmpChunk(File.ReadAllBytes(path)));
+        Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 0)).Succeeded);
+        Assert.Equal(0, (await MetadataReader.ReadAsync(path)).Rating);
+    }
+
+    [Fact]
+    public void AScreenshotsDescription_IsEmptiedInPlace_WhenTheCaptionChanges()
+    {
+        var png = WithChunk(File.ReadAllBytes(_lib.AddPng("screenshot.png")), "eXIf", ExifWithDescription("Screenshot"));
+        var changed = PngMetadata.Apply(png, new MetadataChanges { Caption = "A settings window." });
+        var exif = PngChunks(changed).Single(c => c.Type == "eXIf");
+        Assert.Equal(PngChunks(png).Single(c => c.Type == "eXIf").Length, exif.Length);
+        Assert.True(changed.AsSpan().IndexOf("Screenshot"u8) < 0, "The screenshot's description is still there.");
+        // Its CRC is right: the file still reads.
+        Assert.Equal("A settings window.", PngMetadata.Fields(changed).Caption);
+        // A rating alone leaves it as it was.
+        var rated = PngMetadata.Apply(png, new MetadataChanges { Stars = 3 });
+        Assert.True(rated.AsSpan().IndexOf("Screenshot"u8) >= 0);
+    }
+
+    [Fact]
+    public void XmpAfterThePicture_MovesBeforeIt_AndTwoBecomeOne_AndAnAnimationsFramesComeAfterIt()
+    {
+        var plain = File.ReadAllBytes(_lib.AddPng("a.png"));
+        byte[] Xmp(string caption) => [.. "XML:com.adobe.xmp\0"u8.ToArray(), 0, 0, 0, 0, .. System.Text.Encoding.UTF8.GetBytes(
+            $"<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'><rdf:Description xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:description><rdf:Alt><rdf:li xml:lang='x-default'>{caption}</rdf:li></rdf:Alt></dc:description></rdf:Description></rdf:RDF></x:xmpmeta>")];
+        // Two XMP chunks, after IHDR, and an animation control chunk before the picture.
+        var animated = WithChunk(WithChunk(WithChunk(plain, "acTL", [0, 0, 0, 1, 0, 0, 0, 0]), "iTXt", Xmp("Second")), "iTXt", Xmp("First"));
+        var changed = PngMetadata.Apply(animated, new MetadataChanges { Caption = "New" });
+        var chunks = PngChunks(changed);
+        Assert.Single(chunks, c => IsXmpChunk(changed, c));
+        Assert.True(chunks.FindIndex(c => IsXmpChunk(changed, c)) < chunks.FindIndex(c => c.Type == "acTL"));
+        Assert.Equal("New", PngMetadata.Fields(changed).Caption);
+    }
+
+    [Fact]
+    public void AnXmpChunkThatInflatesHuge_IsRefused_RatherThanFillingMemory()
+    {
+        var png = File.ReadAllBytes(_lib.AddPng("bomb.png"));
+        var packed = new MemoryStream();
+        using (var z = new System.IO.Compression.ZLibStream(packed, System.IO.Compression.CompressionLevel.SmallestSize, leaveOpen: true))
+            z.Write(new byte[PngMetadata.MaxInflated + 1024]);
+        var bomb = WithChunk(png, "iTXt", [.. "XML:com.adobe.xmp\0"u8.ToArray(), 1, 0, 0, 0, .. packed.ToArray()]);
+        Assert.Throws<MetadataRefusedException>(() => PngMetadata.Fields(bomb));
+    }
+
+    [Fact]
+    public async Task APngThatCantBeFollowed_IsReadForItsTitleOnce_AndAJpegCalledPngSaysWhatItIs()
+    {
+        var damaged = _lib.AddPng("damaged.png");
+        var bytes = File.ReadAllBytes(damaged);
+        bytes[20] ^= 0xFF;
+        File.WriteAllBytes(damaged, bytes);
+        // Stamped as read, so it isn't read again on every scan.
+        Assert.Equal(Models.MediaMetadata.CurrentVersion, (await MetadataReader.ReadAsync(damaged)).Version);
+
+        var jpeg = _lib.AddJpeg("photo.jpg");
+        var named = Path.ChangeExtension(jpeg, ".png");
+        File.Move(jpeg, named);
+        Assert.Equal(Models.MediaMetadata.CurrentVersion, (await MetadataReader.ReadAsync(named)).Version);
+        var result = await MetadataWriter.SetCaptionAsync([ItemFor(named)], "A dog.");
+        Assert.Equal(0, result.Succeeded);
+        Assert.Contains("isn't the kind of file its name says", result.FailureSummary);
+    }
+
     [Fact]
     public async Task APngCalledJpg_IsLeftAlone_Saying_Why()
     {

@@ -53,6 +53,12 @@ public static class MetadataReader
         {
             xmp = await XmpFields.ReadAsync(path);
         }
+        catch (Exception ex) when (!forWriting && ex is MetadataRefusedException or InvalidDataException)
+        {
+            // Never readable (damaged, or not the kind its name says): the Title is all there is, and it isn't tried
+            // again on every scan.
+            return metadata with { Version = MediaMetadata.CurrentVersion };
+        }
         catch (Exception) when (!forWriting)
         {
             // Not readable now: the Title is all there is, and it's read again next time (an older Version).

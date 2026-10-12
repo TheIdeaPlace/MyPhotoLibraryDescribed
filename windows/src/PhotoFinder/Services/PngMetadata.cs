@@ -1,6 +1,5 @@
 using System.IO.Compression;
 using System.Text;
-using System.Xml.Linq;
 
 namespace PhotoFinder.Services;
 
@@ -9,8 +8,10 @@ namespace PhotoFinder.Services;
 /// iTXt chunk "XML:com.adobe.xmp") is read, changed and written back as one uncompressed chunk, where it was or just
 /// before the picture; every other chunk, and anything after IEND, is copied byte for byte, the picture included.
 ///
-/// - Windows keeps a PNG's Title in the same XMP (dc:title), so it follows the caption there. An eXIf ImageDescription
-///   or XPTitle holding the old caption is emptied in place.
+/// - Windows keeps a PNG's Title in the same XMP (dc:title), so it follows the caption there.
+/// - When the caption changes, the eXIf ImageDescription is emptied in place, as the Mac does: every macOS and iOS
+///   screenshot carries "Screenshot" there, which Apple's ImageIO reads ahead of the XMP. An XPTitle holding the old
+///   caption is emptied too.
 /// - Anything that doesn't parse (a damaged chunk, XMP compressed in an unknown way or that isn't XML) is refused, so
 ///   the file is left alone.
 /// </summary>
@@ -44,7 +45,8 @@ public static class PngMetadata
     {
         var (chunks, end) = Chunks(png);
         var xmpChunks = chunks.Where(c => IsXmp(png, c)).ToList();
-        var firstIdat = chunks.FindIndex(c => c.Type == "IDAT");
+        // The picture's first chunk: IDAT, or an animated PNG's acTL or fcTL before it.
+        var firstIdat = chunks.FindIndex(c => c.Type is "IDAT" or "acTL" or "fcTL");
         var document = xmpChunks.Count > 0 ? XmpPacket.Parse(Packet(png, xmpChunks[0])) : XmpPacket.New();
         XmpPacket.Edit(document, changes);
         var packet = XmpPacket.Serialize(document, padded: false);
@@ -61,10 +63,10 @@ public static class PngMetadata
             var c = chunks[i];
             if (i == insertAt) output.Write(xmpChunk);
             if (xmpChunks.Contains(c)) continue;
-            if (c.Type == "eXIf" && (changes.ClearOwnTitle is { Length: > 0 } || changes.Stars is not null))
+            if (c.Type == "eXIf" && (changes.ClearOwnTitle is { Length: > 0 } || changes.Stars is not null || changes.Caption is not null))
             {
                 var data = png[c.Data..(c.Data + c.DataLength)];
-                if (XmpPacket.PatchExif(data, 0, data.Length, changes))
+                if (XmpPacket.PatchExif(data, 0, data.Length, changes, clearDescription: changes.Caption is not null))
                 {
                     output.Write(Build("eXIf", data));
                     continue;
@@ -87,16 +89,16 @@ public static class PngMetadata
         var at = 8;
         while (true)
         {
-            if (at + 12 > b.Length) throw new MetadataRefusedException("The file ends before its last chunk.");
+            if (at + 12 > b.Length) throw new MetadataRefusedException("The file is cut short.");
             var length = (long)((uint)(b[at] << 24) | (uint)(b[at + 1] << 16) | (uint)(b[at + 2] << 8) | b[at + 3]);
-            if (length > int.MaxValue || at + 12 + length > b.Length) throw new MetadataRefusedException("A chunk runs past the end of the file.");
+            if (length > int.MaxValue || at + 12 + length > b.Length) throw new MetadataRefusedException("The file is cut short.");
             var type = b.AsSpan(at + 4, 4);
             foreach (var t in type)
                 if (t is not ((>= (byte)'A' and <= (byte)'Z') or (>= (byte)'a' and <= (byte)'z')))
-                    throw new MetadataRefusedException("A chunk has an invalid name.");
+                    throw new MetadataRefusedException("Part of the file is damaged.");
             var chunk = new Chunk(at, (int)length + 12, Encoding.ASCII.GetString(type));
             var stored = ReadUInt32(b, chunk.End - 4);
-            if (stored != Crc32(b.AsSpan(at + 4, (int)length + 4))) throw new MetadataRefusedException($"Its {chunk.Type} chunk is damaged.");
+            if (stored != Crc32(b.AsSpan(at + 4, (int)length + 4))) throw new MetadataRefusedException("Part of the file is damaged.");
             if (list.Count == 0 && chunk.Type != "IHDR") throw new MetadataRefusedException("The file doesn't start with its header.");
             list.Add(chunk);
             at = chunk.End;
@@ -137,13 +139,22 @@ public static class PngMetadata
         };
     }
 
+    /// <summary>More than any real XMP: a packet inflating past this is refused rather than filling memory.</summary>
+    internal const int MaxInflated = 16 * 1024 * 1024;
+
     private static byte[] Inflate(byte[] input)
     {
         try
         {
             using var zlib = new ZLibStream(new MemoryStream(input), CompressionMode.Decompress);
             using var output = new MemoryStream();
-            zlib.CopyTo(output);
+            var buffer = new byte[81920];
+            int read;
+            while ((read = zlib.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                if (output.Length + read > MaxInflated) throw new MetadataRefusedException("Its metadata is too large.");
+                output.Write(buffer, 0, read);
+            }
             return output.ToArray();
         }
         catch (InvalidDataException)

@@ -210,7 +210,8 @@ public static class XmpPacket
     /// <summary>In the TIFF data at <paramref name="tiff"/> up to <paramref name="end"/>: the rating tags Windows writes
     /// (Rating, RatingPercent) set where they exist, and title fields holding <see cref="MetadataChanges.ClearOwnTitle"/>
     /// emptied. Only values the same size; nothing is added or moved. True when anything changed.</summary>
-    internal static bool PatchExif(byte[] b, int tiff, int end, MetadataChanges changes)
+    /// <param name="clearDescription">ImageDescription is emptied whatever it holds (a screenshot's "Screenshot").</param>
+    internal static bool PatchExif(byte[] b, int tiff, int end, MetadataChanges changes, bool clearDescription = false)
     {
         if (tiff + 8 > end) return false;
         bool little;
@@ -246,13 +247,14 @@ public static class XmpPacket
                 else if (tag == 0x4749) Put16(entry + 8, (int)Models.MediaTypes.RatingFromStars(stars));
             }
             // ImageDescription (ASCII) and XPTitle (UTF-16 bytes): emptied when they hold the old title.
-            if (changes.ClearOwnTitle is { Length: > 0 } old && ((tag == 0x010E && type == 2) || (tag == 0x9C9B && type == 1)) && n > 0)
+            var old = changes.ClearOwnTitle ?? "";
+            if ((old.Length > 0 || (clearDescription && tag == 0x010E)) && ((tag == 0x010E && type == 2) || (tag == 0x9C9B && type == 1)) && n > 0)
             {
                 var at = n <= 4 ? entry + 8 : tiff + U32(entry + 8);
                 if (n < 0 || at < tiff || n > end - at) continue;
                 // Windows writes ImageDescription as UTF-8; older cameras and tools as Latin-1.
                 var matches = tag == 0x010E
-                    ? TextOf(b, at, n).Any(t => t == old.Trim())
+                    ? clearDescription || TextOf(b, at, n).Any(t => t == old.Trim())
                     : Encoding.Unicode.GetString(b, at, n - n % 2).TrimEnd('\0').Trim() == old.Trim();
                 if (matches)
                 {
