@@ -1,6 +1,6 @@
 # Goals
 
-Kelly's goals for the app, from 11 October 2026 (status updated later that day, after the first Mac PRs merged). More will be added. Each goal links to the issues that track it, and the "Today" column says where things stand. Update it in the same PR as the work.
+Kelly's goals for the app, from 11 October 2026 (status updated after the Mac PRs and the Windows PRs #52 to #55 merged). More will be added. Each goal links to the issues that track it, and the "Today" column says where things stand. Update it in the same PR as the work.
 
 **What this is for:** an app people can use today, and a proof of concept for Apple and Microsoft of how an image gallery can be more accessible. The main point of the app is **describing photos automatically**. "Photo Finder" is a working name, not the final one (and "Photo Describer" is out).
 
@@ -12,7 +12,8 @@ Kelly's goals for the app, from 11 October 2026 (status updated later that day, 
 | 4 | Descriptions are cached. | Done on both (saved descriptions). | |
 | 5 | The user can ask for a photo to be described again, and the cache is updated. | Done on both: Photo > Describe Again, Shift-Option-Command-D on the Mac (#40), Ctrl+Alt+Shift+D on Windows. | #29 |
 | — | In list view, the user chooses which columns are shown and in what order. | Done on both (View > Columns). | |
-| 6 | Gallery view uses the photo's name and nothing else by default. Customizing it is a nice-to-have. | Name only on both, with the description shown under the photo (Mac in #40). Customizing: not yet. | #38 |
+| 6 | Gallery view uses the photo's name and nothing else by default. Customizing it is a nice-to-have. | Name only on both. The description is in the Description panel, or under the photo when the panel is hidden. Customizing: not yet. | #38 |
+| — | Sighted people get the descriptions too. | Done on both: View > Show Description, a Description panel beside the list and gallery (corrections are saved and protected), and a Description column (Mac #51, Windows #55). | #50 |
 | — | Keep what the app already does well: export, search, the library concept and the rest. | Kept. | |
 | 7 | The user can put a description into a field of the photo (the caption). | Done on both: Photo > Use Description as Caption (Mac in #43). On the Mac, files in added folders wait on #31. | #30, #31 |
 | 8 | A setting to use the generated description automatically. | Done on both: Save descriptions as captions (Mac Settings, #43; Windows Photo menu). | #30 |
