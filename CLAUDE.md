@@ -35,11 +35,11 @@ xcodegen generate
 xcodebuild -project PhotoFinder.xcodeproj -scheme PhotoFinder -destination 'platform=macOS,arch=arm64' test
 ```
 
-The macOS 27 code (Apple Intelligence images, Photos' extended metadata) is fenced with `#if !PF_SDK26`. Mac CI only has the macOS 26 SDK, so it builds with `-DPF_SDK26` and **doesn't compile that code**. Any PR touching it needs a local Xcode 27 build on the Mac before merging: the Windows session asks for one in #13. The committed `.xcodeproj` can be out of date (#23). Run `xcodegen generate` first.
+The macOS 27 code (Apple Intelligence images, Photos' extended metadata) is fenced with `#if !PF_SDK26`. While the CI runner's SDK is older than macOS 27, Mac CI builds with `-DPF_SDK26` and **doesn't compile that code**. Any PR touching it needs a local Xcode 27 build on the Mac before merging: the Windows session asks for one in #13. `PhotoFinder.xcodeproj` is generated from `project.yml`, not committed (#23): run `xcodegen generate` after cloning, and again after switching branches or pulling (Kelly's Mac has git hooks that do it).
 
-**Windows** (.NET, from `windows/`):
+**Windows** (.NET, from `windows/`), in PowerShell or cmd, not Git Bash: tests started from Git Bash get an internal error from the AI helper on every picture (see `windows/README.md`):
 
-```sh
+```powershell
 dotnet build PhotoFinder.sln
 dotnet test --solution PhotoFinder.sln
 ```
