@@ -114,7 +114,7 @@ final class LibraryModel {
     var describeInBackground: Bool = UserDefaults.standard.bool(forKey: "describeInBackground") {
         didSet { UserDefaults.standard.set(describeInBackground, forKey: "describeInBackground") }
     }
-    private static let log = Logger(subsystem: "net.theideaplace.PhotoFinder", category: "library")
+    nonisolated private static let log = Logger(subsystem: "net.theideaplace.PhotoFinder", category: "library")
     private let imageManager = PHCachingImageManager()
     private let galleryImageSize = CGSize(width: 2400, height: 2400)
     private let galleryImageOptions: PHImageRequestOptions = {
@@ -857,32 +857,75 @@ final class LibraryModel {
                      : "None of these photos have been described yet.")
             return
         }
-        let replacing = described.filter { !$0.0.caption.isEmpty && $0.0.caption != $0.2 }
-        if !replacing.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = replacing.count == 1 ? "Replace the caption of \(replacing[0].0.name)?"
-                : "Replace the captions of \(replacing.count) photos?"
-            alert.informativeText = replacing.count == 1 ? "Its caption is: \(replacing[0].0.caption)"
-                : "Their captions will be replaced with their descriptions."
-            alert.addButton(withTitle: "Replace")
-            alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
         let skipped = chosen.count - described.count
-        var done = described.count == 1 ? "Caption saved" : "Captions saved for \(described.count) photos"
-        if skipped > 0 { done += ". \(skipped == 1 ? "1 photo hasn't" : "\(skipped) photos haven't") been described yet" }
-        writeCaptions(described.map { ($0.1, $0.2) }, label: "Saving caption…", done: done)
+        Task {
+            // The captions as Photos has them now, not the list's copy, which is empty until its details load.
+            let existing = await currentCaptions(of: described.map(\.1))
+            let replacing = described.compactMap { row, asset, text -> (String, String)? in
+                let caption = existing[asset.localIdentifier] ?? ""
+                return caption.isEmpty || caption == text ? nil : (row.name, caption)
+            }
+            if !replacing.isEmpty {
+                let alert = NSAlert()
+                alert.messageText = replacing.count == 1 ? "Replace the caption of \(replacing[0].0)?"
+                    : "Replace the captions of \(replacing.count) photos?"
+                alert.informativeText = replacing.count == 1 ? "Its caption is: \(replacing[0].1)"
+                    : "Their captions will be replaced with their descriptions."
+                alert.addButton(withTitle: "Replace")
+                alert.addButton(withTitle: "Cancel")
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+            }
+            var done = described.count == 1 ? "Caption saved" : "Captions saved for \(described.count) photos"
+            if skipped > 0 { done += ". \(skipped == 1 ? "1 photo hasn't" : "\(skipped) photos haven't") been described yet" }
+            writeCaptions(described.map { ($0.1, $0.2) }, label: "Saving caption…", done: done)
+        }
+    }
+
+    /// Each photo's caption as Photos has it right now, by local identifier, read off the main actor.
+    private func currentCaptions(of assets: [PHAsset]) async -> [String: String] {
+        let ids = assets.map(\.localIdentifier)
+        let names = self.names
+        return await Task.detached(priority: .userInitiated) {
+            // Fetched again so it's the latest version, not one this window has held since the list loaded.
+            let fetch = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: RowBuilder.fetchOptions())
+            var captions: [String: String] = [:]
+            fetch.enumerateObjects { asset, _, _ in
+                captions[asset.localIdentifier] = AssetDetails.load(for: asset, names: names).caption
+            }
+            return captions
+        }.value
     }
 
     /// A description was just saved: with Save descriptions as captions on, it goes into the caption too, quietly.
     private func captionFromNewDescription(_ text: String, key: String) {
         let policy = captionPolicy
         guard policy != .never, canEditCaptions else { return }
-        let asset = assetsByID[key] ?? PHAsset.fetchAssets(withLocalIdentifiers: [key], options: nil).firstObject
-        guard let asset else { return }
-        let existing = rows.first { $0.id == key }?.caption ?? AssetDetails.load(for: asset, names: names).caption
-        guard policy.shouldWrite(text, over: existing) else { return }
-        writeCaptions([(asset, text)], label: "Saving caption…", done: nil)
+        let names = self.names
+        Task.detached(priority: .utility) {
+            // The caption as Photos has it now: never the list's copy, which is empty until its details load, so
+            // "Only When There's No Caption" can't mistake an unloaded caption for none.
+            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [key], options: RowBuilder.fetchOptions()).firstObject
+            else { return }
+            let existing = AssetDetails.load(for: asset, names: names).caption
+            guard policy.shouldWrite(text, over: existing) else { return }
+            await Self.writeCaptionQuietly(UncheckedBox(value: asset), text)
+        }
+    }
+
+    /// Writes a caption without the status bar or an error dialog: automatic captions can come one after another
+    /// while describing in the background, and one dialog each would bury the person. Failures are logged.
+    nonisolated private static func writeCaptionQuietly(_ asset: UncheckedBox<PHAsset>, _ caption: String) async {
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+                if #available(macOS 27, *) {
+                    PHAssetChangeRequest(for: asset.value).caption = caption
+                }
+#endif
+            }
+        } catch {
+            log.error("Couldn't save a description as a caption: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     // MARK: - Describing in the background

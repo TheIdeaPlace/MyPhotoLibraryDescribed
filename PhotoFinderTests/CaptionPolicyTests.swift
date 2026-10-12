@@ -18,8 +18,13 @@ final class CaptionPolicyTests: XCTestCase {
         XCTAssertFalse(CaptionPolicy.always.shouldWrite("   ", over: "Rex"))
     }
 
-    func testTheSettingIsOffUnlessChosen() {
-        UserDefaults.standard.removeObject(forKey: CaptionPolicy.key)
-        XCTAssertEqual(CaptionPolicy.current, .never)
+    func testTheSettingIsOffUnlessChosen() throws {
+        // A suite of its own: tests run inside the app, and the developer's own setting must survive them.
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "CaptionPolicyTests"))
+        defaults.removePersistentDomain(forName: "CaptionPolicyTests")
+        XCTAssertEqual(CaptionPolicy.current(in: defaults), .never)
+        defaults.set("whenEmpty", forKey: CaptionPolicy.key)
+        XCTAssertEqual(CaptionPolicy.current(in: defaults), .whenEmpty)
+        defaults.removePersistentDomain(forName: "CaptionPolicyTests")
     }
 }

@@ -17,8 +17,10 @@ enum CaptionPolicy: String, CaseIterable, Identifiable {
         }
     }
 
-    static var current: CaptionPolicy {
-        UserDefaults.standard.string(forKey: key).flatMap(CaptionPolicy.init) ?? .never
+    static var current: CaptionPolicy { current(in: .standard) }
+
+    static func current(in defaults: UserDefaults) -> CaptionPolicy {
+        defaults.string(forKey: key).flatMap(CaptionPolicy.init) ?? .never
     }
 
     /// Whether a new description goes into a photo whose caption is `existing`.
