@@ -89,6 +89,33 @@ public sealed class CaptionTests : IDisposable
     }
 
     [WpfFact]
+    public async Task YourOwnChange_WhileACaptionIsWrittenFromADescription_WaitsRatherThanBeingRefused()
+    {
+        using var model = await StartAsync(CaptionPolicy.Always);
+        model.Descriptions!.Put(Item(model, "plain.jpg"), "accessible", "A plain test picture.");
+        // At once, while that caption is being written.
+        var favorite = model.ToggleFavoriteAsync([model.Rows.Single(r => r.Name == "captioned.jpg")]);
+        await Task.WhenAll(favorite, model.CaptionsWritten);
+        Assert.DoesNotContain("Still saving the last change", _announced);
+        Assert.Contains("Added to Favorites", _announced);
+        Assert.Equal("A plain test picture.", await CaptionOf("plain.jpg"));
+        Assert.False(model.IsWriting);
+        Assert.False(model.IsWritingCaptions);
+    }
+
+    [WpfFact]
+    public async Task ACaptionYouJustSaved_IsntReplaced_UnderOnlyWhenThereIsNoCaption()
+    {
+        using var model = await StartAsync(CaptionPolicy.WhenEmpty);
+        var plain = model.Rows.Single(r => r.Name == "plain.jpg");
+        // Your caption starts saving, then a description arrives for the same photo.
+        var yours = model.SaveCaptionAsync([plain], "Mine");
+        model.Descriptions!.Put(plain.Item!, "accessible", "A plain test picture.");
+        await Task.WhenAll(yours, model.CaptionsWritten);
+        Assert.Equal("Mine", await CaptionOf("plain.jpg"));
+    }
+
+    [WpfFact]
     public async Task UseDescriptionAsCaption_SavesIt_OrSaysItHasntBeenDescribed_AndTheSettingIsAMenuChoice()
     {
         using var model = await StartAsync(CaptionPolicy.Never);
@@ -99,6 +126,10 @@ public sealed class CaptionTests : IDisposable
             var plain = model.Rows.Single(r => r.Name == "plain.jpg");
             await window.UseDescriptionAsCaptionAsync([plain]);
             Assert.Contains("plain.jpg hasn't been described yet. Describe it first.", _announced);
+            // Described only as another type: said which.
+            model.Descriptions!.Put(plain.Item!, "brief", "Short.");
+            await window.UseDescriptionAsCaptionAsync([plain]);
+            Assert.Contains("plain.jpg hasn't been described as Accessible yet. Describe it first.", _announced);
 
             model.Descriptions!.Put(plain.Item!, "accessible", "A plain test picture.");
             await window.UseDescriptionAsCaptionAsync([plain]);

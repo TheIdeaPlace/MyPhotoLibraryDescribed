@@ -86,8 +86,17 @@ public partial class MainWindow : Window
             FocusContent();
         };
         model.FilesChanged += paths => { foreach (var p in paths) _thumbnails.Forget(p); };
-        Closing += (_, e) =>
+        Closing += async (_, e) =>
         {
+            // A caption being written from a description is finished first, so no file is left half written.
+            if (model.IsWritingCaptions && !_closingAfterCaptions)
+            {
+                e.Cancel = true;
+                _closingAfterCaptions = true;
+                await model.StopCaptionsAsync();
+                Close();
+                return;
+            }
             if (model.IsWriting && MessageBox.Show(this,
                     $"{AppInfo.Name} is still saving changes to your photos. If you quit now, the rest won't be changed. Quit anyway?",
                     "Still Saving", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
@@ -313,7 +322,8 @@ public partial class MainWindow : Window
     /// file's Title. Captions are read from the files first, never the list's copy (empty until details load), so one
     /// someone wrote is never replaced without asking.</summary>
     /// <param name="owner">The window asking: Get Info, or this one.</param>
-    internal async Task UseDescriptionAsCaptionAsync(IReadOnlyList<FileRow> rows, Window? owner = null)
+    /// <param name="kind">The description type to use (Get Info's choice); otherwise Photo > Description Type.</param>
+    internal async Task UseDescriptionAsCaptionAsync(IReadOnlyList<FileRow> rows, Window? owner = null, string? kind = null)
     {
         owner ??= this;
         var photos = rows.Where(r => r.Item is { IsVideo: false }).ToList();
@@ -322,7 +332,7 @@ public partial class MainWindow : Window
             Services.Announcer.Announce("Select a photo");
             return;
         }
-        var kind = _model.Settings.DescriptionKind;
+        kind ??= _model.Settings.DescriptionKind;
         var described = photos
             .Select(r => (Row: r, Text: _model.Descriptions?.Get(r.Item!, kind)))
             .Where(d => !string.IsNullOrWhiteSpace(d.Text))
@@ -330,25 +340,30 @@ public partial class MainWindow : Window
             .ToList();
         if (described.Count == 0)
         {
-            Services.Announcer.Announce(photos.Count == 1 ? $"{photos[0].Name} hasn't been described yet. Describe it first."
-                : "None of these photos have been described yet.");
+            Services.Announcer.Announce(NotDescribedMessage(photos, kind));
             return;
         }
         if (!ConfirmBulkWrite("Use Description as Caption", described.Select(d => d.Row.Item!).ToList(), owner)) return;
-        List<(FileRow Row, string Text, string Caption)> current;
-        try
+        // Each caption as the file has it now. One that can't be read (locked, moved) is left alone.
+        var current = await Task.Run(async () =>
         {
-            current = await Task.Run(async () =>
+            var list = new List<(FileRow Row, string Text, string Caption)>();
+            foreach (var (row, text) in described)
             {
-                var list = new List<(FileRow, string, string)>();
-                foreach (var (row, text) in described)
-                    list.Add((row, text, (await MetadataReader.ReadAsync(row.Item!.Path)).Caption));
-                return list;
-            });
-        }
-        catch (Exception ex)
+                try
+                {
+                    list.Add((row, text, (await MetadataReader.ReadAsync(row.Item!.Path)).Caption.Trim()));
+                }
+                catch (Exception)
+                {
+                }
+            }
+            return list;
+        });
+        var unreadable = described.Count - current.Count;
+        if (current.Count == 0)
         {
-            ShowError($"The captions couldn't be read, so they weren't changed: {ex.Message}");
+            ShowError("The captions couldn't be read, so they weren't changed.", owner);
             return;
         }
         var replacing = current.Where(c => c.Caption.Length > 0 && c.Caption != c.Text).ToList();
@@ -361,14 +376,21 @@ public partial class MainWindow : Window
                     MessageBoxResult.No) != MessageBoxResult.Yes)
                 return;
         }
-        // Already the caption: nothing to write, but it still counts as saved.
+        // Already the caption: nothing to write, but it counts as saved.
         var toWrite = current.Where(c => c.Caption != c.Text).Select(c => (c.Row.Item!, c.Text)).ToList();
-        if (toWrite.Count == 0)
-        {
-            Services.Announcer.Announce(described.Count == 1 ? "Caption saved" : $"Captions saved for {described.Count} photos");
-            return;
-        }
-        await _model.SaveCaptionsAsync(toWrite, photos.Count - described.Count);
+        await _model.SaveCaptionsAsync(toWrite, current.Count - toWrite.Count, photos.Count - described.Count);
+        if (unreadable > 0)
+            ShowError(unreadable == 1 ? "1 caption couldn't be read, so it wasn't changed." : $"{unreadable} captions couldn't be read, so they weren't changed.", owner);
+    }
+
+    /// <summary>Why there's nothing to use: not described at all, or only as another Description Type.</summary>
+    private string NotDescribedMessage(IReadOnlyList<FileRow> photos, string kind)
+    {
+        var otherKind = photos.Any(p => Services.WindowsAI.Kinds.Any(k => k.Id != kind && _model.Descriptions?.Get(p.Item!, k.Id) is not null));
+        var title = Services.WindowsAI.Kinds.FirstOrDefault(k => k.Id == kind).Title ?? kind;
+        if (photos.Count == 1)
+            return otherKind ? $"{photos[0].Name} hasn't been described as {title} yet. Describe it first." : $"{photos[0].Name} hasn't been described yet. Describe it first.";
+        return otherKind ? $"None of these photos have been described as {title} yet." : "None of these photos have been described yet.";
     }
 
     internal void SetDescriptionKind(string id, string title)
@@ -848,7 +870,7 @@ public partial class MainWindow : Window
         var row = _model.SelectedRows.FirstOrDefault(r => r.Item is not null);
         if (row?.Item is null) { System.Media.SystemSounds.Beep.Play(); return; }
         new InfoWindow(row, _model.Settings, _model.SaveSettings, describeNow: false, _model.Descriptions,
-            useAsCaption: (r, info) => UseDescriptionAsCaptionAsync([r], info)) { Owner = this }.ShowDialog();
+            useAsCaption: (r, info, kind) => UseDescriptionAsCaptionAsync([r], info, kind)) { Owner = this }.ShowDialog();
         // The rows may have been rebuilt while it was open, so the element WPF would return to can be gone.
         FocusContent();
     }
@@ -989,6 +1011,7 @@ public partial class MainWindow : Window
             return;
         }
         _model.SaveCaches();
+        await _model.StopCaptionsAsync();
         Services.Announcer.Announce($"Downloading the update. {AppInfo.Name} will close and open again when it's ready.");
         if (await Services.Updates.InstallAsync(source) is { } error) ShowError($"The update couldn't be installed. {error}");
     }
@@ -1091,6 +1114,11 @@ public partial class MainWindow : Window
             $"Press Ctrl+C to copy this report, then paste it into a new issue at {AppInfo.IssuesUrl}.\n\n{body}",
             "Report a Bug", MessageBoxButton.OK, MessageBoxImage.Information);
 
-    private void ShowError(string message) =>
-        MessageBox.Show(this, message, "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Warning);
+    /// <summary>Over the window in front (Get Info, say), so focus goes back there afterwards, not to this one behind it.</summary>
+    private void ShowError(string message, Window? owner = null) =>
+        MessageBox.Show(owner ?? ActiveWindow, message, "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Warning);
+
+    private Window ActiveWindow => Application.Current?.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? this;
+
+    private bool _closingAfterCaptions;
 }

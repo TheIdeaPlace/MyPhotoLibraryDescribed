@@ -18,7 +18,9 @@ public partial class App : Application
         // Something unexpected in an event handler is reported, not a silent crash.
         DispatcherUnhandledException += (_, args) =>
         {
-            MessageBox.Show(MainWindow, $"Something went wrong: {args.Exception.Message}", AppInfo.Name,
+            // Over the window in front (Get Info, say), so focus returns there.
+            var owner = Windows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? MainWindow;
+            MessageBox.Show(owner, $"Something went wrong: {args.Exception.Message}", AppInfo.Name,
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             args.Handled = true;
         };

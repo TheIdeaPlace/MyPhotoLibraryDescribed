@@ -33,10 +33,10 @@ public partial class InfoWindow : Window
     private readonly DescriptionStore? _store;
     private readonly FileRow _row;
 
-    private readonly Func<FileRow, Window, Task>? _useAsCaption;
+    private readonly Func<FileRow, Window, string, Task>? _useAsCaption;
 
     public InfoWindow(FileRow row, Settings settings, Action saveSettings, bool describeNow, DescriptionStore? store = null,
-        Func<FileRow, Window, Task>? useAsCaption = null)
+        Func<FileRow, Window, string, Task>? useAsCaption = null)
     {
         _useAsCaption = useAsCaption;
         _item = row.Item ?? throw new ArgumentException("Get Info needs a photo or video.", nameof(row));
@@ -73,7 +73,12 @@ public partial class InfoWindow : Window
             if (!describeNow) FocusFirstField();
             await Task.WhenAll(LoadDetailsAsync(), CheckAIAsync());
         };
-        Closed += (_, _) => _closing.Cancel();
+        _row.PropertyChanged += Row_PropertyChanged;
+        Closed += (_, _) =>
+        {
+            _closing.Cancel();
+            _row.PropertyChanged -= Row_PropertyChanged;
+        };
     }
 
     /// <summary>A description type in the combo box. Screen readers name each choice from ToString, which on a
@@ -240,6 +245,8 @@ public partial class InfoWindow : Window
             DescriptionLabel.Visibility = Visibility.Visible;
             DescriptionBox.Visibility = Visibility.Visible;
             DescriptionBox.Text = text.Length > 0 ? text : "Windows returned an empty description.";
+            // Nothing new to use: the old description stays saved, but the box doesn't show it.
+            if (text.Length == 0) UseAsCaptionButton.Visibility = Visibility.Collapsed;
             if (text.Length > 0)
             {
                 UseAsCaptionButton.Visibility = _useAsCaption is null ? Visibility.Collapsed : Visibility.Visible;
@@ -284,12 +291,21 @@ public partial class InfoWindow : Window
     private async void UseAsCaption_Click(object sender, RoutedEventArgs e)
     {
         if (_useAsCaption is null) return;
-        if (KindBox.SelectedValue is string kind && kind != _settings.DescriptionKind)
-        {
-            _settings.DescriptionKind = kind;
-            _saveSettings();
-        }
-        await _useAsCaption(_row, this);
+        // The type chosen here, without changing what's used elsewhere.
+        await _useAsCaption(_row, this, KindBox.SelectedValue as string ?? _settings.DescriptionKind);
+    }
+
+    /// <summary>The General list again after the row changed (a caption written here, or from a description), keeping
+    /// the line you were on, so its Caption isn't out of date.</summary>
+    private void Row_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is not ("" or nameof(FileRow.Caption))) return;
+        var index = GeneralList.SelectedIndex;
+        var hadFocus = GeneralList.IsKeyboardFocusWithin;
+        GeneralList.ItemsSource = GeneralFields(_row).Select(f => new InfoLine(f.Label, f.Value)).ToList();
+        if (index < 0) return;
+        GeneralList.SelectedIndex = Math.Min(index, GeneralList.Items.Count - 1);
+        if (hadFocus && GeneralList.ItemContainerGenerator.ContainerFromIndex(GeneralList.SelectedIndex) is ListBoxItem item) item.Focus();
     }
 
     // MARK: Read text
