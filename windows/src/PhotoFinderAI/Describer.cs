@@ -22,18 +22,9 @@ public sealed class Describer : IDisposable
     {
         if (_language is null)
         {
-            var state = LanguageModel.GetReadyState();
-            if (Protocol.ForTextReadyState(state.ToString()) is { } unavailable) throw new ProtocolException(request.Id, unavailable.Code, unavailable.Message);
-            if (state != AIFeatureReadyState.Ready)
-            {
-                var ready = await LanguageModel.EnsureReadyAsync();
-                if (ready.Status != AIFeatureReadyResultState.Success)
-                    throw new ProtocolException(request.Id, Codes.NotReady,
-                        "Windows couldn't get its text model ready" + (ready.ExtendedError is { } e ? $": {e.Message.Trim()}" : ". It may still be downloading; try again in a few minutes."));
-            }
             try
             {
-                _language = await LanguageModel.CreateAsync();
+                _language = await StartLanguageModelAsync(request);
             }
             catch (UnauthorizedAccessException ex) when (ex.Message.Contains("Limited Access Feature", StringComparison.OrdinalIgnoreCase))
             {
@@ -47,6 +38,20 @@ public sealed class Describer : IDisposable
         var status = result.Status.ToString();
         if (Protocol.CodeForAnswerStatus(status) is { } code) throw new ProtocolException(request.Id, code, Protocol.MessageForAnswerStatus(status));
         return result.Text.Trim();
+    }
+
+    private static async Task<LanguageModel> StartLanguageModelAsync(Protocol.AskRequest request)
+    {
+        var state = LanguageModel.GetReadyState();
+        if (Protocol.ForTextReadyState(state.ToString()) is { } unavailable) throw new ProtocolException(request.Id, unavailable.Code, unavailable.Message);
+        if (state != AIFeatureReadyState.Ready)
+        {
+            var ready = await LanguageModel.EnsureReadyAsync();
+            if (ready.Status != AIFeatureReadyResultState.Success)
+                throw new ProtocolException(request.Id, Codes.NotReady,
+                    "Windows couldn't get its text model ready" + (ready.ExtendedError is { } e ? $": {e.Message.Trim()}" : ". It may still be downloading; try again in a few minutes."));
+        }
+        return await LanguageModel.CreateAsync();
     }
 
     public static string ReadyState() => ImageDescriptionGenerator.GetReadyState().ToString();
