@@ -85,7 +85,6 @@ public sealed class CaptionTests : IDisposable
         await XmpFields.WriteAsync(_lib.PathOf("idt.jpg"), null, null, "A long description another app wrote.");
         var motion = _lib.AddJpeg("motion.jpg");
         File.AppendAllText(motion, "ftypmp42 the video part");
-        var motionSize = new FileInfo(motion).Length;
         using var model = await StartAsync(saveInPhotos: true);
         var long1 = "A golden retriever runs along a sandy beach at sunset with a red ball in its mouth. Waves break behind it and two people walk in the distance near the dunes. The sky is orange and pink, and the low sun makes long shadows across the wet sand near the water's edge.";
         model.Descriptions!.Put(Item(model, "idt.jpg"), "accessible", long1);
@@ -94,10 +93,10 @@ public sealed class CaptionTests : IDisposable
         var fields = await XmpFields.ReadAsync(_lib.PathOf("idt.jpg"));
         Assert.Equal(FileFields.AltText(long1), fields.AltText);
         Assert.Equal("A long description another app wrote.", fields.ExtendedDescription);
-        // Captioned in place, its video kept, if it had room; otherwise left exactly as it was.
+        // Captioned, its video kept.
         var motionAfter = File.ReadAllBytes(motion);
-        Assert.Equal(motionSize, motionAfter.Length);
         Assert.Equal("ftypmp42 the video part"u8.ToArray(), motionAfter[^23..]);
+        Assert.Equal("A dog.", (await XmpFields.ReadAsync(motion)).Caption);
     }
 
     [WpfFact]

@@ -2,21 +2,20 @@ using Windows.Foundation;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Streams;
-using PhotoFinder.Models;
 
 namespace PhotoFinder.Services;
 
 /// <summary>
-/// A photo file's XMP caption (dc:description) and IPTC accessibility fields (#31, #62), read and written through WIC,
-/// since Windows' property system has no names for them. Only JPEG and TIFF, as on the Mac: PNG waits for a writer that
-/// can't damage its other chunks (#61), and WIC can't write HEIC's metadata. Other formats keep their caption in
-/// Explorer's Title (System.Title) instead.
+/// A photo file's XMP caption (dc:description) and IPTC accessibility fields (#31, #62). Only JPEG and TIFF, as on the
+/// Mac: PNG waits for a writer that can't damage its other chunks (#82), and WIC can't write HEIC's metadata. Other
+/// formats keep their caption in Explorer's Title (System.Title) instead.
 ///
-/// - WIC's in-place encoder is used when the file has room. Otherwise its transcoder rewrites the file without
-///   decoding the picture, so the pixels are the same, though a JPEG's compressed data and thumbnail may be re-packed.
-///   The rewritten file is saved beside the photo and swapped in whole, so a failure partway leaves the photo as it was.
-/// - Rewriting drops anything after a JPEG's end, where motion photos keep their video and Ultra HDR its gain map. Those
-///   files are changed in a working copy, in place only, checked, and then swapped in (<see cref="KeepingSecondPictureAsync"/>).
+/// - JPEG is changed segment by segment (<see cref="JpegMetadata"/>, #86): only the XMP is replaced, so EXIF (with its
+///   thumbnail and MakerNote), the picture and anything after it (a motion photo's video) stay byte for byte.
+/// - TIFF goes through WIC: its in-place encoder when the file has room, otherwise its transcoder, which rewrites the file
+///   without decoding the picture.
+/// - Either way the new file is written beside the photo, flushed, and swapped in whole, so a failure partway leaves the
+///   photo as it was; and the fields are read back before they count as saved.
 /// </summary>
 public static class XmpFields
 {
@@ -29,6 +28,8 @@ public static class XmpFields
     public static bool CanWrite(string path) => Writable.Contains(Path.GetExtension(path));
 
     private static bool IsTiff(string path) => Path.GetExtension(path).StartsWith(".tif", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsJpeg(string path) => CanWrite(path) && !IsTiff(path);
 
     private static string Root(string path) => IsTiff(path) ? "/ifd/xmp" : "/xmp";
 
@@ -67,9 +68,39 @@ public static class XmpFields
     }
 
     /// <summary>Writes the caption and accessibility fields given (null leaves one as it is, empty clears it), keeping
-    /// the file's modified date, then reads them back. Throws if they didn't stick, and
-    /// <see cref="SecondPictureException"/> for a photo holding a second picture that has no room for them.</summary>
-    public static async Task WriteAsync(string path, string? caption, string? altText, string? extended)
+    /// the file's modified date, then reads them back. Throws if they didn't stick.</summary>
+    public static Task WriteAsync(string path, string? caption, string? altText, string? extended) =>
+        IsJpeg(path)
+            ? WriteJpegAsync(path, new JpegMetadata.Changes { Caption = caption, AltText = altText, ExtendedDescription = extended })
+            : WriteTiffAsync(path, caption, altText, extended);
+
+    /// <summary>Changes a JPEG's metadata segment by segment (<see cref="JpegMetadata"/>): the caption and accessibility
+    /// fields, and the Title and rating when given. Read back for the caption and accessibility fields.</summary>
+    public static async Task WriteJpegAsync(string path, JpegMetadata.Changes changes)
+    {
+        PhotoChanges.Check();
+        if (!IsJpeg(path)) throw new NotSupportedException($"{Path.GetExtension(path).TrimStart('.').ToUpperInvariant()} files can't hold these fields.");
+        if (changes.IsEmpty) return;
+        // UTC, so the hour that repeats when daylight saving ends can't shift it.
+        var modified = File.GetLastWriteTimeUtc(path);
+        var before = File.ReadAllBytes(path);
+        byte[] after;
+        try
+        {
+            after = JpegMetadata.Apply(before, changes);
+        }
+        catch (MetadataRefusedException) when (!LooksLikeJpeg(before))
+        {
+            throw new InvalidDataException("The file isn't the kind its name says.");
+        }
+        await ReplaceAsync(path, after, () => File.GetLastWriteTimeUtc(path) == modified && new FileInfo(path).Length == before.Length);
+        RestoreDate(path, modified);
+        await CheckStoredAsync(path, changes.Caption, changes.AltText, changes.ExtendedDescription);
+    }
+
+    private static bool LooksLikeJpeg(byte[] b) => b.Length >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF;
+
+    private static async Task WriteTiffAsync(string path, string? caption, string? altText, string? extended)
     {
         PhotoChanges.Check();
         if (!CanWrite(path)) throw new NotSupportedException($"{Path.GetExtension(path).TrimStart('.').ToUpperInvariant()} files can't hold these fields.");
@@ -85,56 +116,57 @@ public static class XmpFields
         Field(Extended, extended);
         if (set.Count == 0) return;
 
-        // UTC, so the hour that repeats when daylight saving ends can't shift it.
         var modified = File.GetLastWriteTimeUtc(path);
-        await KeepingSecondPictureAsync(path, async (target, holdsSecond) =>
+        var file = await StorageFile.GetFileFromPathAsync(path);
+        InMemoryRandomAccessStream? rewritten = null;
+        try
         {
-            var file = await StorageFile.GetFileFromPathAsync(target);
-            InMemoryRandomAccessStream? rewritten = null;
-            try
+            using (var stream = await file.OpenAsync(FileAccessMode.ReadWrite))
             {
-                using (var stream = await file.OpenAsync(FileAccessMode.ReadWrite))
+                var decoder = await BitmapDecoder.CreateAsync(stream);
+                // By what's in the file, not its name: a PNG called .tif would go to PNG's encoder.
+                if (decoder.DecoderInformation.CodecId != BitmapDecoder.TiffDecoderId)
+                    throw new InvalidDataException("The file isn't the kind its name says.");
+                async Task Apply(BitmapEncoder encoder)
                 {
-                    var decoder = await BitmapDecoder.CreateAsync(stream);
-                    // By what's in the file, not its name: a PNG called .jpg would go to PNG's encoder.
-                    if (decoder.DecoderInformation.CodecId != (IsTiff(path) ? BitmapDecoder.TiffDecoderId : BitmapDecoder.JpegDecoderId))
-                        throw new InvalidDataException("The file isn't the kind its name says.");
-                    async Task Apply(BitmapEncoder encoder)
-                    {
-                        await encoder.BitmapProperties.SetPropertiesAsync(set);
-                        await encoder.FlushAsync();
-                    }
-                    try
-                    {
-                        await Apply(await BitmapEncoder.CreateForInPlacePropertyEncodingAsync(decoder));
-                    }
-                    catch (Exception ex) when (ex is UnauthorizedAccessException or FileNotFoundException)
-                    {
-                        // Read-only, in use or gone: that's the reason, not a lack of room.
-                        throw;
-                    }
-                    catch (Exception) when (holdsSecond)
-                    {
-                        // Rewriting would lose the second picture: only a change in place will do.
-                        throw new SecondPictureException();
-                    }
-                    catch (Exception)
-                    {
-                        // No room in the file for the new fields: rewrite it, without decoding the picture, with room
-                        // left for next time (WIC's padding), so later changes are made in place.
-                        rewritten = new InMemoryRandomAccessStream();
-                        var encoder = await BitmapEncoder.CreateForTranscodingAsync(rewritten, decoder);
-                        if (!IsTiff(path)) await AddRoomAsync(encoder);
-                        await Apply(encoder);
-                    }
+                    await encoder.BitmapProperties.SetPropertiesAsync(set);
+                    await encoder.FlushAsync();
                 }
-                if (rewritten is not null) await ReplaceAsync(target, rewritten);
+                try
+                {
+                    await Apply(await BitmapEncoder.CreateForInPlacePropertyEncodingAsync(decoder));
+                }
+                catch (Exception ex) when (ex is UnauthorizedAccessException or FileNotFoundException)
+                {
+                    // Read-only, in use or gone: that's the reason, not a lack of room.
+                    throw;
+                }
+                catch (Exception)
+                {
+                    // No room in the file for the new fields: rewrite it, without decoding the picture.
+                    rewritten = new InMemoryRandomAccessStream();
+                    await Apply(await BitmapEncoder.CreateForTranscodingAsync(rewritten, decoder));
+                }
             }
-            finally
+            if (rewritten is not null)
             {
-                rewritten?.Dispose();
+                rewritten.Seek(0);
+                using var input = rewritten.AsStreamForRead();
+                using var bytes = new MemoryStream();
+                await input.CopyToAsync(bytes);
+                await ReplaceAsync(path, bytes.ToArray(), unchanged: null);
             }
-        });
+        }
+        finally
+        {
+            rewritten?.Dispose();
+        }
+        RestoreDate(path, modified);
+        await CheckStoredAsync(path, caption, altText, extended);
+    }
+
+    private static void RestoreDate(string path, DateTime modified)
+    {
         try
         {
             File.SetLastWriteTimeUtc(path, modified);
@@ -143,8 +175,12 @@ public static class XmpFields
         {
             // Saved, but OneDrive or a virus scanner had the file a moment: it keeps today's date.
         }
+    }
 
-        // Read back from the file before calling it saved.
+    /// <summary>Read back from the file before calling it saved.</summary>
+    private static async Task CheckStoredAsync(string path, string? caption, string? altText, string? extended)
+    {
+        if (caption is null && altText is null && extended is null) return;
         var stored = await ReadAsync(path);
         if ((caption is not null && stored.Caption != caption.Trim())
             || (altText is not null && stored.AltText != altText.Trim())
@@ -152,47 +188,23 @@ public static class XmpFields
             throw new NotSupportedException("The value didn't stick.");
     }
 
-    /// <summary>Asks WIC to leave room in a rewritten JPEG's EXIF and XMP, as Microsoft recommends for metadata that
-    /// changes, so the next change fits in place.</summary>
-    private static async Task AddRoomAsync(BitmapEncoder encoder)
-    {
-        var room = new BitmapPropertySet();
-        foreach (var key in new[] { "/app1/ifd/PaddingSchema:Padding", "/app1/ifd/exif/PaddingSchema:Padding", "/xmp/PaddingSchema:Padding" })
-            room[key] = new BitmapTypedValue(4096u, PropertyType.UInt32);
-        try
-        {
-            await encoder.BitmapProperties.SetPropertiesAsync(room);
-        }
-        catch (Exception)
-        {
-            // Without room the change is still made; the next one rewrites the file again.
-        }
-    }
-
     private static string TempBeside(string path) =>
         Path.Combine(Path.GetDirectoryName(path)!, $".{Path.GetFileName(path)}.{Guid.NewGuid().ToString("N")[..8]}.tmp");
 
-    /// <summary>A working copy beside the photo (<see cref="MediaTypes.WorkingCopyPrefix"/>), with the same extension so
-    /// Windows' property handler for it applies.</summary>
-    private static string WorkingCopyBeside(string path) =>
-        Path.Combine(Path.GetDirectoryName(path)!, $"{MediaTypes.WorkingCopyPrefix}{Guid.NewGuid().ToString("N")[..8]}{Path.GetExtension(path)}");
-
-    /// <summary>Saves the rewritten file beside the photo, flushed to disk, then swaps it in whole. The photo is never
-    /// emptied first, so a full disk or a crash partway leaves it as it was.</summary>
-    private static async Task ReplaceAsync(string path, IRandomAccessStream rewritten)
+    /// <summary>Saves the new file beside the photo, flushed to disk, then swaps it in whole. The photo is never emptied
+    /// first, so a full disk or a crash partway leaves it as it was.</summary>
+    private static async Task ReplaceAsync(string path, byte[] contents, Func<bool>? unchanged)
     {
         var temp = TempBeside(path);
         var keep = false;
         try
         {
-            rewritten.Seek(0);
             using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, FileOptions.WriteThrough))
             {
-                using var input = rewritten.AsStreamForRead();
-                await input.CopyToAsync(output);
+                output.Write(contents);
                 output.Flush(flushToDisk: true);
             }
-            await SwapInAsync(temp, path, unchanged: null);
+            await SwapInAsync(temp, path, unchanged);
         }
         catch (PhotoOnlyInCopyException)
         {
@@ -266,136 +278,12 @@ public static class XmpFields
             // Left for clean-up; the photo itself is in place.
         }
     }
-
-    /// <summary>
-    /// Runs <paramref name="write"/> on the file it's given, told whether the photo holds a second picture. For one that
-    /// does, the write is made to a working copy beside the photo, never the photo itself. The copy is checked
-    /// (same size; from the main picture's compressed data on, which takes in everything after it, and its Multi-Picture
-    /// index, byte for byte, in the same place; the tables before the compressed data aren't compared), flushed to disk, and only then swapped in whole. If anything rewrote or damaged it, or the photo
-    /// changed meanwhile (OneDrive bringing a newer version), the copy is dropped and the photo is just as it was. WIC's
-    /// in-place writer and Windows' property handler on a file with room keep the second picture; anything that rewrites
-    /// the file doesn't.
-    /// </summary>
-    public static async Task KeepingSecondPictureAsync(string path, Func<string, bool, Task> write)
-    {
-        PhotoChanges.Check();
-        if (!CanWrite(path) || IsTiff(path))
-        {
-            await write(path, false);
-            return;
-        }
-        var stamp = File.GetLastWriteTimeUtc(path);
-        var before = File.ReadAllBytes(path);
-        var layout = Walk(before);
-        if (!layout.Holds)
-        {
-            await write(path, false);
-            return;
-        }
-        // Not a layout this understands well enough to check afterwards: left alone.
-        if (layout.End < 0 || layout.Sos < 0) throw new SecondPictureException();
-        var copy = WorkingCopyBeside(path);
-        var keep = false;
-        try
-        {
-            using (var output = new FileStream(copy, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                output.Write(before);
-            File.SetLastWriteTimeUtc(copy, stamp);
-            // Not hidden: Windows' writers refuse a hidden file. One left by a crash is a whole, visible copy.
-            await write(copy, true);
-            if (!Kept(before, layout, File.ReadAllBytes(copy))) throw new SecondPictureException();
-            // On disk before the swap, so a power cut can't leave the photo's name on data that was never written.
-            using (var flush = new FileStream(copy, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete))
-                flush.Flush(flushToDisk: true);
-            await SwapInAsync(copy, path, () => File.GetLastWriteTimeUtc(path) == stamp && new FileInfo(path).Length == before.Length);
-        }
-        catch (PhotoOnlyInCopyException)
-        {
-            keep = true;
-            throw;
-        }
-        finally
-        {
-            if (!keep) DeleteIfThere(copy);
-        }
-    }
-
-    private readonly record struct Layout(bool Holds, int End, int Mpf, int MpfLength, int Sos);
-
-    /// <summary>Whether a changed copy kept the pictures: the same size, the Multi-Picture index (whose offsets count from
-    /// it) in the same place unchanged, and everything from the main picture's compressed data on byte for byte, which
-    /// takes in its end and whatever follows.</summary>
-    private static bool Kept(byte[] before, Layout layout, byte[] after)
-    {
-        if (after.Length != before.Length) return false;
-        var now = Walk(after);
-        if (now.End != layout.End || now.Sos != layout.Sos || now.Mpf != layout.Mpf || now.MpfLength != layout.MpfLength) return false;
-        if (layout.Mpf >= 0 && !after.AsSpan(layout.Mpf, layout.MpfLength).SequenceEqual(before.AsSpan(layout.Mpf, layout.MpfLength)))
-            return false;
-        return after.AsSpan(layout.Sos).SequenceEqual(before.AsSpan(layout.Sos));
-    }
-
-    /// <summary>
-    /// Whether a JPEG holds a second picture that rewriting it would lose: data after the image's end (a motion photo's
-    /// video, an Ultra HDR gain map), or a Multi-Picture Format index pointing at one.
-    /// </summary>
-    internal static bool HoldsSecondPicture(byte[] b) => Walk(b).Holds;
-
-    /// <summary>Walks a JPEG's segments. <c>End</c> is where the main picture ends (after its end marker), or -1. A layout
-    /// that can't be followed counts as holding a second picture, so it's never rewritten on a guess.</summary>
-    private static Layout Walk(byte[] b)
-    {
-        if (b.Length < 4 || b[0] != 0xFF || b[1] != 0xD8) return new(false, -1, -1, 0, -1);
-        var multiPicture = false;
-        int mpf = -1, mpfLength = 0, sos = -1;
-        var i = 2;
-        while (i + 1 < b.Length)
-        {
-            if (b[i] != 0xFF)
-            {
-                // Stray bytes where a marker should be: skip to the next one, as JPEG decoders do.
-                i++;
-                continue;
-            }
-            var marker = b[i + 1];
-            if (marker == 0xFF) { i++; continue; }  // fill byte
-            if (marker == 0xD9)
-            {
-                var end = i + 2;
-                if (multiPicture) return new(true, end, mpf, mpfLength, sos);
-                // Zeros after the end are padding; anything else is another picture's data.
-                for (var j = end; j < b.Length; j++)
-                    if (b[j] != 0) return new(true, end, mpf, mpfLength, sos);
-                return new(false, end, mpf, mpfLength, sos);
-            }
-            if (marker is 0x00 or 0x01 or (>= 0xD0 and <= 0xD7)) { i += 2; continue; }  // no length
-            if (i + 3 >= b.Length) return new(true, -1, mpf, mpfLength, sos);
-            var length = (b[i + 2] << 8) | b[i + 3];
-            // A length running past the file's end: not followable.
-            if (length < 2 || i + 2 + length > b.Length) return new(true, -1, mpf, mpfLength, sos);
-            // APP2 "MPF\0": the Multi-Picture Format index of the pictures after this one.
-            if (marker == 0xE2 && length >= 6 && b[i + 4] == 'M' && b[i + 5] == 'P' && b[i + 6] == 'F' && b[i + 7] == 0)
-            {
-                multiPicture = true;
-                (mpf, mpfLength) = (i, 2 + length);
-            }
-            if (marker == 0xDA && sos < 0) sos = i;
-            i += 2 + length;
-            if (marker == 0xDA)
-            {
-                // The compressed picture runs until the next marker: an FF that isn't stuffing (FF 00) or a restart.
-                while (i + 1 < b.Length && !(b[i] == 0xFF && b[i + 1] != 0x00 && b[i + 1] is not (>= 0xD0 and <= 0xD7)))
-                    i++;
-            }
-        }
-        // No end marker (cut short): nothing after it to lose, unless it says there are more pictures.
-        return new(multiPicture, -1, mpf, mpfLength, sos);
-    }
 }
 
 /// <summary>Windows stopped halfway through swapping a saved copy in: the photo is only in the copy, named here.</summary>
 public sealed class PhotoOnlyInCopyException(string path, string copy) : IOException(
     $"Windows couldn't finish saving it. The photo is safe in the same folder as {Path.GetFileName(copy)}: in File Explorer, rename that to {Path.GetFileName(path)} to get it back.");
 
-/// <summary>A photo holding a second picture (a motion photo's video, an HDR gain map) that changing it would lose.</summary>
-public sealed class SecondPictureException() : Exception("It holds a second picture, such as a motion photo's video or an HDR map, that changing it would lose.");
+/// <summary>A photo holding a second picture (an Ultra HDR gain map, an MPO's other view) whose index would no longer
+/// match if the change were made.</summary>
+public sealed class SecondPictureException() : Exception("It holds a second picture, such as an HDR map, and there's no room to make the change without breaking it.");

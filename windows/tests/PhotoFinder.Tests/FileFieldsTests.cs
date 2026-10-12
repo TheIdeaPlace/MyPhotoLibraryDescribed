@@ -156,182 +156,233 @@ public sealed class FileFieldsTests : IDisposable
         Assert.Equal(pixels, await PixelsAsync(path));
     }
 
-    [Fact]
-    public void AJpegHoldingASecondPicture_IsRecognised()
+    // MARK: JPEGs changed segment by segment (#86)
+
+    private static readonly byte[] XmpSignature = "http://ns.adobe.com/xap/1.0/\0"u8.ToArray();
+
+    /// <summary>The header segments (marker, offset, length including the marker), up to the picture's start.</summary>
+    private static List<(byte Marker, int Offset, int Length)> Segments(byte[] b)
     {
-        var plain = File.ReadAllBytes(_lib.AddJpeg("plain.jpg"));
-        Assert.False(XmpFields.HoldsSecondPicture(plain));
-        // Zeros after the end are only padding.
-        Assert.False(XmpFields.HoldsSecondPicture([.. plain, 0, 0, 0, 0]));
-        // A motion photo's video after the end.
-        Assert.True(XmpFields.HoldsSecondPicture([.. plain, .. "ftypmp42 video"u8.ToArray()]));
-        // A Multi-Picture Format index (Ultra HDR, MPO), even before the second picture is reached.
-        byte[] mpf = [0xFF, 0xE2, 0x00, 0x08, (byte)'M', (byte)'P', (byte)'F', 0x00, 0x49, 0x49];
-        Assert.True(XmpFields.HoldsSecondPicture([0xFF, 0xD8, .. mpf, .. plain[2..]]));
-        Assert.False(XmpFields.HoldsSecondPicture("not a jpeg"u8.ToArray()));
-        // Stray bytes where a marker should be are skipped, as decoders do, so a video after them is still found.
-        Assert.True(XmpFields.HoldsSecondPicture([0xFF, 0xD8, 0x12, 0x34, .. plain[2..], .. "ftypmp42"u8.ToArray()]));
-        // A segment whose length runs past the end can't be followed: treated as holding one, never rewritten on a guess.
-        Assert.True(XmpFields.HoldsSecondPicture([0xFF, 0xD8, 0xFF, 0xE1, 0x7F, 0xFF, 0x00]));
+        var list = new List<(byte, int, int)>();
+        var i = 2;
+        while (b[i] == 0xFF && b[i + 1] is not (0xDA or 0xD9))
+        {
+            var length = 2 + ((b[i + 2] << 8) | b[i + 3]);
+            list.Add((b[i + 1], i, length));
+            i += length;
+        }
+        return list;
+    }
+
+    private static bool IsXmp(byte[] b, (byte Marker, int Offset, int Length) s) =>
+        s.Marker == 0xE1 && b.AsSpan(s.Offset + 4).StartsWith(XmpSignature);
+
+    /// <summary>The file with its XMP segment taken out: everything Photo Finder must leave as it was.</summary>
+    private static byte[] WithoutXmp(byte[] b)
+    {
+        var output = new List<byte>();
+        var at = 0;
+        foreach (var s in Segments(b).Where(s => IsXmp(b, s)))
+        {
+            output.AddRange(b[at..s.Offset]);
+            at = s.Offset + s.Length;
+        }
+        output.AddRange(b[at..]);
+        return output.ToArray();
+    }
+
+    /// <summary>A segment inserted after the start-of-image marker.</summary>
+    private static byte[] WithSegment(byte[] jpeg, byte marker, byte[] payload)
+    {
+        var length = payload.Length + 2;
+        return [0xFF, 0xD8, 0xFF, marker, (byte)(length >> 8), (byte)length, .. payload, .. jpeg[2..]];
+    }
+
+    private static readonly byte[] Video = "ftypmp42 the video part"u8.ToArray();
+
+    [Fact]
+    public async Task ACaptionChangesOnlyTheXmp_KeepingExifCommentsThePictureAndAMotionPhotosVideo()
+    {
+        var path = _lib.AddJpeg("motion.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 1) });
+        var original = WithSegment(File.ReadAllBytes(path), 0xFE, "A comment from the camera"u8.ToArray());
+        File.WriteAllBytes(path, [.. original, .. Video]);
+        var before = File.ReadAllBytes(path);
+
+        Assert.Equal(1, (await MetadataWriter.SetFieldsAsync([MetadataWriter.FieldChanges.Replacing(ItemFor(path), "A dog on a beach.")])).Succeeded);
+        var after = File.ReadAllBytes(path);
+        Assert.Equal(WithoutXmp(before), WithoutXmp(after));
+        Assert.Equal(Video, after[^Video.Length..]);
+        var fields = await XmpFields.ReadAsync(path);
+        Assert.Equal(("A dog on a beach.", "A dog on a beach."), (fields.Caption, fields.AltText));
+        // Explorer's Title (empty) follows, from the XMP.
+        Assert.Equal("A dog on a beach.", await MetadataReader.ReadTitleAsync(path));
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+
+        // A second change fits in the room left the first time: the file keeps its size.
+        var size = after.Length;
+        await XmpFields.WriteAsync(path, "A dog.", null, null);
+        Assert.Equal(size, new FileInfo(path).Length);
+        Assert.Equal(WithoutXmp(before), WithoutXmp(File.ReadAllBytes(path)));
     }
 
     [Fact]
-    public async Task AMotionPhotoWithRoom_GetsItsCaptionAndRatingInPlace_KeepingItsVideo()
+    public async Task ARating_GoesInTheXmp_AndExifsOwnRatingIsPatchedInPlace_SoExplorerReadsIt()
     {
-        // Saved once by Photo Finder, which leaves room for changes, then the video added after it.
-        var path = _lib.AddJpeg("motion.jpg");
-        File.WriteAllBytes(path, WithoutRoom(File.ReadAllBytes(path)));
-        await XmpFields.WriteAsync(path, "First.", null, null);
+        var path = _lib.AddJpeg("rated.jpg", new TestLibrary.JpegOptions { Rating = 2 });
+        File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. Video]);
+        var original = File.ReadAllBytes(path);
+        var exif = Segments(original).Where(s => s.Marker == 0xE1 && !IsXmp(original, s)).Select(s => original[s.Offset..(s.Offset + s.Length)]).ToList();
+
+        Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 5)).Succeeded);
+        Assert.Equal(5, (await MetadataReader.ReadAsync(path)).Rating);
+        var after = File.ReadAllBytes(path);
+        var exifAfter = Segments(after).Where(s => s.Marker == 0xE1 && !IsXmp(after, s)).Select(s => after[s.Offset..(s.Offset + s.Length)]).ToList();
+        Assert.Equal(exif.Select(e => e.Length), exifAfter.Select(e => e.Length));
+        // Only the two rating values (two bytes each) may differ.
+        Assert.InRange(exif.Zip(exifAfter).Sum(p => p.First.Zip(p.Second).Count(b => b.First != b.Second)), 0, 4);
+        Assert.Equal(Video, after[^Video.Length..]);
+
+        Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 0)).Succeeded);
+        Assert.Equal(0, (await MetadataReader.ReadAsync(path)).Rating);
+    }
+
+    [Fact]
+    public async Task AMultiPictureFile_IsChangedOnlyWhenItKeepsItsSize()
+    {
+        // An MPF index (Ultra HDR, MPO) records the main picture's size, so the file can't grow.
+        byte[] mpf = [(byte)'M', (byte)'P', (byte)'F', 0, 0x49, 0x49, 0x2A, 0x00];
+        var path = _lib.AddJpeg("hdr.jpg");
+        File.WriteAllBytes(path, [.. WithSegment(WithoutRoom(File.ReadAllBytes(path)), 0xE2, mpf), .. "the gain map"u8.ToArray()]);
+        var before = File.ReadAllBytes(path);
+        var refused = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
+        Assert.Equal(0, refused.Succeeded);
+        Assert.Contains("second picture", refused.FailureSummary);
+        Assert.Equal(before, File.ReadAllBytes(path));
+
+        // With an XMP that has room (written before the index was added), a change that fits is made.
+        var roomy = _lib.AddJpeg("roomy.jpg");
+        File.WriteAllBytes(roomy, WithoutRoom(File.ReadAllBytes(roomy)));
+        await XmpFields.WriteAsync(roomy, "First.", null, null);
+        // The read-back's decoder keeps the file mapped until it's collected.
         GC.Collect();
         GC.WaitForPendingFinalizers();
-        var video = "ftypmp42 the video part"u8.ToArray();
-        File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. video]);
-        var size = new FileInfo(path).Length;
-        var captioned = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
-        Assert.True(captioned.Succeeded == 1, captioned.FailureSummary);
-        var rated = await MetadataWriter.SetRatingAsync([ItemFor(path)], 5);
-        Assert.True(rated.Succeeded == 1, rated.FailureSummary);
-        var after = File.ReadAllBytes(path);
-        Assert.Equal(size, after.Length);
-        Assert.Equal(video, after[^video.Length..]);
-        Assert.Equal("A dog.", (await XmpFields.ReadAsync(path)).Caption);
-        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+        File.WriteAllBytes(roomy, [.. WithSegment(File.ReadAllBytes(roomy), 0xE2, mpf), .. "the gain map"u8.ToArray()]);
+        var size = new FileInfo(roomy).Length;
+        await XmpFields.WriteAsync(roomy, "Second.", null, null);
+        Assert.Equal(size, new FileInfo(roomy).Length);
+        Assert.Equal("Second.", (await XmpFields.ReadAsync(roomy)).Caption);
+        Assert.EndsWith("the gain map", File.ReadAllText(roomy));
     }
 
     [Fact]
-    public async Task AMotionPhotoWithoutRoom_IsLeftExactlyAsItWas_WithAReason()
+    public void OtherAppsXmp_IsKept_AndOtherLanguagesToo()
     {
-        var path = _lib.AddJpeg("motion.jpg");
-        File.WriteAllBytes(path, [.. WithoutRoom(File.ReadAllBytes(path)), .. "ftypmp42 the video part"u8.ToArray()]);
-        var before = File.ReadAllBytes(path);
-        var caption = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
-        Assert.Equal(0, caption.Succeeded);
-        Assert.Contains("second picture", caption.FailureSummary);
-        Assert.Equal(before, File.ReadAllBytes(path));
-        // Windows' rating handler may rewrite it too: if it does, the photo is put back as it was.
-        var rating = await MetadataWriter.SetRatingAsync([ItemFor(path)], 5);
-        var after = File.ReadAllBytes(path);
-        Assert.Equal("ftypmp42 the video part"u8.ToArray(), after[^23..]);
-        if (rating.Succeeded == 0) Assert.Equal(before, after);
-        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
-    }
-
-    private string MotionPhoto(string name)
-    {
-        var path = _lib.AddJpeg(name);
-        File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. "ftypmp42 the video part"u8.ToArray()]);
-        return path;
+        var xmp = """
+            <?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:GCamera="http://ns.google.com/photos/1.0/camera/" xmlns:dc="http://purl.org/dc/elements/1.1/" GCamera:MotionPhoto="1" GCamera:MicroVideoOffset="23"><dc:description><rdf:Alt><rdf:li xml:lang="x-default">Old</rdf:li><rdf:li xml:lang="fr">Ancien</rdf:li></rdf:Alt></dc:description></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>
+            """;
+        var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
+        var jpeg = WithSegment(plain, 0xE1, [.. XmpSignature, .. System.Text.Encoding.UTF8.GetBytes(xmp)]);
+        var changed = JpegMetadata.Apply(jpeg, new JpegMetadata.Changes { Caption = "New", AltText = "New" });
+        var s = Segments(changed).Single(x => IsXmp(changed, x));
+        var text = System.Text.Encoding.UTF8.GetString(changed, s.Offset + 4 + XmpSignature.Length, s.Length - 4 - XmpSignature.Length);
+        Assert.Contains("GCamera:MotionPhoto=\"1\"", text);
+        Assert.Contains("GCamera:MicroVideoOffset=\"23\"", text);
+        Assert.Contains(">Ancien<", text);
+        Assert.Contains(">New<", text);
+        Assert.DoesNotContain(">Old<", text);
+        Assert.Equal(plain[2..], changed[(s.Offset + s.Length)..]);
     }
 
     [Fact]
-    public async Task AWriteThatLosesTheVideo_NeverTouchesThePhoto()
+    public void XmpItCantRead_OrExtendedXmp_IsLeftAlone()
     {
-        var path = MotionPhoto("motion.jpg");
-        var before = File.ReadAllBytes(path);
-        string? target = null;
-        await Assert.ThrowsAsync<SecondPictureException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, holds) =>
-        {
-            Assert.True(holds);
-            target = copy;
-            using (var f = new FileStream(copy, FileMode.Open))
-                f.SetLength(before.Length - 23);   // what a rewrite does: the video's gone
-            return Task.CompletedTask;
-        }));
-        Assert.NotEqual(path, target);
-        Assert.Equal(before, File.ReadAllBytes(path));
-        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+        var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
+        var broken = WithSegment(plain, 0xE1, [.. XmpSignature, .. "<x:xmpmeta not xml"u8.ToArray()]);
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(broken, new JpegMetadata.Changes { Caption = "A" }));
+        var extended = WithSegment(plain, 0xE1, [.. "http://ns.adobe.com/xmp/extension/\0"u8.ToArray(), 1, 2, 3]);
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(extended, new JpegMetadata.Changes { Caption = "A" }));
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply("not a jpeg"u8.ToArray(), new JpegMetadata.Changes { Caption = "A" }));
     }
 
     [Fact]
-    public async Task AWriteThatDamagesThePictureAndFails_NeverTouchesThePhoto()
+    public async Task AnAccentedTitleInExif_IsEmptiedWhenTheCaptionReplacesIt()
     {
-        var path = MotionPhoto("motion.jpg");
-        var before = File.ReadAllBytes(path);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
-        {
-            using (var f = new FileStream(copy, FileMode.Open))
-            {
-                f.Position = 20;
-                f.Write(new byte[200]);
-            }
-            throw new InvalidOperationException("Failed partway.");
-        }));
-        Assert.Equal(before, File.ReadAllBytes(path));
-        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+        var path = _lib.AddJpeg("cafe.jpg");
+        // Windows' own handler writes the Title into EXIF (ImageDescription as UTF-8, and XPTitle).
+        var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
+        await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>("System.Title", "Café au lait")]);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        Assert.Equal(1, (await MetadataWriter.SetCaptionAsync([ItemFor(path)], "Un café.")).Succeeded);
+        Assert.Equal("Un café.", await MetadataReader.ReadTitleAsync(path));
+        var check = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
+        var subject = await check.Properties.RetrievePropertiesAsync(["System.Subject"]);
+        Assert.NotEqual("Café au lait", subject.TryGetValue("System.Subject", out var value) ? value as string : null);
+        // Nowhere in the file any more: not in EXIF's ImageDescription, nor its XPTitle (UTF-16), nor the XMP.
+        var bytes = File.ReadAllBytes(path);
+        Assert.True(bytes.AsSpan().IndexOf("Café au lait"u8) < 0, "The old title is still in the file as UTF-8.");
+        Assert.True(bytes.AsSpan().IndexOf(System.Text.Encoding.Unicode.GetBytes("Café au lait")) < 0, "The old title is still in XPTitle.");
     }
 
     [Fact]
-    public async Task APhotoChangedWhileSaving_IsntReplacedWithTheOldCopy()
+    public async Task ARefusal_SaysWhy()
     {
-        var path = MotionPhoto("motion.jpg");
-        await Assert.ThrowsAsync<IOException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
-        {
-            // OneDrive brings a newer version meanwhile.
-            File.AppendAllText(path, " newer");
-            return Task.CompletedTask;
-        }));
-        Assert.EndsWith(" newer", File.ReadAllText(path));
-        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+        var path = _lib.AddJpeg("ext.jpg");
+        File.WriteAllBytes(path, WithSegment(WithoutRoom(File.ReadAllBytes(path)), 0xE1, [.. "http://ns.adobe.com/xmp/extension/\0"u8.ToArray(), 1, 2, 3]));
+        var result = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
+        Assert.Equal(0, result.Succeeded);
+        Assert.Equal("ext.jpg: Its metadata is spread over several parts (Extended XMP), which isn't changed. It was left as it is.", result.FailureSummary);
     }
 
     [Fact]
-    public async Task AWriteThatDamagesTheCompressedPictureQuietly_IsCaught()
+    public void XmpThatIsntUtf8_IsLeftAlone_RatherThanChanged()
     {
-        var path = MotionPhoto("motion.jpg");
-        var before = File.ReadAllBytes(path);
-        await Assert.ThrowsAsync<SecondPictureException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
-        {
-            using var f = new FileStream(copy, FileMode.Open);
-            f.Position = f.Length - 40;   // inside the picture's compressed data, same size
-            f.Write(new byte[] { 1, 2, 3, 4 });
-            return Task.CompletedTask;
-        }));
-        Assert.Equal(before, File.ReadAllBytes(path));
+        var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
+        byte[] latin = [.. "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:my=\"urn:my\" my:Name=\"Caf"u8.ToArray(), 0xE9, .. "\"/></rdf:RDF></x:xmpmeta>"u8.ToArray()];
+        var jpeg = WithSegment(plain, 0xE1, [.. XmpSignature, .. latin]);
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(jpeg, new JpegMetadata.Changes { Caption = "A" }));
+    }
+
+    [Fact]
+    public void ACaptionInOneLanguage_IsReplacedThere_AndLineBreaksStayEscaped()
+    {
+        var xmp = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:my=\"urn:my\"><my:Place>Kona&#xD;&#xA;HI</my:Place><dc:description><rdf:Alt><rdf:li xml:lang=\"en-US\">Old</rdf:li></rdf:Alt></dc:description></rdf:Description></rdf:RDF></x:xmpmeta>";
+        var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
+        var jpeg = WithSegment(plain, 0xE1, [.. XmpSignature, .. System.Text.Encoding.UTF8.GetBytes(xmp)]);
+        var changed = JpegMetadata.Apply(jpeg, new JpegMetadata.Changes { Caption = "New" });
+        var seg = Segments(changed).Single(x => IsXmp(changed, x));
+        var text = System.Text.Encoding.UTF8.GetString(changed, seg.Offset + 4 + XmpSignature.Length, seg.Length - 4 - XmpSignature.Length);
+        Assert.DoesNotContain(">Old<", text);
+        Assert.Contains("xml:lang=\"en-US\">New<", text);
+        Assert.Contains("Kona&#xD;", text);
     }
 
     [Fact]
     public async Task APhotoChangedWhileWaitingToSwapIn_IsntReplacedWithTheOldCopy()
     {
-        var path = MotionPhoto("motion.jpg");
-        Task? oneDrive = null;
-        await Assert.ThrowsAsync<IOException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
+        var path = _lib.AddJpeg("busy.jpg");
+        // OneDrive has the photo open (so the swap waits), then writes a newer version.
+        var held = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+        var oneDrive = Task.Run(async () =>
         {
-            // OneDrive has the photo open (so the swap waits), then writes a newer version.
-            var held = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
-            oneDrive = Task.Run(async () =>
-            {
-                await Task.Delay(250);
-                held.Write(" newer"u8);
-                held.Dispose();
-            });
-            return Task.CompletedTask;
-        }));
-        await oneDrive!;
+            await Task.Delay(250);
+            held.Write(" newer"u8);
+            held.Dispose();
+        });
+        await Assert.ThrowsAsync<IOException>(() => XmpFields.WriteAsync(path, "A dog.", null, null));
+        await oneDrive;
         Assert.EndsWith(" newer", File.ReadAllText(path));
         Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
     }
 
     [Fact]
-    public async Task AMotionPhotosCreationTimeAndAttributes_SurviveASave()
+    public async Task APhotosCreationTime_SurvivesASave()
     {
-        var path = _lib.AddJpeg("motion.jpg");
-        File.WriteAllBytes(path, WithoutRoom(File.ReadAllBytes(path)));
-        await XmpFields.WriteAsync(path, "First.", null, null);
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. "ftypmp42 the video part"u8.ToArray()]);
+        var path = _lib.AddJpeg("dated.jpg");
         var created = new DateTime(2019, 5, 6, 7, 8, 9, DateTimeKind.Utc);
         File.SetCreationTimeUtc(path, created);
         Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 4)).Succeeded);
         Assert.Equal(created, File.GetCreationTimeUtc(path));
-        Assert.False(File.GetAttributes(path).HasFlag(System.IO.FileAttributes.Hidden));
-    }
-
-    [Fact]
-    public void AWorkingCopy_IsntAPhoto()
-    {
-        Assert.False(Models.MediaTypes.IsMedia(@"C:\p\~$pf1a2b3c4d.jpg"));
-        Assert.True(Models.MediaTypes.IsMedia(@"C:\p.jpg"));
     }
 
     [Fact]
