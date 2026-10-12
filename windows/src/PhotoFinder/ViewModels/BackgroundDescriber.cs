@@ -39,6 +39,7 @@ public sealed class BackgroundDescriber : IDisposable
         _describe = describe;
         _check = check;
         _prepare = prepare;
+        _resume = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token);
         _model.FolderAdded += (folder, paths) => Busy(FolderAddedAsync(folder, paths));
     }
 
@@ -104,6 +105,8 @@ public sealed class BackgroundDescriber : IDisposable
         _announceLibrary = false;
         // A new run: the photo still being described belongs to the old one, so it isn't counted again.
         _run++;
+        // And no more asking Windows AI again from the start: Stop means until the next start.
+        CancelResume();
         // The status bar clears now, even while the photo already being described finishes.
         Finish();
         return left;
@@ -111,22 +114,87 @@ public sealed class BackgroundDescriber : IDisposable
 
     private async Task TurnedOnAsync()
     {
+        // Asks for itself, and says why if it can't.
+        CancelResume();
         if (await CheckWhenTurnedOnAsync()) await DescribeLibraryAsync(announce: true);
     }
 
     /// <summary>At a start: the library's photos not described yet, quietly, tracked so tests can wait for it.</summary>
-    public void Resume() => Busy(DescribeLibraryAsync());
+    public void Resume() => Busy(ResumeAsync(_resume.Token));
+
+    /// <summary>How long to wait before asking Windows AI again when it couldn't answer at a start. Tests shorten it.</summary>
+    internal TimeSpan[] ResumeRetries { get; set; } =
+        [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10)];
+
+    /// <summary>Asking again from a start; cancelled by Stop, turning it off or on, and closing.</summary>
+    private CancellationTokenSource _resume;
+
+    private void CancelResume()
+    {
+        _resume.Cancel();
+        _resume.Dispose();
+        _resume = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token);
+    }
+
+    /// <summary>Windows AI can be slow to answer just after a start or signing in (the helper's check timing out, say), so
+    /// a check that fails is tried again for a while, rather than waiting for the next start. When it can't start, the
+    /// status bar says why, without a busy indicator, until it's turned off or a folder's photos are described.</summary>
+    private async Task ResumeAsync(CancellationToken cancel)
+    {
+        string? problem = null;
+        foreach (var wait in (TimeSpan[])[TimeSpan.Zero, .. ResumeRetries])
+        {
+            if (wait > TimeSpan.Zero)
+            {
+                try { await Task.Delay(wait, cancel); }
+                catch (OperationCanceledException) { return; }
+            }
+            bool tryAgain;
+            (tryAgain, problem) = await DescribeLibraryAsync(cancel: cancel);
+            if (!tryAgain) break;
+            problem = "Background describing couldn't start: Windows AI didn't answer. Turn it off and on to try again.";
+        }
+        if (problem is null || cancel.IsCancellationRequested) return;
+        Log.Write("background", $"Not describing until it's turned off and on, or the next start: {problem}");
+        if (Enabled && !IsRunning) _model.ShowBackgroundProblem(problem);
+    }
 
     /// <summary>The library's photos not described yet, newest first, queued: when it's turned on, and when Photo Finder
     /// starts. Said aloud only when the person turned it on; at a start the status bar shows it. "Newest" is the date
-    /// taken when the details have been read, and otherwise the file's modified date.</summary>
-    public async Task DescribeLibraryAsync(bool announce = false)
+    /// taken when the details have been read, and otherwise the file's modified date. Returns whether it's worth asking
+    /// Windows AI again (it didn't answer), and why it can't describe, if it can't.</summary>
+    internal async Task<(bool TryAgain, string? Problem)> DescribeLibraryAsync(bool announce = false, CancellationToken cancel = default)
     {
-        if (!Enabled) return;
+        if (!Enabled) return (false, null);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token, cancel);
         AIReadiness readiness;
-        try { readiness = await _check(_closing.Token); }
-        catch (Exception) { return; }
-        if (readiness.State != "Ready" || !Enabled) return;
+        try
+        {
+            readiness = await _check(linked.Token);
+        }
+        catch (OperationCanceledException) when (linked.IsCancellationRequested)
+        {
+            return (false, null);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("background", "Couldn't ask Windows AI whether it's ready", ex);
+            return (true, null);
+        }
+        if (!Enabled || linked.IsCancellationRequested) return (false, null);
+        if (readiness.State != "Ready")
+        {
+            Log.Write("background", $"Not started: Windows AI is {readiness.State}. {readiness.Message}");
+            return readiness.State switch
+            {
+                // The helper not starting or not answering in time, which can pass.
+                "Error" => (true, null),
+                // The model's gone since it was turned on (a Windows update, say). Getting it can mean a download of
+                // minutes, so that waits for the person: turning it on again does it, and says so.
+                "NotReady" => (false, "Background describing is waiting for Windows' image description model. Turn it off and on to get the model ready."),
+                _ => (false, $"Background describing can't run. {readiness.Message}"),
+            };
+        }
         var kind = _model.Settings.DescriptionKind;
         var todo = _model.AllItems
             .Where(i => !i.IsVideo && !i.IsOnlineOnly && MediaTypes.KindOf(i.Path) == MediaKind.Image && Wanted(i.Path) && _store.Get(i, kind) is null
@@ -134,7 +202,11 @@ public sealed class BackgroundDescriber : IDisposable
             .OrderByDescending(i => i.Metadata?.DateTaken ?? i.Modified)
             .Select(i => i.Path)
             .ToList();
-        if (todo.Count == 0) return;
+        if (todo.Count == 0)
+        {
+            if (!announce) Log.Write("background", "Nothing in the library left to describe");
+            return (false, null);
+        }
         foreach (var path in todo)
         {
             _queue.Enqueue((path, LibraryKey, _run));
@@ -147,6 +219,7 @@ public sealed class BackgroundDescriber : IDisposable
         if (announce) Announcer.AnnounceAfter($"Describing {Plural(todo.Count)} in the background", "PhotoFinderBackground");
         ShowProgress();
         if (!IsRunning) _running = RunAsync();
+        return (false, null);
     }
 
     /// <summary>Not queued already, and not the photo being described now.</summary>
@@ -211,9 +284,17 @@ public sealed class BackgroundDescriber : IDisposable
         if (!Enabled) return;
         AIReadiness readiness;
         try { readiness = await _check(_closing.Token); }
-        catch (Exception) { return; }
+        catch (Exception ex)
+        {
+            if (!_closing.IsCancellationRequested) Log.Error("background", "Couldn't ask Windows AI whether it's ready for an added folder", ex);
+            return;
+        }
         // Turning the setting on already said why it can't work; adding a folder shouldn't promise anything.
-        if (readiness.State != "Ready") return;
+        if (readiness.State != "Ready")
+        {
+            Log.Write("background", $"An added folder wasn't queued: Windows AI is {readiness.State}. {readiness.Message}");
+            return;
+        }
 
         var kind = _model.Settings.DescriptionKind;
         var items = _model.AllItems.ToDictionary(i => i.Path, StringComparer.OrdinalIgnoreCase);
