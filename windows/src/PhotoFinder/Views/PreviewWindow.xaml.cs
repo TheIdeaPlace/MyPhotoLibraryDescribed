@@ -31,8 +31,9 @@ public partial class PreviewWindow : Window
     /// <summary>The item showing when the window closed.</summary>
     public FileRow? CurrentRow => _rows.Count == 0 ? null : _rows[_index];
 
-    /// <summary>Describe Photo (Ctrl+Shift+D) for the item shown, given whether you're still on it when it's done.</summary>
-    public Func<FileRow, Func<bool>, Task>? Describe { get; init; }
+    /// <summary>Describe Photo (Ctrl+Shift+D), or Describe Again (Ctrl+Alt+Shift+D) when the flag is set, for the item
+    /// shown, given whether you're still on it when it's done.</summary>
+    public Func<FileRow, Func<bool>, bool, Task>? Describe { get; init; }
 
     private async void Show(int index, bool announce)
     {
@@ -82,9 +83,12 @@ public partial class PreviewWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.D && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        // With Alt down, WPF may report the key as System, with the real one in SystemKey.
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key == Key.D && Keyboard.Modifiers is (ModifierKeys.Control | ModifierKeys.Shift) or (ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift))
         {
-            if (CurrentRow is { } row && Describe is not null) _ = Describe(row, () => IsActive && CurrentRow == row);
+            var again = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
+            if (CurrentRow is { } row && Describe is not null) _ = Describe(row, () => IsActive && CurrentRow == row, again);
             e.Handled = true;
             return;
         }

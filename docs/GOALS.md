@@ -10,7 +10,7 @@ Kelly's goals for the app, from 11 October 2026 (status updated later that day, 
 | 2 | Adding folders outside the default location is also nice. | Done on both: File > Add Folder to Library (Mac in #44). | #36, #47 |
 | 3 | By default, as the user moves around photos in any view, descriptions are given, using a default prompt or setting as the platform allows. | Done on both: Photo > Describe Photos Automatically, on by default (Mac in #28). | #15 |
 | 4 | Descriptions are cached. | Done on both (saved descriptions). | |
-| 5 | The user can ask for a photo to be described again, and the cache is updated. | Mac: Photo > Describe Again, Shift-Option-Command-D (#40). Windows: only through Get Info. | #29 |
+| 5 | The user can ask for a photo to be described again, and the cache is updated. | Done on both: Photo > Describe Again, Shift-Option-Command-D on the Mac (#40), Ctrl+Alt+Shift+D on Windows. | #29 |
 | — | In list view, the user chooses which columns are shown and in what order. | Done on both (View > Columns). | |
 | 6 | Gallery view uses the photo's name and nothing else by default. Customizing it is a nice-to-have. | Name only on both, with the description shown under the photo (Mac in #40). Customizing: not yet. | #38 |
 | — | Keep what the app already does well: export, search, the library concept and the rest. | Kept. | |

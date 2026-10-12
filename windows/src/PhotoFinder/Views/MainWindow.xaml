@@ -76,6 +76,7 @@
                 </v:AppMenuItem>
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.DescribePhoto" />
+                <v:AppMenuItem Command="v:AppCommands.DescribeAgain" />
                 <v:AppMenuItem x:Name="AutoDescribeItem" Command="v:AppCommands.AutoDescribe" IsCheckable="True" />
                 <v:AppMenuItem Header="Description T_ype" x:Name="KindMenu" />
                 <v:AppMenuItem x:Name="BackgroundDescribeItem" Command="v:AppCommands.DescribeInBackground" IsCheckable="True" />
@@ -211,6 +212,7 @@
                             <Separator />
                             <v:AppMenuItem Command="v:AppCommands.ToggleFavorite" />
                             <v:AppMenuItem Command="v:AppCommands.DescribePhoto" />
+                            <v:AppMenuItem Command="v:AppCommands.DescribeAgain" />
                         </ContextMenu>
                     </v:FileListView.ContextMenu>
                 </v:FileListView>

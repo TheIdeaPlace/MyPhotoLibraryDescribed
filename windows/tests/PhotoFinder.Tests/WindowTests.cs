@@ -115,6 +115,28 @@ public sealed class WindowTests : IDisposable
         }
     }
 
+    [WpfFact]
+    public void InfoWindow_DescribeButton_SaysDescribeAgain_WhenThisTypeHasASavedDescription()
+    {
+        var path = _lib.AddJpeg("a.jpg");
+        var row = RowFor(path);
+        var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
+        store.Put(row.Item!, "brief", "A short one.");
+        var window = new InfoWindow(row, new Settings { DescriptionKind = "accessible" }, () => { }, describeNow: false, store) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.Equal("_Describe Image", window.DescribeButton.Content);
+            window.KindBox.SelectedValue = "brief";
+            Assert.Equal("Describe A_gain", window.DescribeButton.Content);
+            Assert.Equal("A short one.", window.DescriptionBox.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     /// <summary>Describe Image, end to end through the window, the helper and Windows' model. Runs only where
     /// the helper is installed and the model is ready.</summary>
     [WpfFact]
@@ -434,6 +456,11 @@ public sealed class WindowTests : IDisposable
             model.Navigate(model.Sections[2].Children[0].Id);
             model.SelectedRows = [model.Rows.Single(r => r.Name == "Trip")];
             Assert.True(AppCommands.DescribePhoto.CanExecute(null, window));
+
+            // Ctrl+Alt+Shift+D is AltGr+Shift+D: while typing in the search box, the box gets it, not Describe Again.
+            Assert.True(AppCommands.DescribeAgain.CanExecute(null, window));
+            Assert.True(window.SearchBox.Focus());
+            Assert.False(AppCommands.DescribeAgain.CanExecute(null, window));
         }
         finally
         {

@@ -57,6 +57,7 @@ public partial class InfoWindow : Window
                 DescriptionBox.Visibility = Visibility.Collapsed;
                 DescriptionBox.Text = "";
             }
+            UpdateDescribeButton();
         };
         KindBox.SelectedValue = WindowsAI.Kinds.Any(k => k.Id == settings.DescriptionKind) ? settings.DescriptionKind : WindowsAI.Kinds[0].Id;
         // A description already made (automatically, or here before) shows at once.
@@ -171,6 +172,29 @@ public partial class InfoWindow : Window
 
     private async void Describe_Click(object sender, RoutedEventArgs e) => await DescribeAsync();
 
+    /// <summary>"Describe Image" when this type has no saved description, "Describe Again" when it has one, which
+    /// describing replaces, as on the Mac.</summary>
+    private bool HasSaved => KindBox.SelectedValue is string kind && _store?.Get(_item, kind) is not null;
+
+    private void UpdateDescribeButton() => DescribeButton.Content = HasSaved ? "Describe A_gain" : "_Describe Image";
+
+    /// <summary>After describing: renaming the focused button now would have screen readers say its new name over the
+    /// description, so it's renamed when focus leaves it.</summary>
+    private void UpdateDescribeButtonLater()
+    {
+        if (!DescribeButton.IsKeyboardFocused)
+        {
+            UpdateDescribeButton();
+            return;
+        }
+        void Renamed(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            DescribeButton.LostKeyboardFocus -= Renamed;
+            UpdateDescribeButton();
+        }
+        DescribeButton.LostKeyboardFocus += Renamed;
+    }
+
     private async Task DescribeAsync()
     {
         if (_readiness is not { Usable: true })
@@ -198,8 +222,9 @@ public partial class InfoWindow : Window
                     return;
                 }
             }
-            AIStatus.Text = "Describing…";
-            Announcer.Announce("Describing");
+            var again = HasSaved;
+            AIStatus.Text = again ? "Describing again…" : "Describing…";
+            Announcer.Announce(again ? "Describing again" : "Describing");
             var path = _item.Path;
             var text = await App.WindowsAI.DescribeAsync(async size =>
             {
@@ -214,6 +239,7 @@ public partial class InfoWindow : Window
             {
                 _store?.Put(_item, kind, text);
                 _row.Description = text;
+                UpdateDescribeButtonLater();
             }
             // Spoken whole, with focus left where it is, as the Mac app does: moving focus would cut the
             // speech off. The description box is next in Tab order for reading it line by line.
