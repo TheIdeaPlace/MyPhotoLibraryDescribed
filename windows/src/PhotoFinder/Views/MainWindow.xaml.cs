@@ -49,6 +49,7 @@ public partial class MainWindow : Window
         ["megapixels"] = nameof(FileRow.MegapixelsText),
         ["location"] = nameof(FileRow.LocationText),
         ["folder"] = nameof(FileRow.Folder),
+        ["description"] = nameof(FileRow.Description),
     };
 
     public MainWindow(LibraryModel model)
@@ -61,6 +62,14 @@ public partial class MainWindow : Window
         BuildSortMenu();
         BuildKindMenu();
         BuildCaptionPolicyMenu();
+        SetUpDescriptionPanel();
+        // WPF presses a button by its access key on a plain letter when focus is somewhere that doesn't take typing (the
+        // gallery photo, the sidebar, the status bar): "c" in the gallery would run Use as Caption and change the file.
+        // A letter no control used is dropped here; Alt+letter arrives differently and still works.
+        AddHandler(TextInputEvent, new TextCompositionEventHandler((_, e) =>
+        {
+            if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Alt) && e.Text.Length > 0 && !char.IsControl(e.Text[0])) e.Handled = true;
+        }));
 
         model.PropertyChanged += Model_PropertyChanged;
         model.SelectionRequested += Model_SelectionRequested;
@@ -146,13 +155,14 @@ public partial class MainWindow : Window
         Bind(AppCommands.NextPane, () => MovePane(1));
         Bind(AppCommands.PreviousPane, () => MovePane(-1));
         Bind(AppCommands.ToggleFavorite, () => { if (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite")) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
-        Bind(AppCommands.EditCaption, EditCaption, HasFiles);
+        Bind(AppCommands.EditCaption, () => EditCaption(), HasFiles);
         Bind(AppCommands.UseDescriptionAsCaption, () => _model.Fire(UseDescriptionAsCaptionAsync(_model.SelectedRows)), HasFiles);
         Bind(AppCommands.About, ShowAbout);
         Bind(AppCommands.CheckForUpdates, CheckForUpdates);
         Bind(AppCommands.CheckSystem, ShowCheckSystem);
         Bind(AppCommands.ReportBug, () => ReportBug(null));
         Bind(AppCommands.ChooseColumns, ChooseColumns);
+        Bind(AppCommands.ShowDescription, () => ShowDescriptionPanel(!_model.Settings.ShowDescriptionPanel, announce: true));
         Bind(AppCommands.AutoDescribe, () =>
         {
             if (AutoDescriber is null) return;
@@ -395,13 +405,18 @@ public partial class MainWindow : Window
 
     internal void SetDescriptionKind(string id, string title)
     {
+        // A correction being typed is saved as the type it was typed for.
+        DescriptionPanel.SaveIfChanged();
         _model.Settings.DescriptionKind = id;
         _model.SaveSettings();
+        _model.DescriptionKindChanged();
         Services.Announcer.Announce($"Photos get {title} descriptions");
     }
 
     private void ViewMenu_SubmenuOpened(object sender, RoutedEventArgs e)
     {
+        ShowDescriptionItem.IsCheckable = true;
+        ShowDescriptionItem.IsChecked = _model.Settings.ShowDescriptionPanel;
         AsListItem.IsCheckable = true;
         AsListItem.IsChecked = _model.ViewMode == ViewMode.List;
         AsGalleryItem.IsCheckable = true;
@@ -657,10 +672,68 @@ public partial class MainWindow : Window
     /// <summary>F6 and Shift+F6 move between the sidebar, the list or gallery, search and the status bar.</summary>
     private void MovePane(int direction)
     {
-        var panes = new List<Action> { FocusSidebarSelection, FocusContent, () => SearchBox.Focus(), FocusStatusBar };
-        var current = Sidebar.IsKeyboardFocusWithin ? 0 : SearchBox.IsKeyboardFocusWithin ? 2 : MainStatusBar.IsKeyboardFocusWithin ? 3 : 1;
-        panes[(current + direction + panes.Count) % panes.Count]();
+        // Sidebar, the list or gallery, the Description panel when it's showing, search, then the status bar.
+        var panes = new List<(Action Focus, Func<bool> Has)>
+        {
+            (FocusSidebarSelection, () => Sidebar.IsKeyboardFocusWithin),
+            (FocusContent, () => false),
+        };
+        if (DescriptionPanel.IsVisible && DescriptionPanel.ActualWidth > 0) panes.Add((DescriptionPanel.FocusFirst, () => DescriptionPanel.IsKeyboardFocusWithin));
+        panes.Add((() => SearchBox.Focus(), () => SearchBox.IsKeyboardFocusWithin));
+        panes.Add((FocusStatusBar, () => MainStatusBar.IsKeyboardFocusWithin));
+        var current = panes.FindIndex(p => p.Has());
+        if (current < 0) current = 1;
+        panes[(current + direction + panes.Count) % panes.Count].Focus();
     }
+
+    // MARK: Description panel (#50)
+
+    private void SetUpDescriptionPanel()
+    {
+        DescriptionPanel.Attach(_model, () => AutoDescriber);
+        DescriptionPanel.DescribeAgain = () => DescribePhoto(again: true);
+        DescriptionPanel.UseAsCaption = row => _model.Fire(UseDescriptionAsCaptionAsync([row]));
+        // The panel's photo only, and back to its Edit Caption button afterwards.
+        DescriptionPanel.EditCaption = (row, refocus) => EditCaption([row], refocus);
+        Loaded += (_, _) => { if (AutoDescriber is not null) AutoDescriber.DescribingChanged += DescriptionPanel.DescribingChanged; };
+        ShowDescriptionPanel(_model.Settings.ShowDescriptionPanel, announce: false, save: false);
+        Closing += (_, _) =>
+        {
+            // Typed in the box, then closed the window: keep it.
+            DescriptionPanel.SaveIfChanged();
+            if (DescriptionPanel.IsVisible) RememberPanelWidth();
+        };
+    }
+
+    /// <summary>View > Show Description (Ctrl+Shift+I). The gallery shows the description under the photo only while the
+    /// panel is hidden, so it isn't shown twice.</summary>
+    internal void ShowDescriptionPanel(bool show, bool announce, bool save = true)
+    {
+        if (!show && DescriptionPanel.IsVisible)
+        {
+            RememberPanelWidth();
+            // Leaving the panel while focus is in it: back to the list or gallery rather than nowhere.
+            if (DescriptionPanel.IsKeyboardFocusWithin) FocusContent();
+        }
+        _model.Settings.ShowDescriptionPanel = show;
+        if (save) _model.SaveSettings();
+        DescriptionPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        PanelSplitter.Visibility = DescriptionPanel.Visibility;
+        // A minimum while it's showing, so the splitter can't squeeze it to nothing that F6 still lands in.
+        PanelColumn.MinWidth = show ? 200 : 0;
+        PanelColumn.Width = show ? new GridLength(Math.Clamp(_model.Settings.DescriptionPanelWidth, 200, 800)) : new GridLength(0);
+        if (_galleryRow is not null) ShowGalleryDescription(_galleryRow);
+        if (announce) Services.Announcer.Announce(show ? "Description panel shown" : "Description panel hidden");
+    }
+
+    private void RememberPanelWidth()
+    {
+        if (PanelColumn.ActualWidth < 200) return;
+        _model.Settings.DescriptionPanelWidth = Math.Round(PanelColumn.ActualWidth);
+        _model.SaveSettings();
+    }
+
+    private void PanelSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e) => RememberPanelWidth();
 
     // MARK: Status bar
 
@@ -780,7 +853,8 @@ public partial class MainWindow : Window
     private void ShowGalleryDescription(FileRow row)
     {
         GalleryDescription.Text = row.Description;
-        GalleryDescription.Visibility = row.Description.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // In the Description panel instead, while that's showing.
+        GalleryDescription.Visibility = row.Description.Length > 0 && !_model.Settings.ShowDescriptionPanel ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private Task<ImageSource?> GalleryImageFor(MediaItem item)
@@ -845,7 +919,8 @@ public partial class MainWindow : Window
         if (rows.Count == 0) { System.Media.SystemSounds.Beep.Play(); return; }
         // One item previews the whole list, so arrows keep going; several preview just those.
         var set = rows.Count == 1 ? _model.Rows.Where(r => r.Item is not null).ToList() : rows;
-        var preview = new PreviewWindow(set, set.IndexOf(rows[0])) { Owner = this, Describe = AutoDescriber is null ? null : AutoDescriber.DescribeNowAsync };
+        PreviewWindow? preview = null;
+        preview = new PreviewWindow(set, set.IndexOf(rows[0])) { Owner = this, Describe = (r, stillOn, again) => DescribeRowAsync(r, stillOn, again, preview!) };
         preview.ShowDialog();
         if (preview.CurrentRow is { } last && rows.Count == 1) Model_SelectionRequested([last.Id], false);
         FocusContent();
@@ -857,29 +932,54 @@ public partial class MainWindow : Window
     private void DescribePhoto(bool again)
     {
         if (_model.FocusedRow is not { } row) return;
+        _ = DescribeRowAsync(row, () => IsActive && _model.FocusedRow == row, again, this);
+    }
+
+    /// <summary>Describe Photo or Describe Again, from here or Preview. Describe Again on a description the person
+    /// corrected asks first, as on the Mac.</summary>
+    internal Task DescribeRowAsync(FileRow row, Func<bool> stillOn, bool again, Window owner)
+    {
         if (AutoDescriber is null)
         {
             Services.Announcer.Announce("Describing photos isn't available.");
-            return;
+            return Task.CompletedTask;
         }
-        _ = AutoDescriber.DescribeNowAsync(row, () => IsActive && _model.FocusedRow == row, again);
+        // Already being described: say so before asking anything (DescribeNowAsync says "Still describing").
+        if (row.Item is { } busy && AutoDescriber.IsDescribing(busy.Path)) return AutoDescriber.DescribeNowAsync(row, stillOn, again);
+        string? replacing = null;
+        var kind = _model.Settings.DescriptionKind;
+        if (again && row.Item is { } item && _model.Descriptions?.IsEdited(item, kind) == true)
+        {
+            if (MessageBox.Show(owner, "Replace the description you edited?", "Describe Again", MessageBoxButton.YesNo,
+                    MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+                return Task.CompletedTask;
+            // The correction agreed to; one typed after this is still kept.
+            replacing = _model.Descriptions.Get(item, kind);
+        }
+        return AutoDescriber.DescribeNowAsync(row, stillOn, again, replacing);
     }
 
     private void ShowInfo()
     {
+        DescriptionPanel.SaveIfChanged();
+        var kindBefore = _model.Settings.DescriptionKind;
         var row = _model.SelectedRows.FirstOrDefault(r => r.Item is not null);
         if (row?.Item is null) { System.Media.SystemSounds.Beep.Play(); return; }
         new InfoWindow(row, _model.Settings, _model.SaveSettings, describeNow: false, _model.Descriptions,
             useAsCaption: (r, info, kind) => UseDescriptionAsCaptionAsync([r], info, kind)) { Owner = this }.ShowDialog();
+        // Get Info can change the Description Type.
+        if (_model.Settings.DescriptionKind != kindBefore) _model.DescriptionKindChanged();
         // The rows may have been rebuilt while it was open, so the element WPF would return to can be gone.
         FocusContent();
     }
 
-    private async void EditCaption()
+    /// <param name="chosen">The photos to edit (the Description panel's one); otherwise the selection.</param>
+    /// <param name="refocus">Where focus goes afterwards; otherwise the list or gallery.</param>
+    private async void EditCaption(IReadOnlyList<FileRow>? chosen = null, Action? refocus = null)
     {
-        var rows = _model.SelectedRows.Where(r => r.Item is not null).ToList();
+        var rows = (chosen ?? _model.SelectedRows).Where(r => r.Item is not null).ToList();
         if (rows.Count == 0) { System.Media.SystemSounds.Beep.Play(); return; }
-        if (!ConfirmBulkWrite("Edit Caption")) return;
+        if (!ConfirmBulkWrite("Edit Caption", rows.Select(r => r.Item!).ToList())) return;
         // A caption not read yet would show as blank, and saving would erase it. Read it first.
         var initial = "";
         if (rows.Count == 1)
@@ -898,7 +998,8 @@ public partial class MainWindow : Window
         }
         var dialog = new CaptionDialog(rows.Count, initial) { Owner = this };
         var saved = dialog.ShowDialog() == true;
-        FocusContent();
+        if (refocus is not null) refocus();
+        else FocusContent();
         if (!saved) return;
         var text = dialog.Caption.Trim();
         if (text == initial.Trim() && rows.Count == 1) return;

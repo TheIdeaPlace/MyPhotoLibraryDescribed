@@ -394,6 +394,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         if (CurrentSource is null) return;
         _allRows = RowQuery.RowsFor(CurrentSource, _items, _clock());
         _rowsByPath = _allRows.Where(r => r.Item is not null).ToDictionary(r => r.Id, StringComparer.OrdinalIgnoreCase);
+        FillDescriptions(_allRows);
         ApplyView(select, focus);
         if (ViewMode == ViewMode.Gallery) EnsureGallerySelection();
         // Read the new list's details first.
@@ -585,6 +586,60 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         Announcer.Announce(done);
     }
 
+    // MARK: The Description panel and column (#50)
+
+    /// <summary>A photo's saved description changed (made, corrected or replaced), by path.</summary>
+    public event Action<string>? DescriptionsChanged;
+
+    /// <summary>Puts each photo's saved description, of the type being used, on its row: the Description column shows it
+    /// and can be sorted by it.</summary>
+    private void FillDescriptions(IEnumerable<FileRow> rows)
+    {
+        if (Descriptions is not { } store) return;
+        var kind = _settings.DescriptionKind;
+        foreach (var row in rows)
+            if (row.Item is { IsVideo: false } item) row.Description = store.Get(item, kind) ?? "";
+    }
+
+    /// <summary>Photo > Description Type, or Get Info's, changed: rows show that type's descriptions.</summary>
+    public void DescriptionKindChanged()
+    {
+        FillDescriptions(_allRows);
+        if (_settings.SortColumn == "description") ApplyView(SelectedIds(), focus: false);
+        DescriptionsChanged?.Invoke("");
+    }
+
+    /// <summary>The Description panel's box: the person's own description or correction replaces the saved one, marked as
+    /// edited so nothing replaces it without asking. An emptied box keeps the saved description.</summary>
+    /// <param name="kind">The Description Type the text was shown as; otherwise the one in use.</param>
+    public void SaveEditedDescription(FileRow row, string text, string? kind = null)
+    {
+        if (row.Item is not { IsVideo: false } item || Descriptions is not { } store) return;
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0)
+        {
+            Announcer.Announce("A description can't be empty. The saved one is kept.");
+            return;
+        }
+        kind ??= _settings.DescriptionKind;
+        if (trimmed == store.Get(item, kind)) return;
+        store.Put(item, kind, trimmed, edited: true);
+        if (kind == _settings.DescriptionKind) row.Description = trimmed;
+        Announcer.Announce("Description saved");
+    }
+
+    /// <summary>What the Description panel says about a photo's description.</summary>
+    public string DescriptionStatus(FileRow row, bool describing)
+    {
+        if (describing) return "Describing…";
+        if (row.Item is not { } item || Descriptions?.Get(item, _settings.DescriptionKind) is null) return "Not described yet";
+        return Descriptions.IsEdited(item, _settings.DescriptionKind) ? "Edited by you" : "Saved description";
+    }
+
+    /// <summary>The photo's saved description of the type being used, or null.</summary>
+    public string? SavedDescription(FileRow row, string? kind = null) =>
+        row.Item is { IsVideo: false } item ? Descriptions?.Get(item, kind ?? _settings.DescriptionKind) : null;
+
     // MARK: Descriptions as captions (#30)
 
     /// <summary>Descriptions saved, by file, waiting to go into captions under Save Descriptions as Captions.</summary>
@@ -595,13 +650,16 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     /// <summary>For tests: finishes when no caption from a description is waiting or being written.</summary>
     internal Task CaptionsWritten { get; private set; } = Task.CompletedTask;
 
-    private void DescriptionSaved(MediaItem item, string text)
+    private void DescriptionSaved(MediaItem item, string kind, string text)
     {
-        // Online-only photos would have to be downloaded to be changed, which isn't done without asking.
-        if (_settings.CaptionPolicy == CaptionPolicy.Never || item.IsVideo || item.IsOnlineOnly) return;
         var path = item.Path;
         void Queue()
         {
+            // The row shows it (the Description column, the panel, the gallery), for the type being used.
+            if (kind == _settings.DescriptionKind && _rowsByPath.TryGetValue(path, out var row)) row.Description = text;
+            DescriptionsChanged?.Invoke(path);
+            // Online-only photos would have to be downloaded to be changed, which isn't done without asking.
+            if (_settings.CaptionPolicy == CaptionPolicy.Never || item.IsVideo || item.IsOnlineOnly) return;
             _pendingCaptions[path] = text;
             if (!_writingCaptions) CaptionsWritten = WriteCaptionsFromDescriptionsAsync();
         }

@@ -28,6 +28,9 @@ public sealed class Settings
     public bool DescribeInBackground { get; set; }
     /// <summary>Photo > Save Descriptions as Captions: also write each new description into the photo's caption.</summary>
     public CaptionPolicy CaptionPolicy { get; set; } = CaptionPolicy.Never;
+    /// <summary>View > Show Description: the Description panel beside the list or gallery. On unless hidden.</summary>
+    public bool ShowDescriptionPanel { get; set; } = true;
+    public double DescriptionPanelWidth { get; set; } = 320;
 
     /// <summary>The columns shown, in order, always including Name.</summary>
     public List<string> ShownColumnIds()

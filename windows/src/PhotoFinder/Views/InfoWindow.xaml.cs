@@ -213,8 +213,12 @@ public partial class InfoWindow : Window
             return;
         }
         if (_describing) { Announcer.Announce("Still describing"); return; }
-        _describing = true;
         var kind = KindBox.SelectedValue as string ?? WindowsAI.Kinds[0].Id;
+        // A description the person corrected is replaced only if they agree, as with Describe Again.
+        if (_store?.IsEdited(_item, kind) == true && MessageBox.Show(this, "Replace the description you edited?", "Describe Again",
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        _describing = true;
         _settings.DescriptionKind = kind;
         _saveSettings();
         AIStatus.Visibility = Visibility.Visible;

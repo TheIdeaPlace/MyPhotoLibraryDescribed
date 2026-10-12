@@ -69,7 +69,14 @@ public sealed class FileRow : INotifyPropertyChanged
     public string Description
     {
         get => _description;
-        set { _description = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Description))); }
+        set
+        {
+            if (_description == value) return;
+            _description = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Description)));
+            // The Description column can be part of what's read for the row.
+            NotifyAccessibleName();
+        }
     }
 
     /// <summary>What a screen reader hears for the row in the list.</summary>
@@ -114,6 +121,7 @@ public sealed class FileRow : INotifyPropertyChanged
         "megapixels" => MegapixelsText,
         "location" => LocationText,
         "folder" => Folder,
+        "description" => Description,
         _ => "",
     };
 
@@ -131,6 +139,7 @@ public sealed class FileRow : INotifyPropertyChanged
             "modified" => $"Modified {text}",
             "location" => $"Place taken {text}",
             "folder" => $"in {text}",
+            "description" => $"Description: {text}",
             _ => text,
         };
     }
