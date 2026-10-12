@@ -1149,6 +1149,8 @@ final class LibraryModel {
         // an empty field would remove the real caption.
         Task {
             let caption = await currentCaptions(of: [asset])[asset.localIdentifier] ?? chosen[0].caption
+            // Pressed twice: the sheet from the first press is already up, with whatever's been typed in it.
+            guard captionTarget == nil else { return }
             captionTarget = CaptionTarget(assetIDs: [chosen[0].id], initialText: caption)
         }
     }
@@ -1198,8 +1200,10 @@ final class LibraryModel {
         let chosen = rows.filter { ids.contains($0.id) && !$0.isContainer }
         guard !chosen.isEmpty else { announce("Select a photo"); return }
         let described = chosen.compactMap { row -> (FileRow, PHAsset, String)? in
-            guard let asset = assetsByID[row.id], let text = descriptions.description(for: asset) else { return nil }
-            return (row, asset, text.trimmingCharacters(in: .whitespacesAndNewlines))
+            guard let asset = assetsByID[row.id],
+                  let text = descriptions.description(for: asset)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { return nil }
+            return (row, asset, text)
         }
         guard !described.isEmpty else {
             announce(chosen.count == 1 ? "\(chosen[0].name) hasn't been described yet. Describe it first."

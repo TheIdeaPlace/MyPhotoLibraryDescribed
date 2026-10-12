@@ -383,6 +383,16 @@ private struct CaptionEditor: View {
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Save") {
+                    // Saving an empty field for several items removes all their captions: ask, since the field
+                    // starts empty and pressing Return straight away would otherwise do it silently.
+                    if target.assetIDs.count > 1, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        let alert = NSAlert()
+                        alert.messageText = "Remove the captions of \(target.assetIDs.count) items?"
+                        alert.informativeText = "The caption field is empty, so saving removes every one of their captions."
+                        alert.addButton(withTitle: "Remove Captions")
+                        alert.addButton(withTitle: "Cancel")
+                        guard alert.runModal() == .alertFirstButtonReturn else { return }
+                    }
                     model.saveCaption(text, for: target)
                     dismiss()
                 }
