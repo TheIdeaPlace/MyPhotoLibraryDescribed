@@ -27,10 +27,16 @@ public static partial class FileFields
         }
         if (fitting.Length > 0) return fitting;
 
-        // One long first sentence: as many whole words as fit with the "…".
+        // One long first sentence: as many whole words as fit with the "…", never half a character.
         var limit = AltTextLimit - 1;
+        if (char.IsHighSurrogate(text[limit - 1])) limit--;
         var cut = text[..limit];
-        if (!char.IsWhiteSpace(text[limit]) && cut.LastIndexOf(' ') is var space and > 0) cut = cut[..space];
+        if (!char.IsWhiteSpace(text[limit]))
+        {
+            var space = cut.Length - 1;
+            while (space > 0 && !char.IsWhiteSpace(cut[space])) space--;
+            if (space > 0) cut = cut[..space];
+        }
         // No comma or dash left hanging before the "…".
         cut = cut.TrimEnd(' ', '\t', '\r', '\n', ',', ';', ':', '-', '–', '—');
         return cut + "…";
@@ -43,16 +49,19 @@ public static partial class FileFields
         return AltText(text) == text ? null : text;
     }
 
-    /// <summary>The fields holding something else now (a caption, and alt text), each with what it holds, for "Replace
-    /// the caption and alt text of name?". Empty fields and fields already holding what would be written aren't counted.</summary>
-    public static List<(string Field, string Current)> Replaced(string caption, string altText, string description)
+    /// <summary>The fields holding something else now (a caption, alt text, an extended description), each with what it
+    /// holds, for "Replace the caption and alt text of name?". Empty fields and fields already holding what would be
+    /// written aren't counted.</summary>
+    public static List<(string Field, string Current)> Replaced(string caption, string altText, string extended, string description)
     {
         var fields = new List<(string, string)>();
         caption = caption.Trim();
         altText = altText.Trim();
+        extended = extended.Trim();
         description = description.Trim();
         if (caption.Length > 0 && caption != description) fields.Add(("caption", caption));
         if (altText.Length > 0 && altText != AltText(description)) fields.Add(("alt text", altText));
+        if (extended.Length > 0 && extended != (ExtendedDescription(description) ?? "")) fields.Add(("extended description", extended));
         return fields;
     }
 
@@ -60,7 +69,8 @@ public static partial class FileFields
     /// so it was the caption all along. A title someone wrote is left alone.</summary>
     public static bool TitleKeepsInStep(string title, string oldCaption) => title.Trim().Length == 0 || title.Trim() == oldCaption.Trim();
 
-    // A sentence ends at ., ! or ? (with any closing quotes or brackets) followed by space or the end.
-    [GeneratedRegex(@"[.!?]+[""'”’)\]]*(?=\s|$)")]
+    // A sentence ends at ., ! or ? (with any closing quotes or brackets) followed by space or the end, or at a full-width
+    // 。！？, which isn't followed by a space.
+    [GeneratedRegex(@"[.!?]+[""'”’)\]」』]*(?=\s|$)|[。！？]+[」』”’)）]*")]
     private static partial Regex SentenceEnd();
 }

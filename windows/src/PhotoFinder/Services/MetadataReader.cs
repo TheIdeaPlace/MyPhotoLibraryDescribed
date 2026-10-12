@@ -40,7 +40,9 @@ public static class MetadataReader
         "System.ApplicationName", "System.Comment", "System.Subject", "System.Author", "System.Video.FrameRate",
     ];
 
-    public static async Task<MediaMetadata> ReadAsync(string path)
+    /// <param name="forWriting">Throw when the caption and accessibility fields can't be read (the file locked a moment),
+    /// rather than reading them as empty: deciding what to write from that would replace what's there.</param>
+    public static async Task<MediaMetadata> ReadAsync(string path, bool forWriting = false)
     {
         var file = await StorageFile.GetFileFromPathAsync(path);
         var props = await file.Properties.RetrievePropertiesAsync(ListKeys);
@@ -51,16 +53,18 @@ public static class MetadataReader
         {
             xmp = await XmpFields.ReadAsync(path);
         }
-        catch (Exception)
+        catch (Exception) when (!forWriting)
         {
-            // Not readable as a photo: the Title is all there is.
-            return metadata with { Version = MediaMetadata.CurrentVersion };
+            // Not readable now: the Title is all there is, and it's read again next time (an older Version).
+            return metadata;
         }
-        // The standard caption field first, then the Title, where older files (and Photo Finder before #62) keep it.
+        // The standard caption field first, then the Title, where older files (and Photo Finder before #62) keep it. A
+        // caption cleared in dc:description stays cleared, even when the Title holds something else.
         return metadata with
         {
-            Caption = xmp.Caption.Length > 0 ? xmp.Caption : metadata.Caption,
+            Caption = xmp.HasCaption ? xmp.Caption : metadata.Caption,
             AltText = xmp.AltText,
+            ExtendedDescription = xmp.ExtendedDescription,
             Version = MediaMetadata.CurrentVersion,
         };
     }

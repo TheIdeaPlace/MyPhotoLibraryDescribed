@@ -35,8 +35,9 @@ public sealed class MetadataCache
         lock (_lock)
         {
             return Entries.TryGetValue(item.Path, out var e) && e.Size == item.Size && e.ModifiedTicks == Stamp(item)
-                   // Read by an older version without dc:description: read again, once.
-                   && (e.Metadata.Version >= MediaMetadata.CurrentVersion || !XmpFields.CanWrite(item.Path))
+                   // Read by an older version without dc:description: read again, once. Not online-only files, which
+                   // aren't read until they're downloaded: their older details are better than none.
+                   && (e.Metadata.Version >= MediaMetadata.CurrentVersion || !XmpFields.CanWrite(item.Path) || item.IsOnlineOnly)
                 ? e.Metadata : null;
         }
     }

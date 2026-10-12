@@ -317,7 +317,8 @@ public partial class MainWindow : Window
         _model.Settings.SaveDescriptionsInPhotos = on;
         _model.SaveSettings();
         SaveInPhotosItem.IsChecked = on;
-        Services.Announcer.Announce(on ? "New descriptions are saved in your photos" : "Descriptions aren't saved in your photos");
+        // Queued behind the menu closing and focus returning to the list, so it isn't cut off.
+        Services.Announcer.AnnounceAfter(on ? "New descriptions are saved in your photos" : "Descriptions aren't saved in your photos", "PhotoFinderSetting");
     }
 
     /// <summary>Photo > Use Description as Caption: each chosen photo's saved description becomes its caption, and for JPEG
@@ -349,13 +350,14 @@ public partial class MainWindow : Window
         // Each caption as the file has it now. One that can't be read (locked, moved) is left alone.
         var current = await Task.Run(async () =>
         {
-            var list = new List<(FileRow Row, string Text, string Caption, string AltText)>();
+            var list = new List<(FileRow Row, string Text, string Caption, string AltText, string Extended)>();
             foreach (var (row, text) in described)
             {
                 try
                 {
-                    var now = await MetadataReader.ReadAsync(row.Item!.Path);
-                    list.Add((row, text, now.Caption.Trim(), now.AltText.Trim()));
+                    // A photo whose fields can't be read now is counted as unreadable, not as having none.
+                    var now = await MetadataReader.ReadAsync(row.Item!.Path, forWriting: true);
+                    list.Add((row, text, now.Caption.Trim(), now.AltText.Trim(), now.ExtendedDescription.Trim()));
                 }
                 catch (Exception)
                 {
@@ -372,7 +374,7 @@ public partial class MainWindow : Window
         // The Mac's question: "Replace the caption and alt text of name?" with what each holds, or, for several photos,
         // "Replace what's already in N photos?".
         var replacing = current
-            .SelectMany(c => FileFields.Replaced(c.Caption, XmpFields.CanWrite(c.Row.Item!.Path) ? c.AltText : "", c.Text)
+            .SelectMany(c => (XmpFields.CanWrite(c.Row.Item!.Path) ? FileFields.Replaced(c.Caption, c.AltText, c.Extended, c.Text) : FileFields.Replaced(c.Caption, "", "", c.Text))
                 .Select(f => (c.Row.Name, f.Field, f.Current)))
             .ToList();
         if (replacing.Count > 0)
@@ -380,14 +382,15 @@ public partial class MainWindow : Window
             var names = replacing.Select(r => r.Name).Distinct().ToList();
             var question = names.Count == 1
                 ? $"Replace the {string.Join(" and ", replacing.Select(r => r.Field))} of {names[0]}?\n\n" + string.Join("\n", replacing.Select(r => $"Its {r.Field} is: {r.Current}"))
-                : $"Replace what's already in {names.Count} photos?\n\nTheir captions or alt text will be replaced with their descriptions.";
+                : $"Replace what's already in {names.Count} photos?\n\nTheir captions, alt text or extended descriptions will be replaced with their descriptions.";
             if (MessageBox.Show(owner, question, "Use Description as Caption", MessageBoxButton.YesNo, MessageBoxImage.Question,
                     MessageBoxResult.No) != MessageBoxResult.Yes)
                 return;
         }
         // Already holding it (caption, and alt text where the file has one): nothing to write, but it counts as saved.
         var toWrite = current
-            .Where(c => c.Caption != c.Text || (XmpFields.CanWrite(c.Row.Item!.Path) && c.AltText != FileFields.AltText(c.Text)))
+            .Where(c => c.Caption != c.Text || (XmpFields.CanWrite(c.Row.Item!.Path)
+                && (c.AltText != FileFields.AltText(c.Text) || c.Extended != (FileFields.ExtendedDescription(c.Text) ?? ""))))
             .Select(c => (c.Row.Item!, c.Text)).ToList();
         await _model.SaveCaptionsAsync(toWrite, current.Count - toWrite.Count, photos.Count - described.Count);
         if (unreadable > 0)

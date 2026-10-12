@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
@@ -113,7 +113,7 @@ public sealed class TestLibrary : IDisposable
         return new FormatConvertedBitmap(target, PixelFormats.Bgr24, null, 0);
     }
 
-    private static void RunSta(Action action)
+    internal static void RunSta(Action action)
     {
         Exception? error = null;
         var thread = new Thread(() =>

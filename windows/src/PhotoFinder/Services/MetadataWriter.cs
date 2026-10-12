@@ -9,20 +9,29 @@ public static class MetadataWriter
 {
     /// <summary>Sets the caption on each file. Empty removes it.</summary>
     public static Task<WriteResult> SetCaptionAsync(IReadOnlyList<MediaItem> items, string caption) =>
-        SetFieldsAsync(items.Select(i => new FieldChanges(i, caption.Trim(), null)).ToList());
+        SetFieldsAsync(items.Select(i => new FieldChanges(i, caption.Trim())).ToList());
 
     /// <summary>Sets a different caption on each file.</summary>
     public static Task<WriteResult> SetCaptionsAsync(IReadOnlyList<(MediaItem Item, string Caption)> captions) =>
-        SetFieldsAsync(captions.Select(c => new FieldChanges(c.Item, c.Caption, null)).ToList());
+        SetFieldsAsync(captions.Select(c => new FieldChanges(c.Item, c.Caption)).ToList());
 
-    /// <summary>What to change in one file: the caption, and a description for the accessibility fields (the alt text from
-    /// it, and the extended description when the alt text is shorter). Null leaves a field as it is.</summary>
-    public sealed record FieldChanges(MediaItem Item, string? Caption, string? AccessibilityDescription);
+    /// <summary>What to change in one file: the caption, IPTC Alt Text (Accessibility) and Extended Description
+    /// (Accessibility). Null leaves a field as it is; empty clears it.</summary>
+    public sealed record FieldChanges(MediaItem Item, string? Caption, string? AltText = null, string? ExtendedDescription = null)
+    {
+        /// <summary>A description in all three, replacing what's there: the alt text from it, and the extended description
+        /// when the alt text is shorter (cleared otherwise, so an older long one doesn't linger).</summary>
+        public static FieldChanges Replacing(MediaItem item, string description) =>
+            XmpFields.CanWrite(item.Path)
+                ? new(item, description, FileFields.AltText(description), FileFields.ExtendedDescription(description) ?? "")
+                : new(item, description);
+    }
 
     /// <summary>
     /// The caption goes in the standard field, XMP's dc:description, in JPEG and TIFF files, with Explorer's Title kept in
     /// step when it's empty or still holds the old caption (so a title someone wrote is left alone). Other formats keep
-    /// the caption in the Title, as before. The accessibility fields are written to JPEG and TIFF only.
+    /// the caption in the Title, as before. The accessibility fields are written to JPEG and TIFF only. A photo holding a
+    /// second picture (a motion photo, Ultra HDR) isn't changed at all, since every writer would lose that picture.
     /// </summary>
     public static async Task<WriteResult> SetFieldsAsync(IReadOnlyList<FieldChanges> changes)
     {
@@ -41,19 +50,11 @@ public static class MetadataWriter
                         var old = (await XmpFields.ReadAsync(item.Path)).Caption;
                         oldCaption = old.Length > 0 ? old : title;
                     }
-                    string? alt = null, extended = null;
-                    if (change.AccessibilityDescription is { } description)
-                    {
-                        alt = FileFields.AltText(description);
-                        // Cleared when the alt text holds it all, so an older long description doesn't linger.
-                        extended = FileFields.ExtendedDescription(description) ?? "";
-                    }
-                    await XmpFields.WriteAsync(item.Path, change.Caption, alt, extended);
+                    await XmpFields.WriteAsync(item.Path, change.Caption, change.AltText, change.ExtendedDescription);
+                    // The caption is saved; a Title that can't follow isn't a failure, since Explorer also reads the
+                    // caption from dc:description when the file has no Title of its own.
                     if (change.Caption is { } caption && FileFields.TitleKeepsInStep(title!, oldCaption!) && title!.Trim() != caption.Trim())
-                    {
-                        var result = await WriteAsync([item], "System.Title", caption.Trim().Length == 0 ? null : caption.Trim());
-                        failures.AddRange(result.Failures);
-                    }
+                        await WriteAsync([item], "System.Title", caption.Trim().Length == 0 ? null : caption.Trim());
                 }
                 else if (change.Caption is { } caption)
                 {
@@ -83,6 +84,8 @@ public static class MetadataWriter
                 // Saving properties rewrites the file, which changes its modified date. Put it back, so a
                 // photo without a Date Taken doesn't jump to today in the list.
                 // UTC, so the hour that repeats when daylight saving ends can't shift it.
+                // Windows' handler rewrites a JPEG up to the image's end, losing a motion photo's video or HDR map.
+                if (XmpFields.HoldsSecondPicture(item.Path)) throw new SecondPictureException();
                 var modified = File.GetLastWriteTimeUtc(item.Path);
                 var file = await StorageFile.GetFileFromPathAsync(item.Path);
                 await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>(key, value)]);
@@ -120,6 +123,7 @@ public static class MetadataWriter
 
     private static string Reason(MediaItem item, Exception ex) => ex switch
     {
+        SecondPictureException => $"{item.Name} holds a second picture, such as a motion photo's video or an HDR map, that changing it would lose, so it was left as it is.",
         UnauthorizedAccessException => $"{item.Name} is read-only or in use.",
         FileNotFoundException => $"{item.Name} is no longer there.",
         // E_FAIL and "not implemented" are what a format without a writable property handler gives.

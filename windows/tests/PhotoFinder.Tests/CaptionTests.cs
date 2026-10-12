@@ -79,6 +79,37 @@ public sealed class CaptionTests : IDisposable
     }
 
     [WpfFact]
+    public async Task SaveInPhotos_LeavesAnotherAppsExtendedDescription_AndMotionPhotos_Alone()
+    {
+        _lib.AddJpeg("idt.jpg");
+        await XmpFields.WriteAsync(_lib.PathOf("idt.jpg"), null, null, "A long description another app wrote.");
+        var motion = _lib.AddJpeg("motion.jpg");
+        File.AppendAllText(motion, "ftypmp42 the video part");
+        var motionBytes = File.ReadAllBytes(motion);
+        using var model = await StartAsync(saveInPhotos: true);
+        var long1 = "A golden retriever runs along a sandy beach at sunset with a red ball in its mouth. Waves break behind it and two people walk in the distance near the dunes. The sky is orange and pink, and the low sun makes long shadows across the wet sand near the water's edge.";
+        model.Descriptions!.Put(Item(model, "idt.jpg"), "accessible", long1);
+        model.Descriptions.Put(Item(model, "motion.jpg"), "accessible", "A dog.");
+        await model.CaptionsWritten;
+        var fields = await XmpFields.ReadAsync(_lib.PathOf("idt.jpg"));
+        Assert.Equal(FileFields.AltText(long1), fields.AltText);
+        Assert.Equal("A long description another app wrote.", fields.ExtendedDescription);
+        Assert.Equal(motionBytes, File.ReadAllBytes(motion));
+    }
+
+    [WpfFact]
+    public async Task SaveInPhotos_WritesAnExtendedDescription_WhenTheAltTextIsShortened()
+    {
+        using var model = await StartAsync(saveInPhotos: true);
+        var long1 = "A golden retriever runs along a sandy beach at sunset with a red ball in its mouth. Waves break behind it and two people walk in the distance near the dunes. The sky is orange and pink, and the low sun makes long shadows across the wet sand near the water's edge.";
+        model.Descriptions!.Put(Item(model, "plain.jpg"), "accessible", long1);
+        await model.CaptionsWritten;
+        var fields = await XmpFields.ReadAsync(_lib.PathOf("plain.jpg"));
+        Assert.Equal(FileFields.AltText(long1), fields.AltText);
+        Assert.Equal(long1, fields.ExtendedDescription);
+    }
+
+    [WpfFact]
     public async Task WithSaveInPhotosOff_NothingIsWritten()
     {
         using var model = await StartAsync(saveInPhotos: false);

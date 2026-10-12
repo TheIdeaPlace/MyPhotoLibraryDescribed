@@ -578,7 +578,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         if (captions.Count > 0)
         {
             // The caption, and for JPEG and TIFF files the accessibility fields too: choosing the command is the permission.
-            var changes = captions.Select(c => new MetadataWriter.FieldChanges(c.Item, c.Caption, XmpFields.CanWrite(c.Item.Path) ? c.Caption : null)).ToList();
+            var changes = captions.Select(c => MetadataWriter.FieldChanges.Replacing(c.Item, c.Caption)).ToList();
             var result = await WriteAsync("Saving caption…", captions.Select(c => c.Item).ToList(), _ => MetadataWriter.SetFieldsAsync(changes));
             saved += result.Succeeded;
         }
@@ -704,10 +704,15 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
                         {
                             try
                             {
-                                var now = await MetadataReader.ReadAsync(item.Path);
+                                // A motion photo or Ultra HDR file would lose its second picture: not touched.
+                                if (XmpFields.HoldsSecondPicture(item.Path)) continue;
+                                var now = await MetadataReader.ReadAsync(item.Path, forWriting: true);
                                 var caption = policy.ShouldWrite(text, now.Caption) ? text : null;
-                                var alt = XmpFields.CanWrite(item.Path) && policy == CaptionPolicy.WhenEmpty && now.AltText.Length == 0 ? text : null;
-                                if (caption is not null || alt is not null) chosen.Add(new(item, caption, alt));
+                                var fills = XmpFields.CanWrite(item.Path) && policy == CaptionPolicy.WhenEmpty;
+                                var alt = fills && now.AltText.Length == 0 ? FileFields.AltText(text) : null;
+                                // The extended description only alongside alt text, and only into an empty field.
+                                var extended = alt is not null && now.ExtendedDescription.Length == 0 ? FileFields.ExtendedDescription(text) : null;
+                                if (caption is not null || alt is not null) chosen.Add(new(item, caption, alt, extended));
                             }
                             catch (Exception)
                             {

@@ -348,6 +348,21 @@ public class MetadataCacheTests
     }
 
     [Fact]
+    public void DetailsFromBeforeCaptionsWereRead_AreReadAgain_ExceptForOnlineOnlyFiles()
+    {
+        using var lib = new TestLibrary();
+        var cache = new MetadataCache(lib.PathOf("cache.json"));
+        var date = new DateTime(2020, 1, 1);
+        var local = new MediaItem(@"C:\p.jpg", 100, date, date);
+        var online = new MediaItem(@"C:\p.jpg", 100, date, date) { IsOnlineOnly = true };
+        cache.Remember(local, new MediaMetadata { Rating = 5 });
+        cache.Remember(online, new MediaMetadata { Rating = 5 });
+        Assert.Null(cache.Lookup(local));
+        // Not read until it's downloaded: its older details (date taken, rating) are kept meanwhile.
+        Assert.Equal(5, cache.Lookup(online)!.Rating);
+    }
+
+    [Fact]
     public void Save_ThenLoad_RoundTrips()
     {
         using var lib = new TestLibrary();

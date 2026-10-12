@@ -13,6 +13,8 @@ public sealed record MediaMetadata
     public string Caption { get; init; } = "";
     /// <summary>IPTC's Alt Text (Accessibility), in JPEG and TIFF files that have it.</summary>
     public string AltText { get; init; } = "";
+    /// <summary>IPTC's Extended Description (Accessibility), in JPEG and TIFF files that have it.</summary>
+    public string ExtendedDescription { get; init; } = "";
     /// <summary>Which reader filled this in. Details cached by an older one are read again (they lack dc:description).</summary>
     public int Version { get; init; }
 
