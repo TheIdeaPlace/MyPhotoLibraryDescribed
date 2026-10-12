@@ -118,6 +118,28 @@ public sealed class WindowTests : IDisposable
     /// <summary>Describe Image, end to end through the window, the helper and Windows' model. Runs only where
     /// the helper is installed and the model is ready.</summary>
     [WpfFact]
+    public void InfoWindow_DescribeButton_SaysDescribeAgain_WhenThisTypeHasASavedDescription()
+    {
+        var path = _lib.AddJpeg("a.jpg");
+        var row = RowFor(path);
+        var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
+        store.Put(row.Item!, "brief", "A short one.");
+        var window = new InfoWindow(row, new Settings { DescriptionKind = "accessible" }, () => { }, describeNow: false, store) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.Equal("_Describe Image", window.DescribeButton.Content);
+            window.KindBox.SelectedValue = "brief";
+            Assert.Equal("Describe _Again", window.DescribeButton.Content);
+            Assert.Equal("A short one.", window.DescriptionBox.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [WpfFact]
     public async Task InfoWindow_DescribeNow_DescribesThePhotoAndRemembersTheKind()
     {
         Assert.SkipUnless(WindowsAI.IsInstalled, "The Photo Finder AI helper isn't installed here.");

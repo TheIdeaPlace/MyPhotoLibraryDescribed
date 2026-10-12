@@ -520,6 +520,57 @@ public sealed class AutoDescriberTests : IDisposable
     }
 
     [WpfFact]
+    public async Task DescribeAgain_ReplacesTheSavedDescription_AndSaysSo()
+    {
+        var (model, auto, store) = await StartAsync(settings: ManualOnly, describe: _ => Task.FromResult("A fresh look."));
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            var row = model.FocusedRow!;
+            store.Put(row.Item!, "accessible", "An old description.");
+
+            await auto.DescribeNowAsync(row, () => true, again: true);
+            Assert.Equal(["a.jpg:accessible"], _described);
+            Assert.Contains("Describing a.jpg again", _announced);
+            Assert.Equal("A fresh look.", _announced[^1]);
+            Assert.Equal("A fresh look.", store.Get(row.Item!, "accessible"));
+            Assert.Equal("A fresh look.", row.Description);
+
+            // Describe Photo afterwards speaks the new one without describing.
+            _announced.Clear();
+            await auto.DescribeNowAsync(row, () => true);
+            Assert.Single(_described);
+            Assert.Equal(["A fresh look."], _announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeAgain_WhileAutomaticIsDescribingThatPhoto_KeepsTheNewerDescription()
+    {
+        var release = new TaskCompletionSource();
+        var calls = 0;
+        var (model, auto, store) = await StartAsync(describe: async _ =>
+        {
+            var call = ++calls;
+            if (call == 1) await release.Task;
+            return call == 1 ? "The automatic one." : "The one asked for again.";
+        });
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            await WaitUntil(() => _described.Count == 1);
+            var again = auto.DescribeNowAsync(model.FocusedRow!, () => true, again: true);
+            release.SetResult();
+            await again;
+            await Settle(auto);
+            Assert.Equal(2, _described.Count);
+            Assert.Equal("The one asked for again.", store.Get(model.FocusedRow!.Item!, "accessible"));
+            Assert.DoesNotContain("The automatic one.", _announced);
+            Assert.Equal("The one asked for again.", _announced[^1]);
+        }
+    }
+
+    [WpfFact]
     public async Task DescribeNow_ACaughtFailureIsSpoken()
     {
         var (model, auto, _) = await StartAsync(settings: ManualOnly,

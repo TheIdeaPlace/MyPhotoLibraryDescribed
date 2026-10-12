@@ -41,6 +41,9 @@ public sealed class AutoDescriber : IDisposable
     private (string Path, Task Task)? _manualRun;
     /// <summary>The photo automatic describing is asking Windows about right now.</summary>
     private string? _describingPath;
+    /// <summary>Photos Describe Again is describing: an automatic description of one finishing meanwhile is older, so
+    /// it's neither saved nor spoken.</summary>
+    private readonly HashSet<string> _againPaths = [];
     /// <summary>The photo last moved to. The selection is re-applied whenever the list refreshes; that isn't
     /// moving, and mustn't speak the description again.</summary>
     private string? _lastPath;
@@ -118,21 +121,23 @@ public sealed class AutoDescriber : IDisposable
     /// Photo > Describe Photo (Ctrl+Shift+D): describes <paramref name="row"/> now and speaks it, whether or not
     /// automatic descriptions are on. Since you asked, it gets Windows' model ready if that's all it needs, and says
     /// why when it can't. <paramref name="stillOn"/> says whether you're still on that photo when it's done.
+    /// With <paramref name="again"/> (Photo > Describe Again, Ctrl+Alt+Shift+D), a saved description isn't used: the
+    /// photo is described afresh and the new description replaces it, for one that's poor or from another prompt.
     /// </summary>
-    public Task DescribeNowAsync(FileRow row, Func<bool> stillOn)
+    public Task DescribeNowAsync(FileRow row, Func<bool> stillOn, bool again = false)
     {
         if (row.Item is { } item && _manualRun is { } run && run.Path == item.Path && !run.Task.IsCompleted)
         {
             Announcer.Announce($"Still describing {item.Name}");
             return run.Task;
         }
-        var task = DescribeNowCoreAsync(row, stillOn);
+        var task = DescribeNowCoreAsync(row, stillOn, again);
         if (row.Item is { } described) _manualRun = (described.Path, task);
         Busy(task);
         return task;
     }
 
-    private async Task DescribeNowCoreAsync(FileRow row, Func<bool> stillOn)
+    private async Task DescribeNowCoreAsync(FileRow row, Func<bool> stillOn, bool again)
     {
         if (row.Item is not { } item)
         {
@@ -157,7 +162,7 @@ public sealed class AutoDescriber : IDisposable
             _target = null;
         }
         var kind = _model.Settings.DescriptionKind;
-        if (_store.Get(item, kind) is { } saved)
+        if (!again && _store.Get(item, kind) is { } saved)
         {
             row.Description = saved;
             Announcer.Announce(saved);
@@ -165,6 +170,7 @@ public sealed class AutoDescriber : IDisposable
             return;
         }
         _manual++;
+        var markedAgain = again && _againPaths.Add(item.Path);
         try
         {
             var readiness = await _check(_closing.Token);
@@ -179,10 +185,11 @@ public sealed class AutoDescriber : IDisposable
                 return;
             }
             _unavailable = false;
-            Announcer.Announce($"Describing {item.Name}");
-            // Automatic describing is already asking about this photo: wait for that rather than asking twice.
+            Announcer.Announce(again ? $"Describing {item.Name} again" : $"Describing {item.Name}");
+            // Automatic describing is already asking about this photo: wait for that rather than asking twice. Describe
+            // Again still asks afresh afterwards; the automatic result isn't saved (see _againPaths).
             while (_describingPath == item.Path) await Task.Delay(50, _closing.Token);
-            var text = _store.Get(item, kind) ?? await _describe(item, kind, _closing.Token);
+            var text = (again ? null : _store.Get(item, kind)) ?? await _describe(item, kind, _closing.Token);
             if (text.Length == 0)
             {
                 if (stillOn()) Announcer.Announce("Windows returned an empty description.");
@@ -205,6 +212,7 @@ public sealed class AutoDescriber : IDisposable
         finally
         {
             _manual--;
+            if (markedAgain) _againPaths.Remove(item.Path);
         }
     }
 
@@ -287,7 +295,11 @@ public sealed class AutoDescriber : IDisposable
                     {
                         _describingPath = null;
                     }
-                    if (text.Length > 0)
+                    if (_againPaths.Contains(path))
+                    {
+                        // Describe Again started on this photo meanwhile: its description is the newer one.
+                    }
+                    else if (text.Length > 0)
                     {
                         _store.Put(item, kind, text);
                         Speak(path, text);

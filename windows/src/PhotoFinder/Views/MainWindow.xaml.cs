@@ -116,7 +116,8 @@ public partial class MainWindow : Window
         Bind(AppCommands.Preview, ShowPreview, HasFiles);
         Bind(AppCommands.GetInfo, ShowInfo, HasFiles);
         // Available on any row, so the shortcut on a folder or video says why it can't, rather than nothing.
-        Bind(AppCommands.DescribePhoto, DescribePhoto, () => _model.FocusedRow is not null);
+        Bind(AppCommands.DescribePhoto, () => DescribePhoto(again: false), () => _model.FocusedRow is not null);
+        Bind(AppCommands.DescribeAgain, () => DescribePhoto(again: true), () => _model.FocusedRow is not null);
         Bind(AppCommands.ShowInExplorer, () => _model.ShowInExplorer(), () => _model.SelectedRows.Any(r => r.Item is not null || r.Container?.FolderPath is not null));
         Bind(AppCommands.Export, ExportSelection, HasFiles);
         Bind(AppCommands.AddFolder, AddFolder);
@@ -733,7 +734,7 @@ public partial class MainWindow : Window
         FocusContent();
     }
 
-    private void DescribePhoto()
+    private void DescribePhoto(bool again)
     {
         if (_model.FocusedRow is not { } row) return;
         if (AutoDescriber is null)
@@ -741,7 +742,7 @@ public partial class MainWindow : Window
             Services.Announcer.Announce("Describing photos isn't available.");
             return;
         }
-        _ = AutoDescriber.DescribeNowAsync(row, () => IsActive && _model.FocusedRow == row);
+        _ = AutoDescriber.DescribeNowAsync(row, () => IsActive && _model.FocusedRow == row, again);
     }
 
     private void ShowInfo()

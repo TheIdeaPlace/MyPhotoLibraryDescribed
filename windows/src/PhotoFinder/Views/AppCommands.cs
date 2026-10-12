@@ -43,6 +43,10 @@ public static class AppCommands
     /// <summary>Describes the photo you're on and speaks it, in the list, gallery or Preview.</summary>
     public static readonly RoutedUICommand DescribePhoto = Make("_Describe Photo", nameof(DescribePhoto),
         new KeyGesture(Key.D, ModifierKeys.Control | ModifierKeys.Shift));
+    /// <summary>Describes the photo you're on afresh, replacing its saved description, and speaks it. The Mac's is
+    /// Shift-Option-Command-D.</summary>
+    public static readonly RoutedUICommand DescribeAgain = Make("Describe A_gain", nameof(DescribeAgain),
+        new KeyGesture(Key.D, ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift));
     public static readonly RoutedUICommand DescribeInBackground = Make("Describe Added Folders in the Bac_kground", nameof(DescribeInBackground));
     public static readonly RoutedUICommand StopBackground = Make("_Stop Background Describing", nameof(StopBackground));
     public static readonly RoutedUICommand AutoDescribe = Make("Describe Photos _Automatically", nameof(AutoDescribe),
