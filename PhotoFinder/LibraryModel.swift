@@ -78,10 +78,12 @@ final class LibraryModel {
         }
     }
     var selection: Set<String> = [] {
-        didSet { if selection != oldValue { autoDescriber.moved(to: autoDescribeCandidate) } }
+        didSet { if selection != oldValue { movedSelection() } }
     }
     var searchText = "" {
-        didSet { if searchText != oldValue { announceResultsAfterPause() } }
+        didSet {
+            if searchText != oldValue { announceResultsAfterPause() }
+        }
     }
     @ObservationIgnored private var resultsAnnouncement: Task<Void, Never>?
     var searchFocusRequest = 0
@@ -253,6 +255,33 @@ final class LibraryModel {
         }
     }
 
+    /// The photo you were on and where it was in the list, to tell a step to the next or previous photo from a jump.
+    @ObservationIgnored private var lastPhoto: (id: String, index: Int)?
+
+    private func movedSelection() {
+        let id = autoDescribeCandidate
+        let list = searchText.isEmpty ? rows : visibleRows
+        let index = id.flatMap { id in list.firstIndex { $0.id == id } }
+        var step = 0
+        // Only if that photo is still where it was: after a re-sort, reload or search, a ±1 would be a coincidence.
+        // Rows updated in place (a caption written, details read) leave it where it was, so stepping carries on.
+        if let index, let last = lastPhoto, list.indices.contains(last.index), list[last.index].id == last.id {
+            step = index - last.index
+        }
+        lastPhoto = index.map { (id!, $0) }
+        autoDescriber.moved(to: id, step: step)
+    }
+
+    /// The photo to describe ahead of `id`, going `step` (1 or -1): the very next row, if it's a photo with no
+    /// description yet. Not past a video or folder: landing on that drops any work ahead anyway.
+    private func photoAhead(of id: String, step: Int) -> String? {
+        let list = searchText.isEmpty ? rows : visibleRows
+        guard let index = list.firstIndex(where: { $0.id == id }), list.indices.contains(index + step) else { return nil }
+        let row = list[index + step]
+        guard !row.isContainer, isPhoto(row.id), savedDescription(for: row.id) == nil else { return nil }
+        return row.id
+    }
+
     /// The photo automatic describing is about: the one photo selected and shown. Nothing for folders, videos,
     /// several items, or a photo hidden by Search.
     private var autoDescribeCandidate: String? {
@@ -286,6 +315,18 @@ final class LibraryModel {
             return self.autoDescribeCandidate == id
         }
         describer.speak = { [weak self] text in self?.announce(text, queued: true) }
+        describer.nextPhoto = { [weak self] id, step in self?.photoAhead(of: id, step: step) }
+        describer.describeAhead = { [weak self] id in
+            // Not downloaded from iCloud, and not saved if Describe Again took the photo meanwhile.
+            _ = await self?.describeAndRemember(id, allowNetwork: false) { [weak self] in
+                (self?.describingAgain[id] ?? 0) == 0
+            }
+        }
+        describer.mayDescribeAhead = {
+            let info = ProcessInfo.processInfo
+            return NSApplication.shared.isActive && !info.isLowPowerModeEnabled
+                && [.nominal, .fair].contains(info.thermalState)
+        }
         return describer
     }
 
@@ -1621,7 +1662,7 @@ final class LibraryModel {
             return
         }
         // Already being described automatically: its description is spoken when it's ready.
-        if autoDescriber.describingID == row.id {
+        if autoDescriber.describingID == row.id || autoDescriber.aheadID == row.id {
             announce("Describing \(row.name)")
             return
         }
@@ -1795,6 +1836,8 @@ final class LibraryModel {
             } else {
                 return nil
             }
+            // Dropped while loading (describing ahead, and you landed elsewhere): stop before the model is asked.
+            guard !Task.isCancelled else { return nil }
             guard let data else { return "This photo couldn't be loaded" }
             do {
                 guard let text = try await PhotoDescriber.describe(data), !text.isEmpty else {

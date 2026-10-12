@@ -9,6 +9,10 @@ import Foundation
 ///   only if you're still on that photo with the window in front. Then the photo you've settled on is described.
 /// - It never sets up Apple Intelligence by itself, and says nothing when it isn't available unless you turned the
 ///   feature on yourself.
+/// - Stepping through photos one at a time, it describes the next one ahead, in the direction you're going, while
+///   you listen to this one, so it's ready when you get there. Only after you've settled on a photo (arrowing
+///   quickly never looks ahead), only one photo ahead, never spoken, and given up at once if you land elsewhere:
+///   the photo you're on always comes first.
 ///
 /// Photos, Apple Intelligence and speech are passed in, so this builds with any SDK and is tested on its own.
 @MainActor
@@ -23,11 +27,18 @@ final class AutoDescriber {
     var isStillOn: (String) -> Bool = { _ in false }
     /// Speaks, queued behind other speech.
     var speak: (String) -> Void = { _ in }
+    /// The next photo after `id`, `step` rows on (1 forward, -1 back), worth describing ahead: not described yet, not
+    /// a video or folder. Nil when there's none near.
+    var nextPhoto: (_ id: String, _ step: Int) -> String? = { _, _ in nil }
+    /// Describes a photo ahead and saves the description, saying nothing; stops if its task is cancelled.
+    var describeAhead: (String) async -> Void = { _ in }
+    /// Whether it's a good time to work ahead: the window in front, not on Low Power Mode or running hot.
+    var mayDescribeAhead: () -> Bool = { true }
 
     let pause: Duration
 
     var isEnabled: Bool {
-        didSet { if !isEnabled { cancelWait(); target = nil } }
+        didSet { if !isEnabled { cancelWait(); cancelAhead(); target = nil } }
     }
 
     /// The photo being described right now, so Describe Photo doesn't describe it a second time.
@@ -41,16 +52,27 @@ final class AutoDescriber {
     private var running = false
     /// The photo whose description was last spoken, so coming back to the list doesn't say it again.
     private var spokenID: String?
+    /// How the last move went: 1 or -1 for one photo forward or back, 0 for anything else (a jump, a click).
+    private var step = 0
+    /// The photo being described ahead, and its work.
+    private(set) var aheadID: String?
+    private var aheadTask: Task<Void, Never>?
+    /// Counts the work started ahead, so a dropped task finishing late can't clear a newer one's.
+    private var aheadGeneration = 0
 
     init(isEnabled: Bool, pause: Duration = .milliseconds(700)) {
         self.isEnabled = isEnabled
         self.pause = pause
     }
 
-    /// The photo you're on changed. Nil when you're on nothing, a folder, a video or more than one item.
-    func moved(to id: String?) {
+    /// The photo you're on changed. Nil when you're on nothing, a folder, a video or more than one item. `step` is 1 or
+    /// -1 when it's the next or previous photo, 0 otherwise.
+    func moved(to id: String?, step: Int = 0) {
         guard id != lastID else { return }
         lastID = id
+        self.step = abs(step) == 1 ? step : 0
+        // Landed somewhere other than the photo being described ahead: that's dropped, so it can't hold this one up.
+        if aheadID != nil, aheadID != id { cancelAhead() }
         cancelWait()
         guard isEnabled, let id else { return }
         wait = Task { [weak self, pause] in
@@ -92,6 +114,7 @@ final class AutoDescriber {
         guard isEnabled, isStillOn(id) else { return }
         if let text = saved(id) {
             say(text, about: id)
+            lookAhead(from: id)
             return
         }
         guard unavailableReason() == nil, id != describingID else { return }
@@ -115,10 +138,49 @@ final class AutoDescriber {
                 continue
             }
             describingID = id
-            let text = await describe(id)
+            let text: String?
+            if aheadID == id, let ahead = aheadTask {
+                // Already being described ahead: wait for that rather than start again. If it was dropped meanwhile
+                // (you moved away and back) or saved nothing, it's described here after all.
+                await ahead.value
+                if let done = saved(id) {
+                    text = done
+                } else if isEnabled, isStillOn(id) {
+                    text = await describe(id)
+                } else {
+                    text = nil
+                }
+            } else {
+                text = await describe(id)
+            }
             describingID = nil
-            if let text, isEnabled, isStillOn(id) { say(text, about: id) }
+            if let text, isEnabled, isStillOn(id) {
+                say(text, about: id)
+                if target == nil { lookAhead(from: id) }
+            }
         }
+    }
+
+    /// Describes the next photo in the direction you're stepping, if you're stepping one at a time.
+    private func lookAhead(from id: String) {
+        guard isEnabled, step != 0, aheadTask == nil, mayDescribeAhead(), unavailableReason() == nil,
+              let next = nextPhoto(id, step), next != describingID, saved(next) == nil else { return }
+        aheadGeneration += 1
+        let generation = aheadGeneration
+        aheadID = next
+        aheadTask = Task { [weak self] in
+            await self?.describeAhead(next)
+            guard let self, self.aheadGeneration == generation else { return }
+            self.aheadID = nil
+            self.aheadTask = nil
+        }
+    }
+
+    private func cancelAhead() {
+        aheadGeneration += 1
+        aheadTask?.cancel()
+        aheadTask = nil
+        aheadID = nil
     }
 
     /// Describe Photo or Describe Again spoke this photo's description, so coming back to the window doesn't say it
@@ -133,10 +195,11 @@ final class AutoDescriber {
     /// For tests: waits until nothing is pausing or being described.
     func whenIdle() async {
         for _ in 0..<500 {
-            if wait == nil, runTask == nil, !running { return }
+            if wait == nil, runTask == nil, !running, aheadTask == nil { return }
             await wait?.value
             await runTask?.value
-            if wait == nil, runTask == nil, !running { return }
+            await aheadTask?.value
+            if wait == nil, runTask == nil, !running, aheadTask == nil { return }
             try? await Task.sleep(for: .milliseconds(5))
         }
     }

@@ -153,6 +153,8 @@ enum PhotoDescriber {
         // Decoded off the main actor: a 2048-pixel decode would stall the window.
         let image = await Task.detached(priority: .userInitiated) { ImageConversation.makeImage(from: data) }.value
         guard let image else { return nil }
+        // Dropped while decoding: don't ask the model, which another photo may be waiting for.
+        try Task.checkCancellation()
         let session = LanguageModelSession(instructions: ImageConversation.instructions)
         let prompt = ImageConversation.describePrompt
         let answer = try await session.respond {
