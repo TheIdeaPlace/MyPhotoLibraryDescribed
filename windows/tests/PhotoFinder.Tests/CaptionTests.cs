@@ -94,7 +94,7 @@ public sealed class CaptionTests : IDisposable
         var fields = await XmpFields.ReadAsync(_lib.PathOf("idt.jpg"));
         Assert.Equal(FileFields.AltText(long1), fields.AltText);
         Assert.Equal("A long description another app wrote.", fields.ExtendedDescription);
-        // Captioned in place, its video kept.
+        // Captioned in place, its video kept, if it had room; otherwise left exactly as it was.
         var motionAfter = File.ReadAllBytes(motion);
         Assert.Equal(motionSize, motionAfter.Length);
         Assert.Equal("ftypmp42 the video part"u8.ToArray(), motionAfter[^23..]);

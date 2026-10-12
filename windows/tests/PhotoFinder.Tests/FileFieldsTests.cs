@@ -216,6 +216,68 @@ public sealed class FileFieldsTests : IDisposable
         Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
     }
 
+    private string MotionPhoto(string name)
+    {
+        var path = _lib.AddJpeg(name);
+        File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. "ftypmp42 the video part"u8.ToArray()]);
+        return path;
+    }
+
+    [Fact]
+    public async Task AWriteThatLosesTheVideo_NeverTouchesThePhoto()
+    {
+        var path = MotionPhoto("motion.jpg");
+        var before = File.ReadAllBytes(path);
+        string? target = null;
+        await Assert.ThrowsAsync<SecondPictureException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, holds) =>
+        {
+            Assert.True(holds);
+            target = copy;
+            File.WriteAllBytes(copy, before[..^23]);   // what a rewrite does: the video's gone
+            return Task.CompletedTask;
+        }));
+        Assert.NotEqual(path, target);
+        Assert.Equal(before, File.ReadAllBytes(path));
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public async Task AWriteThatDamagesThePictureAndFails_NeverTouchesThePhoto()
+    {
+        var path = MotionPhoto("motion.jpg");
+        var before = File.ReadAllBytes(path);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
+        {
+            var damaged = File.ReadAllBytes(copy);
+            Array.Clear(damaged, 20, 200);
+            File.WriteAllBytes(copy, damaged);
+            throw new InvalidOperationException("Failed partway.");
+        }));
+        Assert.Equal(before, File.ReadAllBytes(path));
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public async Task APhotoChangedWhileSaving_IsntReplacedWithTheOldCopy()
+    {
+        var path = MotionPhoto("motion.jpg");
+        await Assert.ThrowsAsync<IOException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
+        {
+            // OneDrive brings a newer version meanwhile.
+            File.AppendAllText(path, " newer");
+            return Task.CompletedTask;
+        }));
+        Assert.EndsWith(" newer", File.ReadAllText(path));
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public void AWorkingCopy_IsntAPhoto()
+    {
+        Assert.False(Models.MediaTypes.IsMedia(@"C:\p\~$pf1a2b3c4d.jpg"));
+        Assert.True(Models.MediaTypes.IsMedia(@"C:\p.jpg"));
+    }
+
     [Fact]
     public async Task APngCalledJpg_IsLeftAlone_Saying_Why()
     {

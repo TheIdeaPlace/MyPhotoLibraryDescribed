@@ -29,6 +29,8 @@ public static class MediaTypes
 
     public static bool IsMedia(string path)
     {
+        // Photo Finder's own working copy of a photo being saved (XmpFields), never a photo of yours.
+        if (Path.GetFileName(path).StartsWith(Services.XmpFields.WorkingCopyPrefix, StringComparison.Ordinal)) return false;
         var ext = Path.GetExtension(path);
         return ImageExtensions.Contains(ext) || VideoExtensions.Contains(ext) || RawExtensions.Contains(ext);
     }

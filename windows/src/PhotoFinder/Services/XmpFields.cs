@@ -15,7 +15,7 @@ namespace PhotoFinder.Services;
 ///   decoding the picture, so the pixels are the same, though a JPEG's compressed data and thumbnail may be re-packed.
 ///   The rewritten file is saved beside the photo and swapped in whole, so a failure partway leaves the photo as it was.
 /// - Rewriting drops anything after a JPEG's end, where motion photos keep their video and Ultra HDR its gain map. Those
-///   files are only changed in place, and checked afterwards (<see cref="KeepingSecondPictureAsync"/>).
+///   files are changed in a working copy, in place only, checked, and then swapped in (<see cref="KeepingSecondPictureAsync"/>).
 /// </summary>
 public static class XmpFields
 {
@@ -85,9 +85,9 @@ public static class XmpFields
 
         // UTC, so the hour that repeats when daylight saving ends can't shift it.
         var modified = File.GetLastWriteTimeUtc(path);
-        await KeepingSecondPictureAsync(path, async holdsSecond =>
+        await KeepingSecondPictureAsync(path, async (target, holdsSecond) =>
         {
-            var file = await StorageFile.GetFileFromPathAsync(path);
+            var file = await StorageFile.GetFileFromPathAsync(target);
             InMemoryRandomAccessStream? rewritten = null;
             try
             {
@@ -106,7 +106,7 @@ public static class XmpFields
                     {
                         await Apply(await BitmapEncoder.CreateForInPlacePropertyEncodingAsync(decoder));
                     }
-                    catch (Exception) when (holdsSecond)
+                    catch (Exception ex) when (holdsSecond && ex is not (UnauthorizedAccessException or FileNotFoundException))
                     {
                         // Rewriting would lose the second picture: only a change in place will do.
                         throw new SecondPictureException();
@@ -121,7 +121,7 @@ public static class XmpFields
                         await Apply(encoder);
                     }
                 }
-                if (rewritten is not null) await ReplaceAsync(path, rewritten);
+                if (rewritten is not null) await ReplaceAsync(target, rewritten);
             }
             finally
             {
@@ -165,6 +165,14 @@ public static class XmpFields
     private static string TempBeside(string path) =>
         Path.Combine(Path.GetDirectoryName(path)!, $".{Path.GetFileName(path)}.{Guid.NewGuid().ToString("N")[..8]}.tmp");
 
+    /// <summary>The start of a working copy's name, the "~$" Office uses for its own working files. Photo Finder doesn't
+    /// list them, and the copy lasts only while one photo is saved.</summary>
+    public const string WorkingCopyPrefix = "~$pf";
+
+    /// <summary>A working copy beside the photo, with the same extension so Windows' property handler for it applies.</summary>
+    private static string WorkingCopyBeside(string path) =>
+        Path.Combine(Path.GetDirectoryName(path)!, $"{WorkingCopyPrefix}{Guid.NewGuid().ToString("N")[..8]}{Path.GetExtension(path)}");
+
     /// <summary>Saves the rewritten file beside the photo, flushed to disk, then swaps it in whole. The photo is never
     /// emptied first, so a full disk or a crash partway leaves it as it was.</summary>
     private static async Task ReplaceAsync(string path, IRandomAccessStream rewritten)
@@ -187,9 +195,13 @@ public static class XmpFields
         }
     }
 
+    // ReplaceFile's half-done failures: the old file was moved aside, the new one not renamed into place.
+    private const int UnableToMoveReplacement = unchecked((int)0x80070498);
+    private const int UnableToMoveReplacement2 = unchecked((int)0x80070499);
+
     /// <summary>Puts <paramref name="temp"/> in place of <paramref name="path"/>. Windows can fail after taking the old
-    /// file away but before renaming the new one (ERROR_UNABLE_TO_MOVE_REPLACEMENT): then the new one is put there by hand,
-    /// so the photo is never left missing.</summary>
+    /// file away but before renaming the new one: then the new one is put there by hand, so the photo is never left
+    /// missing.</summary>
     private static async Task SwapInAsync(string temp, string path)
     {
         for (var attempt = 1; ; attempt++)
@@ -199,7 +211,7 @@ public static class XmpFields
                 File.Replace(temp, path, destinationBackupFileName: null);
                 return;
             }
-            catch (Exception) when (!File.Exists(path) && File.Exists(temp))
+            catch (IOException ex) when (ex.HResult is UnableToMoveReplacement or UnableToMoveReplacement2 && !File.Exists(path) && File.Exists(temp))
             {
                 File.Move(temp, path);
                 return;
@@ -214,101 +226,87 @@ public static class XmpFields
         }
     }
 
-    /// <summary>Removes a temporary copy, unless it's the only copy of the photo left.</summary>
+    /// <summary>Removes a temporary file once the photo is in place. With the photo gone (moved or deleted meanwhile),
+    /// the temporary file is left rather than risk deleting the last copy.</summary>
     private static void DeleteIfThere(string temp, string path)
     {
         try
         {
-            if (!File.Exists(temp)) return;
-            if (File.Exists(path)) File.Delete(temp);
-            else File.Move(temp, path);
+            if (File.Exists(temp) && File.Exists(path)) File.Delete(temp);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Left for Windows' temp clean-up; the photo itself is in place.
+            // Left for clean-up; the photo itself is in place.
         }
     }
 
     /// <summary>
-    /// Runs <paramref name="write"/>, which is told whether the file holds a second picture. For one that does, the file
-    /// is copied first, and if the write changed its size or anything after the main picture, the copy is put back and
-    /// <see cref="SecondPictureException"/> thrown: WIC's in-place writer and Windows' property handler keep those, but
-    /// anything that rewrites the file doesn't.
+    /// Runs <paramref name="write"/> on the file it's given, told whether the photo holds a second picture. For one that
+    /// does, the write is made to a working copy beside the photo, never the photo itself; the copy is checked (same size,
+    /// same layout, the same from the main picture's end on, its Multi-Picture index unmoved) and only then swapped in
+    /// whole. If anything rewrote it, or the photo changed meanwhile (OneDrive bringing a newer version), the copy is
+    /// dropped and the photo is just as it was. WIC's in-place writer and Windows' property handler on a file with room
+    /// keep the second picture; anything that rewrites the file doesn't.
     /// </summary>
-    public static async Task KeepingSecondPictureAsync(string path, Func<bool, Task> write)
+    public static async Task KeepingSecondPictureAsync(string path, Func<string, bool, Task> write)
     {
         if (!CanWrite(path) || IsTiff(path))
         {
-            await write(false);
+            await write(path, false);
             return;
         }
+        var stamp = File.GetLastWriteTimeUtc(path);
         var before = File.ReadAllBytes(path);
-        var (holds, end) = Walk(before);
-        if (!holds)
+        var layout = Walk(before);
+        if (!layout.Holds)
         {
-            await write(false);
+            await write(path, false);
             return;
         }
         // Not a layout this understands well enough to check afterwards: left alone.
-        if (end < 0) throw new SecondPictureException();
-        var backup = TempBeside(path);
-        File.Copy(path, backup);
+        if (layout.End < 0) throw new SecondPictureException();
+        var copy = WorkingCopyBeside(path);
         try
         {
-            Exception? failure = null;
-            try
-            {
-                await write(true);
-            }
-            catch (Exception ex)
-            {
-                failure = ex;
-            }
-            if (!Kept(before, end, path))
-            {
-                await SwapInAsync(backup, path);
-                throw new SecondPictureException();
-            }
-            if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(failure);
+            File.WriteAllBytes(copy, before);
+            File.SetLastWriteTimeUtc(copy, stamp);
+            await write(copy, true);
+            if (!Kept(before, layout, File.ReadAllBytes(copy))) throw new SecondPictureException();
+            if (File.GetLastWriteTimeUtc(path) != stamp || new FileInfo(path).Length != before.Length)
+                throw new IOException("It changed while it was being saved (OneDrive bringing a newer version, say), so it was left as it is. Try again.");
+            await SwapInAsync(copy, path);
         }
         finally
         {
-            DeleteIfThere(backup, path);
+            DeleteIfThere(copy, path);
         }
     }
 
-    /// <summary>Whether the file is the same size and the same from the main picture's end on.</summary>
-    private static bool Kept(byte[] before, int end, string path)
+    /// <summary>Whether a changed copy kept the second picture: the same size, the main picture ending in the same place,
+    /// the Multi-Picture index (whose offsets count from it) in the same place unchanged, and the same bytes after.</summary>
+    private static bool Kept(byte[] before, (bool Holds, int End, int Mpf, int MpfLength) layout, byte[] after)
     {
-        try
-        {
-            var after = File.ReadAllBytes(path);
-            return after.Length == before.Length && after.AsSpan(end).SequenceEqual(before.AsSpan(end));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
+        if (after.Length != before.Length) return false;
+        var now = Walk(after);
+        if (now.End != layout.End || now.Mpf != layout.Mpf || now.MpfLength != layout.MpfLength) return false;
+        if (layout.Mpf >= 0 && !after.AsSpan(layout.Mpf, layout.MpfLength).SequenceEqual(before.AsSpan(layout.Mpf, layout.MpfLength)))
             return false;
-        }
+        return after.AsSpan(layout.End).SequenceEqual(before.AsSpan(layout.End));
     }
 
     /// <summary>
     /// Whether a JPEG holds a second picture that rewriting it would lose: data after the image's end (a motion photo's
-    /// video, an Ultra HDR gain map), or a Multi-Picture Format index pointing at one. False for other formats.
+    /// video, an Ultra HDR gain map), or a Multi-Picture Format index pointing at one.
     /// </summary>
-    public static bool HoldsSecondPicture(string path)
-    {
-        if (!CanWrite(path) || IsTiff(path)) return false;
-        return HoldsSecondPicture(File.ReadAllBytes(path));
-    }
-
     internal static bool HoldsSecondPicture(byte[] b) => Walk(b).Holds;
 
     /// <summary>Walks a JPEG's segments. <c>End</c> is where the main picture ends (after its end marker), or -1. A layout
     /// that can't be followed counts as holding a second picture, so it's never rewritten on a guess.</summary>
-    private static (bool Holds, int End) Walk(byte[] b)
+    private static (bool Holds, int End, int Mpf, int MpfLength) Walk(byte[] b)
     {
-        if (b.Length < 4 || b[0] != 0xFF || b[1] != 0xD8) return (false, -1);
+        if (b.Length < 4 || b[0] != 0xFF || b[1] != 0xD8) return (false, -1, -1, 0);
         var multiPicture = false;
+        int mpf = -1, mpfLength = 0;
         var i = 2;
         while (i + 1 < b.Length)
         {
@@ -323,20 +321,23 @@ public static class XmpFields
             if (marker == 0xD9)
             {
                 var end = i + 2;
-                if (multiPicture) return (true, end);
+                if (multiPicture) return (true, end, mpf, mpfLength);
                 // Zeros after the end are padding; anything else is another picture's data.
                 for (var j = end; j < b.Length; j++)
-                    if (b[j] != 0) return (true, end);
-                return (false, end);
+                    if (b[j] != 0) return (true, end, mpf, mpfLength);
+                return (false, end, mpf, mpfLength);
             }
             if (marker is 0x00 or 0x01 or (>= 0xD0 and <= 0xD7)) { i += 2; continue; }  // no length
-            if (i + 3 >= b.Length) return (true, -1);
+            if (i + 3 >= b.Length) return (true, -1, mpf, mpfLength);
             var length = (b[i + 2] << 8) | b[i + 3];
             // A length running past the file's end: not followable.
-            if (length < 2 || i + 2 + length > b.Length) return (true, -1);
+            if (length < 2 || i + 2 + length > b.Length) return (true, -1, mpf, mpfLength);
             // APP2 "MPF\0": the Multi-Picture Format index of the pictures after this one.
             if (marker == 0xE2 && length >= 6 && b[i + 4] == 'M' && b[i + 5] == 'P' && b[i + 6] == 'F' && b[i + 7] == 0)
+            {
                 multiPicture = true;
+                (mpf, mpfLength) = (i, 2 + length);
+            }
             i += 2 + length;
             if (marker == 0xDA)
             {
@@ -346,7 +347,7 @@ public static class XmpFields
             }
         }
         // No end marker (cut short): nothing after it to lose, unless it says there are more pictures.
-        return (multiPicture, -1);
+        return (multiPicture, -1, mpf, mpfLength);
     }
 }
 

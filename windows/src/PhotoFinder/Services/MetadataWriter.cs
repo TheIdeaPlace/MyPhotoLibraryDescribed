@@ -86,10 +86,12 @@ public static class MetadataWriter
                 // photo without a Date Taken doesn't jump to today in the list.
                 // UTC, so the hour that repeats when daylight saving ends can't shift it.
                 var modified = File.GetLastWriteTimeUtc(item.Path);
-                var file = await StorageFile.GetFileFromPathAsync(item.Path);
-                // A motion photo's video or HDR map is checked for afterwards, and the photo put back if it's gone.
-                await XmpFields.KeepingSecondPictureAsync(item.Path,
-                    async _ => await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>(key, value)]));
+                // A motion photo is changed in a working copy, checked to still hold its video or HDR map, then swapped in.
+                await XmpFields.KeepingSecondPictureAsync(item.Path, async (target, _) =>
+                {
+                    var file = await StorageFile.GetFileFromPathAsync(target);
+                    await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>(key, value)]);
+                });
                 try
                 {
                     File.SetLastWriteTimeUtc(item.Path, modified);
