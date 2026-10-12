@@ -70,16 +70,15 @@ enum FileMetadataWriteError: LocalizedError, Equatable {
 enum FileMetadataWriter {
     /// The formats ImageIO changes metadata in without touching the picture. GIF is refused by ImageIO ("not supported
     /// for lossless metadata modification"), WebP can't be written at all, and RAW files belong to the camera maker's
-    /// format (#31's research).
-    // Not PNG for now (#61): ImageIO's copy of a PNG damages its EXIF UserComment (every screenshot has one), and
-    // can't replace the EXIF description screenshots carry. PNGs come back with a writer that edits their chunks.
+    /// format (#31's research). PNG files are written by PNGMetadata, which edits their chunks: ImageIO's copy of a
+    /// PNG damages its EXIF UserComment (every screenshot has one) and can't replace the EXIF description (#61).
     static let writableTypes: Set<String> = [
-        UTType.jpeg.identifier, UTType.tiff.identifier, UTType.heic.identifier,
+        UTType.jpeg.identifier, UTType.png.identifier, UTType.tiff.identifier, UTType.heic.identifier,
     ]
     /// The same by file name, for deciding before a file is read.
-    static let writableExtensions: Set<String> = ["jpg", "jpeg", "jpe", "jfif", "tif", "tiff", "heic"]
+    static let writableExtensions: Set<String> = ["jpg", "jpeg", "jpe", "jfif", "png", "tif", "tiff", "heic"]
 
-    private static let iptcNamespace = "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/" as CFString
+    static let iptcNamespace = "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/" as CFString
     static let altTextPath = "Iptc4xmpCore:AltTextAccessibility"
     static let extendedDescriptionPath = "Iptc4xmpCore:ExtDescrAccessibility"
     static let captionPath = "dc:description"
@@ -121,10 +120,14 @@ enum FileMetadataWriter {
             expected[captionPath] = caption.isEmpty ? nil : caption
             // dc:title is what Windows' File Explorer shows as the title, and what Photo Finder on Windows used as the
             // caption. It's kept in step when it's empty or still the caption being replaced, never over a real title.
+            // A PNG's own XMP counts too: ImageIO reads a screenshot's EXIF description as its caption ahead of it.
             let current = CGImageSourceCopyMetadataAtIndex(source, 0, nil)
-            let title = current.flatMap { FileMetadata.xmpString($0, titlePath) }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let oldCaption = current.flatMap { FileMetadata.xmpString($0, captionPath) }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if CaptionTitle.keepsInStep(title: title, oldCaption: oldCaption) {
+            let own = type as String == UTType.png.identifier ? (try? Data(contentsOf: url)).flatMap(PNGMetadata.xmp(of:)) : nil
+            func text(_ metadata: CGImageMetadata?, _ path: String) -> String {
+                metadata.flatMap { FileMetadata.xmpString($0, path) }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            }
+            let title = text(own ?? current, titlePath)
+            if [current, own].contains(where: { CaptionTitle.keepsInStep(title: title, oldCaption: text($0, captionPath)) }) {
                 expected[titlePath] = caption.isEmpty ? nil : caption
             }
         }
@@ -145,14 +148,20 @@ enum FileMetadataWriter {
         let temp = url.deletingLastPathComponent()
             .appendingPathComponent(".\(url.deletingPathExtension().lastPathComponent).\(UUID().uuidString).\(url.pathExtension)")
         defer { try? FileManager.default.removeItem(at: temp) }
-        // Merged into what's there first, which leaves everything else exactly as it was. A HEIC file whose caption is
-        // only in its EXIF (TIFF) description keeps reading the old one that way, so then the file's whole XMP is
-        // written out with the change made in it.
-        try copy(source, type: type, to: temp, merging: true, expected)
-        if !readsBack(temp, expected) {
-            try? FileManager.default.removeItem(at: temp)
-            try copy(source, type: type, to: temp, merging: false, expected)
+        if type as String == UTType.png.identifier {
+            // A PNG's chunks are edited directly (#61), every byte but its XMP and EXIF description copied as it was.
+            try writePNG(from: url, to: temp, expected)
             guard readsBack(temp, expected) else { throw FileMetadataWriteError.notWritten("The new metadata didn't read back.") }
+        } else {
+            // Merged into what's there first, which leaves everything else exactly as it was. A HEIC file whose caption
+            // is only in its EXIF (TIFF) description keeps reading the old one that way, so then the file's whole XMP
+            // is written out with the change made in it.
+            try copy(source, type: type, to: temp, merging: true, expected)
+            if !readsBack(temp, expected) {
+                try? FileManager.default.removeItem(at: temp)
+                try copy(source, type: type, to: temp, merging: false, expected)
+                guard readsBack(temp, expected) else { throw FileMetadataWriteError.notWritten("The new metadata didn't read back.") }
+            }
         }
         // The same pictures, the same size, before the original is touched: a guard against ImageIO ever dropping one.
         guard samePictures(source, temp) else { throw FileMetadataWriteError.notWritten("The pictures in the new file didn't match.") }
@@ -179,6 +188,23 @@ enum FileMetadataWriter {
         }
         guard let a = size(source), let b = size(copy) else { return false }
         return a == b
+    }
+
+    /// A PNG with the fields in `values` set (or removed, for nil). A changed caption also takes out the EXIF
+    /// description, which ImageIO would otherwise read ahead of it.
+    private static func writePNG(from url: URL, to temp: URL, _ values: [String: String?]) throws {
+        guard let data = try? Data(contentsOf: url) else { throw FileMetadataWriteError.unreadable }
+        let rewritten: Data
+        do {
+            rewritten = try PNGMetadata.rewrite(data, setting: values, removingEXIFDescription: values.keys.contains(captionPath))
+        } catch PNGMetadata.Failure.malformed(let reason) {
+            throw FileMetadataWriteError.notWritten(reason)
+        }
+        do {
+            try rewritten.write(to: temp, options: .withoutOverwriting)
+        } catch {
+            throw FileMetadataWriteError.notWritten("A new copy couldn't be made in its folder.")
+        }
     }
 
     /// Copies the picture as it is, its bytes untouched, with the fields in `values` set (or removed, for nil).
