@@ -95,6 +95,9 @@ final class LibraryModel {
     @ObservationIgnored private var describeTask: Task<Void, Never>?
     @ObservationIgnored private var terminationObserver: NSObjectProtocol?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
+    @ObservationIgnored private var descriptionObserver: NSObjectProtocol?
+    /// Changes whenever a description is saved, so views showing one (the gallery) update.
+    private(set) var descriptionRevision = 0
     /// Photo > Describe Photos Automatically; on unless turned off.
     var describeAutomatically: Bool = UserDefaults.standard.object(forKey: "describeAutomatically") as? Bool ?? true {
         didSet { UserDefaults.standard.set(describeAutomatically, forKey: "describeAutomatically") }
@@ -138,6 +141,17 @@ final class LibraryModel {
                 self.autoDescriber.refocused(currentID: self.autoDescribeCandidate)
             }
         }
+        descriptionObserver = NotificationCenter.default.addObserver(
+            forName: DescriptionCache.didChange, object: cache, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.descriptionRevision += 1 }
+        }
+    }
+
+    /// The saved description of a photo, for showing it. Updates when one is saved.
+    func savedDescription(for id: String) -> String? {
+        _ = descriptionRevision
+        guard let asset = assetsByID[id] else { return nil }
+        return descriptions.description(for: asset)
     }
 
     // MARK: - Describe Photos Automatically
@@ -855,6 +869,31 @@ final class LibraryModel {
         let id = row.id
         describeTask = Task { [weak self] in
             guard let text = await self?.describeAndRemember(asset, allowNetwork: true) else { return }
+            self?.say(text, ifStillOn: id)
+        }
+    }
+
+    /// Photo > Describe Again (Shift-Option-Command-D): describes the photo you're on afresh, replaces its saved
+    /// description, and speaks the new one. For a saved description that's poor, or from before the photo was edited
+    /// or the prompt changed.
+    func describeFocusedPhotoAgain() {
+        guard let row = focusedRow, !row.isContainer, let asset = assetsByID[row.id] else {
+            announce("Select a photo to describe")
+            return
+        }
+        guard asset.mediaType == .image else {
+            announce("Videos can't be described")
+            return
+        }
+        if let reason = describeUnavailableReason {
+            announce(reason)
+            return
+        }
+        describeTask?.cancel()
+        announce("Describing \(row.name) again")
+        let id = row.id
+        describeTask = Task { [weak self] in
+            guard let text = await self?.describeAndRemember(asset) else { return }
             self?.say(text, ifStillOn: id)
         }
     }

@@ -86,6 +86,8 @@ struct PhotoCommands: Commands {
             Divider()
             Button("Describe Photo") { model.describeFocusedPhoto() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
+            Button("Describe Again") { model.describeFocusedPhotoAgain() }
+                .keyboardShortcut("d", modifiers: [.command, .shift, .option])
             Toggle("Describe Photos Automatically", isOn: Binding(
                 get: { model.describeAutomatically },
                 set: { model.setDescribeAutomatically($0) }

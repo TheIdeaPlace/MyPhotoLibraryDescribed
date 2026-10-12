@@ -59,5 +59,7 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 - **Columns dialog:** View > Columns… on both, with the same lists, buttons, keys (Alt on Windows, Option on the Mac) and announcements. Column order sets the order each row is read in.
 - **Saved descriptions:** both save descriptions, so a photo is described once.
 - **Describe Photos Automatically:** Photo > Describe Photos Automatically on both, on by default. The photo you arrow to in the list or gallery is described after a short pause (700 ms) and the description is spoken behind other speech, only while you're still on that photo. Saved descriptions are spoken the same way.
+- **Describe Again:** Photo > Describe Again on the Mac (Shift-Option-Command-D) describes the photo you're on afresh and replaces its saved description; Get Info's button says Describe Again once a description is saved. Windows: to come (#29).
+- **The gallery shows the description:** under the photo, with its name, kind, date and caption, on both. The image itself is named just for the photo.
 - **Describe Photo:** Ctrl+Shift+D on Windows (list, gallery and Preview), Shift-Command-D on the Mac (list and gallery), describing the photo you're on and speaking it.
 - **Choosing how photos are described:** Windows has Photo > Description Type, with Windows AI's four kinds (Accessible, Detailed, Brief, Diagram). The Mac's Settings has the prompt itself, since Apple Intelligence takes any prompt.

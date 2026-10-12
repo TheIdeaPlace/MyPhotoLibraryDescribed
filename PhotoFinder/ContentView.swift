@@ -326,6 +326,14 @@ private struct GalleryFooter: View {
                 if !row.caption.isEmpty {
                     Text(row.caption)
                 }
+                // The saved description, as Windows' gallery shows it. Spoken by Describe Photos Automatically, so
+                // the image itself is still named just for the photo.
+                if let description = model.savedDescription(for: row.id) {
+                    Text(description)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help(description)
+                }
             }
             .textSelection(.enabled)
             Spacer()

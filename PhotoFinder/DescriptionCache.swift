@@ -5,6 +5,9 @@ import Photos
 /// Get Info, or behind the scenes when it's added to the library. Keyed by the photo's local identifier, so
 /// favoriting or captioning it (which changes its modification date) keeps its description.
 final class DescriptionCache: @unchecked Sendable {
+    /// Posted (on the main queue) when a description is saved or replaced, so what's on screen can show it.
+    static let didChange = Notification.Name("DescriptionCacheDidChange")
+
     private var entries: [String: String] = [:]
     private let lock = NSLock()
     private let fileURL: URL
@@ -43,6 +46,7 @@ final class DescriptionCache: @unchecked Sendable {
         if schedule {
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [self] in save() }
         }
+        DispatchQueue.main.async { NotificationCenter.default.post(name: Self.didChange, object: self) }
     }
 
     func description(for asset: PHAsset) -> String? { description(forKey: asset.localIdentifier) }
