@@ -350,8 +350,8 @@ public partial class MainWindow : Window
         Services.Announcer.AnnounceAfter(on ? "New descriptions are saved in your photos" : "Descriptions aren't saved in your photos", "PhotoFinderSetting");
     }
 
-    /// <summary>Photo > Use Description as Caption: each chosen photo's saved description becomes its caption, and for JPEG
-    /// and TIFF files its alt text too (the accessibility fields, #62). What's in the files is read first, never the list's
+    /// <summary>Photo > Use Description as Caption: each chosen photo's saved description becomes its caption, and for JPEG,
+    /// PNG and TIFF files its alt text too (the accessibility fields, #62). What's in the files is read first, never the list's
     /// copy (empty until details load), so a caption or alt text someone wrote is never replaced without asking.</summary>
     /// <param name="owner">The window asking: Get Info, or this one.</param>
     /// <param name="kind">The description type to use (Get Info's choice); otherwise Photo > Description Type.</param>

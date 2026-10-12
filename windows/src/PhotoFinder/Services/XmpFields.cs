@@ -6,15 +6,15 @@ using Windows.Storage.Streams;
 namespace PhotoFinder.Services;
 
 /// <summary>
-/// A photo file's XMP caption (dc:description) and IPTC accessibility fields (#31, #62). Only JPEG and TIFF, as on the
-/// Mac: PNG waits for a writer that can't damage its other chunks (#82), and WIC can't write HEIC's metadata. Other
-/// formats keep their caption in Explorer's Title (System.Title) instead.
+/// A photo file's XMP caption (dc:description) and IPTC accessibility fields (#31, #62). JPEG, PNG and TIFF, as on the
+/// Mac; WIC can't write HEIC's metadata, so HEIC and other formats keep their caption in Explorer's Title (System.Title).
 ///
 /// - JPEG is changed segment by segment (<see cref="JpegMetadata"/>, #86): only the XMP is replaced, so EXIF (with its
 ///   thumbnail and MakerNote), the picture and anything after it (a motion photo's video) stay byte for byte.
+/// - PNG is changed chunk by chunk (<see cref="PngMetadata"/>, #82): only the XMP chunk is replaced.
 /// - TIFF goes through WIC: its in-place encoder when the file has room, otherwise its transcoder, which rewrites the file
 ///   without decoding the picture.
-/// - Either way the new file is written beside the photo, flushed, and swapped in whole, so a failure partway leaves the
+/// - Every way, the new file is written beside the photo, flushed, and swapped in whole, so a failure partway leaves the
 ///   photo as it was; and the fields are read back before they count as saved.
 /// </summary>
 public static class XmpFields
@@ -23,13 +23,18 @@ public static class XmpFields
     /// so clearing one doesn't bring back the Title in its place.</summary>
     public sealed record Fields(string Caption, string AltText, string ExtendedDescription, bool HasCaption = false);
 
-    private static readonly HashSet<string> Writable = new(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".jpe", ".jfif", ".tif", ".tiff" };
+    private static readonly HashSet<string> Writable = new(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".jpe", ".jfif", ".tif", ".tiff", ".png" };
 
     public static bool CanWrite(string path) => Writable.Contains(Path.GetExtension(path));
 
     private static bool IsTiff(string path) => Path.GetExtension(path).StartsWith(".tif", StringComparison.OrdinalIgnoreCase);
 
-    public static bool IsJpeg(string path) => CanWrite(path) && !IsTiff(path);
+    public static bool IsPng(string path) => Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsJpeg(string path) => CanWrite(path) && !IsTiff(path) && !IsPng(path);
+
+    /// <summary>Changed by editing the file's own structure, a whole <see cref="MetadataChanges"/> at once: JPEG and PNG.</summary>
+    public static bool EditsInPlace(string path) => IsJpeg(path) || IsPng(path);
 
     private static string Root(string path) => IsTiff(path) ? "/ifd/xmp" : "/xmp";
 
@@ -42,6 +47,14 @@ public static class XmpFields
     public static async Task<Fields> ReadAsync(string path)
     {
         if (!CanWrite(path)) return new Fields("", "", "");
+        if (IsPng(path))
+        {
+            // Read from the XMP chunk itself; the picture isn't decoded.
+            var bytes = await File.ReadAllBytesAsync(path);
+            if (!PngMetadata.LooksLikePng(bytes)) throw new InvalidDataException("The file isn't the kind its name says.");
+            var (caption, alt, extended) = PngMetadata.Fields(bytes);
+            return new Fields(caption ?? "", alt ?? "", extended ?? "", caption is not null);
+        }
         var file = await StorageFile.GetFileFromPathAsync(path);
         using var stream = await file.OpenAsync(FileAccessMode.Read);
         var decoder = await BitmapDecoder.CreateAsync(stream);
@@ -63,33 +76,35 @@ public static class XmpFields
             }
             return null;
         }
-        var caption = await Get(Caption);
-        return new Fields(caption ?? "", await Get(Alt) ?? "", await Get(Extended) ?? "", caption is not null);
+        var found = await Get(Caption);
+        return new Fields(found ?? "", await Get(Alt) ?? "", await Get(Extended) ?? "", found is not null);
     }
 
     /// <summary>Writes the caption and accessibility fields given (null leaves one as it is, empty clears it), keeping
     /// the file's modified date, then reads them back. Throws if they didn't stick.</summary>
     public static Task WriteAsync(string path, string? caption, string? altText, string? extended) =>
-        IsJpeg(path)
-            ? WriteJpegAsync(path, new JpegMetadata.Changes { Caption = caption, AltText = altText, ExtendedDescription = extended })
+        EditsInPlace(path)
+            ? WriteChangesAsync(path, new MetadataChanges { Caption = caption, AltText = altText, ExtendedDescription = extended })
             : WriteTiffAsync(path, caption, altText, extended);
 
-    /// <summary>Changes a JPEG's metadata segment by segment (<see cref="JpegMetadata"/>): the caption and accessibility
-    /// fields, and the Title and rating when given. Read back for the caption and accessibility fields.</summary>
-    public static async Task WriteJpegAsync(string path, JpegMetadata.Changes changes)
+    /// <summary>Changes a JPEG's or PNG's metadata by editing its segments or chunks (<see cref="JpegMetadata"/>,
+    /// <see cref="PngMetadata"/>): the caption and accessibility fields, and the Title and rating when given. Read back for
+    /// the caption and accessibility fields.</summary>
+    public static async Task WriteChangesAsync(string path, MetadataChanges changes)
     {
         PhotoChanges.Check();
-        if (!IsJpeg(path)) throw new NotSupportedException($"{Path.GetExtension(path).TrimStart('.').ToUpperInvariant()} files can't hold these fields.");
+        if (!EditsInPlace(path)) throw new NotSupportedException($"{Path.GetExtension(path).TrimStart('.').ToUpperInvariant()} files can't hold these fields.");
         if (changes.IsEmpty) return;
         // UTC, so the hour that repeats when daylight saving ends can't shift it.
         var modified = File.GetLastWriteTimeUtc(path);
         var before = File.ReadAllBytes(path);
         byte[] after;
+        var png = IsPng(path);
         try
         {
-            after = JpegMetadata.Apply(before, changes);
+            after = png ? PngMetadata.Apply(before, changes) : JpegMetadata.Apply(before, changes);
         }
-        catch (MetadataRefusedException) when (!LooksLikeJpeg(before))
+        catch (MetadataRefusedException) when (png ? !PngMetadata.LooksLikePng(before) : !JpegMetadata.LooksLikeJpeg(before))
         {
             throw new InvalidDataException("The file isn't the kind its name says.");
         }
@@ -97,8 +112,6 @@ public static class XmpFields
         RestoreDate(path, modified);
         await CheckStoredAsync(path, changes.Caption, changes.AltText, changes.ExtendedDescription);
     }
-
-    private static bool LooksLikeJpeg(byte[] b) => b.Length >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF;
 
     private static async Task WriteTiffAsync(string path, string? caption, string? altText, string? extended)
     {

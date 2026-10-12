@@ -11,14 +11,15 @@ public sealed record MediaMetadata
     /// <summary>The caption: XMP's dc:description, the standard Caption/Description (#62), or else the file's Title
     /// (System.Title), which File Explorer shows as Title and older files keep their caption in.</summary>
     public string Caption { get; init; } = "";
-    /// <summary>IPTC's Alt Text (Accessibility), in JPEG and TIFF files that have it.</summary>
+    /// <summary>IPTC's Alt Text (Accessibility), in JPEG, PNG and TIFF files that have it.</summary>
     public string AltText { get; init; } = "";
-    /// <summary>IPTC's Extended Description (Accessibility), in JPEG and TIFF files that have it.</summary>
+    /// <summary>IPTC's Extended Description (Accessibility), in JPEG, PNG and TIFF files that have it.</summary>
     public string ExtendedDescription { get; init; } = "";
     /// <summary>Which reader filled this in. Details cached by an older one are read again (they lack dc:description).</summary>
     public int Version { get; init; }
 
-    public const int CurrentVersion = 1;
+    /// <summary>2: PNG captions are read from their XMP too (#82).</summary>
+    public const int CurrentVersion = 2;
     public string Keywords { get; init; } = "";
     /// <summary>0 to 5 stars.</summary>
     public int Rating { get; init; }

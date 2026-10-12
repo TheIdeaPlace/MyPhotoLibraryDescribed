@@ -28,9 +28,9 @@ public static class MetadataWriter
     }
 
     /// <summary>
-    /// The caption goes in the standard field, XMP's dc:description, in JPEG and TIFF files, with Explorer's Title kept in
+    /// The caption goes in the standard field, XMP's dc:description, in JPEG, PNG and TIFF files, with Explorer's Title kept in
     /// step when it's empty or still holds the old caption (so a title someone wrote is left alone). Other formats keep
-    /// the caption in the Title, as before. The accessibility fields are written to JPEG and TIFF only. JPEGs are changed
+    /// the caption in the Title, as before. The accessibility fields are written to JPEG, PNG and TIFF only. JPEGs and PNGs are changed
     /// segment by segment, keeping EXIF, the picture and a motion photo's video byte for byte (#86).
     /// </summary>
     public static async Task<WriteResult> SetFieldsAsync(IReadOnlyList<FieldChanges> changes)
@@ -53,17 +53,17 @@ public static class MetadataWriter
                         oldCaption = old.HasCaption ? old.Caption : title;
                     }
                     var follows = change.Caption is { } next && FileFields.TitleKeepsInStep(title!, oldCaption!) && title!.Trim() != next.Trim();
-                    if (XmpFields.IsJpeg(item.Path))
+                    if (XmpFields.EditsInPlace(item.Path))
                     {
                         // One change to the file: the caption, the accessibility fields, and the Title following the
                         // caption in XMP, with an EXIF title that held the old caption emptied in place.
-                        await XmpFields.WriteJpegAsync(item.Path, new JpegMetadata.Changes
+                        await XmpFields.WriteChangesAsync(item.Path, new MetadataChanges
                         {
                             Caption = change.Caption,
                             AltText = change.AltText,
                             ExtendedDescription = change.ExtendedDescription,
                             Title = follows ? change.Caption!.Trim() : null,
-                            ClearExifTitle = follows ? title : null,
+                            ClearOwnTitle = follows ? title : null,
                         });
                     }
                     else
@@ -104,12 +104,13 @@ public static class MetadataWriter
                 // Saving properties rewrites the file, which changes its modified date. Put it back, so a
                 // photo without a Date Taken doesn't jump to today in the list.
                 // UTC, so the hour that repeats when daylight saving ends can't shift it.
-                if (XmpFields.IsJpeg(item.Path) && key == "System.Rating")
+                if (XmpFields.EditsInPlace(item.Path) && key == "System.Rating")
                 {
                     // Windows' handler rebuilds a JPEG's EXIF (re-encoding its thumbnail, dropping tags, moving its
-                    // MakerNote) and loses a motion photo's video: JPEGs are changed segment by segment instead (#86).
+                    // MakerNote) and loses a motion photo's video, and rewrites a PNG (re-compressing it, adding colour
+                    // chunks, breaking an animated PNG): both are changed segment or chunk by chunk instead (#86, #82).
                     // A JPEG's Title is written with its caption, in SetFieldsAsync.
-                    await XmpFields.WriteJpegAsync(item.Path, new JpegMetadata.Changes
+                    await XmpFields.WriteChangesAsync(item.Path, new MetadataChanges
                     {
                         Stars = MediaTypes.StarsFromRating(Convert.ToUInt32(value ?? 0u, System.Globalization.CultureInfo.InvariantCulture)),
                     });

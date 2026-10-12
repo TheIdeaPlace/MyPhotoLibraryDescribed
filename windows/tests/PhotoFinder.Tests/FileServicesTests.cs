@@ -322,16 +322,20 @@ public class MetadataWriterTests
 public class MetadataCacheTests
 {
     [Fact]
-    public void DetailsCachedBeforeTheStandardCaptionWasRead_AreReadAgain_ForJpegsOnly()
+    public void DetailsCachedBeforeTheStandardCaptionWasRead_AreReadAgain_ForFilesThatHaveIt()
     {
         var cache = new MetadataCache(Path.Combine(Path.GetTempPath(), $"pf-{Guid.NewGuid():N}.json"));
         var date = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        var jpeg = new MediaItem(@"C:\p.jpg", 100, date, date);
-        var png = new MediaItem(@"C:\p.png", 100, date, date);
-        cache.Remember(jpeg, new MediaMetadata { Caption = "Old" });
-        cache.Remember(png, new MediaMetadata { Caption = "Old" });
+        var jpeg = new MediaItem(@"C:\p\a.jpg", 100, date, date);
+        var png = new MediaItem(@"C:\p\a.png", 100, date, date);
+        var heic = new MediaItem(@"C:\p\a.heic", 100, date, date);
+        cache.Remember(jpeg, new MediaMetadata { Caption = "Old", Version = 1 });
+        cache.Remember(png, new MediaMetadata { Caption = "Old", Version = 1 });
+        cache.Remember(heic, new MediaMetadata { Caption = "Old", Version = 1 });
+        // PNG captions are read from their XMP since #82: read again, once.
         Assert.Null(cache.Lookup(jpeg));
-        Assert.Equal("Old", cache.Lookup(png)!.Caption);
+        Assert.Null(cache.Lookup(png));
+        Assert.Equal("Old", cache.Lookup(heic)!.Caption);
     }
 
     [Fact]
@@ -354,8 +358,8 @@ public class MetadataCacheTests
         using var lib = new TestLibrary();
         var cache = new MetadataCache(lib.PathOf("cache.json"));
         var date = new DateTime(2020, 1, 1);
-        var local = new MediaItem(@"C:\p.jpg", 100, date, date);
-        var online = new MediaItem(@"C:\p.jpg", 100, date, date) { IsOnlineOnly = true };
+        var local = new MediaItem(@"C:\p\a.jpg", 100, date, date);
+        var online = new MediaItem(@"C:\p\b.jpg", 100, date, date) { IsOnlineOnly = true };
         cache.Remember(local, new MediaMetadata { Rating = 5 });
         cache.Remember(online, new MediaMetadata { Rating = 5 });
         Assert.Null(cache.Lookup(local));

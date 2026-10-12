@@ -65,7 +65,7 @@ public sealed class ReadOnlyTests : IDisposable
         await Assert.ThrowsAsync<ReadOnlyException>(() => MetadataWriter.SetRatingAsync([item], 5));
         await Assert.ThrowsAsync<ReadOnlyException>(() => MetadataWriter.SetCaptionAsync([item], "A dog."));
         await Assert.ThrowsAsync<ReadOnlyException>(() => MetadataWriter.SetFieldsAsync([MetadataWriter.FieldChanges.Replacing(item, "A dog.")]));
-        await Assert.ThrowsAsync<ReadOnlyException>(() => XmpFields.WriteJpegAsync(path, new JpegMetadata.Changes { Stars = 3 }));
+        await Assert.ThrowsAsync<ReadOnlyException>(() => XmpFields.WriteChangesAsync(path, new MetadataChanges { Stars = 3 }));
         Assert.Equal(before, File.ReadAllBytes(path));
     }
 
