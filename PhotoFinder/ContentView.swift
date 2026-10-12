@@ -380,7 +380,8 @@ private struct CaptionEditor: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Text("Captions are saved to your Photos library and sync with iCloud Photos.")
+            Text(target.inFiles ? "Captions are saved in the file, where other apps can read them."
+                 : "Captions are saved to your Photos library and sync with iCloud Photos.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {

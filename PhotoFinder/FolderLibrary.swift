@@ -209,6 +209,14 @@ enum FolderScanner {
         }
     }
 
+    /// One file as the file system has it now, after Photo Finder wrote into it (#31).
+    static func file(at path: String) -> MediaFile? {
+        guard let values = try? URL(fileURLWithPath: path).resourceValues(forKeys: Set(fileKeys)),
+              values.isRegularFile == true else { return nil }
+        return MediaFile(path: path, size: Int64(values.fileSize ?? 0), created: values.creationDate,
+                         modified: values.contentModificationDate ?? values.creationDate ?? .distantPast)
+    }
+
     /// The Folders section's items. Roots are named for their folder, or by their path when two share a name.
     static func sidebarItems(_ roots: [FolderNode]) -> [SidebarItem] {
         let names = roots.map { FolderRoots.displayName($0.path) }

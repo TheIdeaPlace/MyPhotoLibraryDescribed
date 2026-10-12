@@ -69,6 +69,10 @@ struct FileRow: Identifiable, Hashable, Sendable {
     let isFavorite: Bool
     private(set) var caption: String
     private(set) var keywords: String
+    /// A file's IPTC Alt Text and Extended Description (Accessibility), for Get Info and the Description panel (#31).
+    /// Empty for Photos, which has no such fields.
+    private(set) var altText = ""
+    private(set) var extendedDescription = ""
     /// The saved description, for the Description column (#50). Filled by the library model only while that column
     /// is showing, so a big library doesn't copy every description into its rows for nothing.
     private(set) var descriptionText = ""
@@ -179,6 +183,8 @@ struct FileRow: Identifiable, Hashable, Sendable {
         isFavorite = false
         caption = metadata?.caption ?? ""
         keywords = metadata?.keywords.joined(separator: ", ") ?? ""
+        altText = metadata?.altText ?? ""
+        extendedDescription = metadata?.extendedDescription ?? ""
         rating = metadata?.rating ?? 0
         ratingText = rating == 0 ? "" : rating == 1 ? "1 star" : "\(rating) stars"
         if let lat = metadata?.latitude, let lon = metadata?.longitude {

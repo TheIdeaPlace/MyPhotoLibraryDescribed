@@ -33,7 +33,7 @@ struct SettingsView: View {
                     ForEach(CaptionPolicy.allCases) { Text($0.title).tag($0) }
                 }
             } footer: {
-                Text("When a photo is described, its description can also become its caption in Photos, which syncs with iCloud Photos and shows in other apps. Photo > Use Description as Caption does it for the photos you choose.")
+                Text("When a photo is described, its description can also become its caption in Photos, which syncs with iCloud Photos and shows in other apps. For files in added folders, the description goes into the file itself, as its caption and its alt text. Photo > Use Description as Caption does it for the photos you choose.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

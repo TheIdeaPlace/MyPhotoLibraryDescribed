@@ -1,0 +1,288 @@
+import ImageIO
+import UniformTypeIdentifiers
+import XCTest
+@testable import Photo_Finder
+
+/// Writing descriptions into files (#31): real JPEG, PNG, TIFF and HEIC files made in a temporary folder, changed
+/// and read back.
+final class FileMetadataWriterTests: XCTestCase {
+    private var temp: URL!
+
+    override func setUpWithError() throws {
+        temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: temp)
+    }
+
+    private static let formats: [(String, UTType)] = [("jpg", .jpeg), ("png", .png), ("tiff", .tiff), ("heic", .heic)]
+
+    /// A small photo with a camera date, a title and keywords, like one a camera or another app wrote.
+    private func makePhoto(_ name: String, type: UTType, caption: String? = nil) throws -> URL {
+        let url = temp.appendingPathComponent(name)
+        let width = 64, height = 48
+        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        for y in stride(from: 0, to: height, by: 8) {
+            for x in stride(from: 0, to: width, by: 8) {
+                context.setFillColor(red: CGFloat(x) / CGFloat(width), green: CGFloat(y) / CGFloat(height), blue: 0.5, alpha: 1)
+                context.fill(CGRect(x: x, y: y, width: 8, height: 8))
+            }
+        }
+        let image = try XCTUnwrap(context.makeImage())
+        let xmp = CGImageMetadataCreateMutable()
+        _ = CGImageMetadataSetValueWithPath(xmp, nil, "dc:title[x-default]" as CFString, "Original title" as CFString)
+        let keywords = try XCTUnwrap(CGImageMetadataTagCreate("http://purl.org/dc/elements/1.1/" as CFString, "dc" as CFString,
+                                                              "subject" as CFString, .arrayUnordered, ["beach", "dog"] as CFArray))
+        _ = CGImageMetadataSetTagWithPath(xmp, nil, "dc:subject" as CFString, keywords)
+        if let caption {
+            _ = CGImageMetadataSetValueWithPath(xmp, nil, "dc:description[x-default]" as CFString, caption as CFString)
+        }
+        let properties: [CFString: Any] = [
+            kCGImagePropertyExifDictionary: [kCGImagePropertyExifDateTimeOriginal: "2024:06:01 10:11:12"],
+            kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 47.6, kCGImagePropertyGPSLatitudeRef: "N",
+                                            kCGImagePropertyGPSLongitude: 122.3, kCGImagePropertyGPSLongitudeRef: "W"],
+            kCGImageDestinationLossyCompressionQuality: 0.8,
+        ]
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, type.identifier as CFString, 1, nil))
+        CGImageDestinationAddImageAndMetadata(destination, image, xmp, properties as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        // An old modified date, as photos usually have, so keeping it is a real test.
+        let old = Date(timeIntervalSince1970: 1_700_000_000.123456)
+        try FileManager.default.setAttributes([.modificationDate: old, .creationDate: old.addingTimeInterval(-60)],
+                                              ofItemAtPath: url.path)
+        return url
+    }
+
+    private func modified(_ url: URL) -> timespec {
+        var info = stat()
+        stat(url.path, &info)
+        return info.st_mtimespec
+    }
+
+    private func pixels(_ url: URL) -> Data? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        return image.dataProvider?.data as Data?
+    }
+
+    /// A JPEG's compressed picture, from the start-of-scan marker on.
+    private func jpegScan(_ url: URL) throws -> Data {
+        let data = try Data(contentsOf: url)
+        let start = try XCTUnwrap(data.range(of: Data([0xFF, 0xDA])))
+        return data.subdata(in: start.lowerBound..<data.count)
+    }
+
+    private let short = "A brown dog runs on a sandy beach."
+
+    // MARK: - Writing
+
+    func testEachFormatGetsCaptionAndAltTextAndKeepsEverythingElse() throws {
+        for (ext, type) in Self.formats {
+            let url = try makePhoto("photo.\(ext)", type: type)
+            let before = FileMetadata.read(url)
+            let pixelsBefore = pixels(url)
+            let date = modified(url)
+
+            let after = try FileMetadataWriter.write(.init(caption: short, accessibilityDescription: short), to: url)
+
+            XCTAssertEqual(after.caption, short, ext)
+            XCTAssertEqual(after.altText, short, ext)
+            XCTAssertEqual(after.extendedDescription, "", ext)
+            XCTAssertEqual(after.keywords, ["beach", "dog"], ext)
+            XCTAssertEqual(after.dateTaken, before.dateTaken, ext)
+            XCTAssertNotNil(after.dateTaken, ext)
+            XCTAssertEqual(after.latitude, before.latitude, ext)
+            XCTAssertEqual(after.width, 64, ext)
+            let xmp = try XCTUnwrap(CGImageSourceCopyMetadataAtIndex(CGImageSourceCreateWithURL(url as CFURL, nil)!, 0, nil))
+            XCTAssertEqual(FileMetadata.xmpString(xmp, "dc:title"), "Original title", ext)
+            XCTAssertEqual(pixels(url), pixelsBefore, "\(ext): the picture changed")
+            let now = modified(url)
+            XCTAssertEqual(now.tv_sec, date.tv_sec, ext)
+            XCTAssertEqual(now.tv_nsec, date.tv_nsec, ext)
+        }
+    }
+
+    func testAJPEGsPictureIsNotReencoded() throws {
+        let url = try makePhoto("photo.jpg", type: .jpeg)
+        let scan = try jpegScan(url)
+        try FileMetadataWriter.write(.init(caption: short, accessibilityDescription: short), to: url)
+        XCTAssertEqual(try jpegScan(url), scan)
+    }
+
+    func testTheFileKeepsItsDatesSoItsDescriptionKeyKeepsItsTime() throws {
+        let url = try makePhoto("photo.jpg", type: .jpeg)
+        let values = try url.resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey])
+        try FileMetadataWriter.write(.init(caption: short), to: url)
+        let after = try URL(fileURLWithPath: url.path).resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey])
+        XCTAssertEqual(after.contentModificationDate.map(FileDescriptionKey.ticks), values.contentModificationDate.map(FileDescriptionKey.ticks))
+        XCTAssertEqual(after.creationDate, values.creationDate)
+    }
+
+    func testNoTemporaryFileIsLeftBehind() throws {
+        let url = try makePhoto("photo.png", type: .png)
+        try FileMetadataWriter.write(.init(accessibilityDescription: short), to: url)
+        let names = try FileManager.default.contentsOfDirectory(atPath: temp.path)
+        XCTAssertEqual(names, ["photo.png"])
+    }
+
+    func testALongDescriptionGoesInBothFieldsAndAShortOneRemovesTheExtendedOne() throws {
+        for (ext, type) in Self.formats {
+            let url = try makePhoto("photo.\(ext)", type: type)
+            let long = String(repeating: "A brown dog runs along the beach at low tide. ", count: 8).trimmingCharacters(in: .whitespaces)
+            var read = try FileMetadataWriter.write(.init(accessibilityDescription: long), to: url)
+            XCTAssertEqual(read.altText, AccessibilityText.altText(from: long), ext)
+            XCTAssertLessThanOrEqual(read.altText.count, 250, ext)
+            XCTAssertEqual(read.extendedDescription, long, ext)
+            XCTAssertEqual(read.caption, "Original title", "\(ext): the caption is left alone")
+
+            read = try FileMetadataWriter.write(.init(accessibilityDescription: short), to: url)
+            XCTAssertEqual(read.altText, short, ext)
+            XCTAssertEqual(read.extendedDescription, "", "\(ext): a stale extended description is removed")
+        }
+    }
+
+    func testASecondCaptionReplacesTheFirstAndAnEmptyOneRemovesIt() throws {
+        for (ext, type) in Self.formats {
+            let url = try makePhoto("photo.\(ext)", type: type, caption: "Rex at Brighton")
+            XCTAssertEqual(FileMetadata.read(url).caption, "Rex at Brighton", ext)
+            var read = try FileMetadataWriter.write(.init(caption: short), to: url)
+            XCTAssertEqual(read.caption, short, ext)
+            read = try FileMetadataWriter.write(.init(caption: "Two dogs"), to: url)
+            XCTAssertEqual(read.caption, "Two dogs", ext)
+            read = try FileMetadataWriter.write(.init(caption: ""), to: url)
+            // With no caption left, the title stands in, as when reading any file.
+            XCTAssertEqual(read.caption, "Original title", ext)
+        }
+    }
+
+    func testACaptionWrittenOnlyInTheTIFFDescriptionIsReplaced() throws {
+        for (ext, type) in Self.formats {
+            let url = temp.appendingPathComponent("described.\(ext)")
+            let context = try XCTUnwrap(CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0,
+                                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, type.identifier as CFString, 1, nil))
+            let properties = [kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFImageDescription: "From the camera"]]
+            CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), properties as CFDictionary)
+            XCTAssertTrue(CGImageDestinationFinalize(destination))
+            XCTAssertEqual(FileMetadata.read(url).caption, "From the camera", ext)
+            let result = try FileMetadataWriter.write(.init(caption: short), to: url)
+            XCTAssertEqual(result.caption, short, ext)
+        }
+    }
+
+    func testUnicodeAndMarkupCharactersSurvive() throws {
+        let url = try makePhoto("photo.jpg", type: .jpeg)
+        let text = "Ünïcödé café, \"quotes\" & <angle> brackets.\nA second line."
+        let read = try FileMetadataWriter.write(.init(caption: text, accessibilityDescription: text), to: url)
+        XCTAssertEqual(read.caption, text)
+        XCTAssertEqual(read.altText, text)
+    }
+
+    // MARK: - Refusing
+
+    func testGIFAndOtherFormatsAreRefusedAndLeftAlone() throws {
+        let gif = try makePhoto("anim.gif", type: .gif)
+        let bytes = try Data(contentsOf: gif)
+        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: gif)) { error in
+            XCTAssertEqual(error as? FileMetadataWriteError, .unsupportedFormat("GIF"))
+            XCTAssertEqual((error as? LocalizedError)?.errorDescription, "GIF files can't hold captions or descriptions.")
+        }
+        XCTAssertEqual(try Data(contentsOf: gif), bytes)
+
+        XCTAssertFalse(FileMetadataWriter.canWrite(name: "a.webp"))
+        XCTAssertFalse(FileMetadataWriter.canWrite(name: "a.NEF"))
+        XCTAssertTrue(FileMetadataWriter.canWrite(name: "IMG_1.HEIC"))
+        XCTAssertEqual(FileMetadataWriter.formatName(of: "DSC_1.NEF"), "RAW")
+        XCTAssertEqual(FileMetadataWriter.formatName(of: "a.webp"), "WEBP")
+    }
+
+    func testAGIFNamedLikeAJPEGIsRefusedToo() throws {
+        let gif = try makePhoto("anim.gif", type: .gif)
+        let renamed = temp.appendingPathComponent("not-really.jpg")
+        try FileManager.default.moveItem(at: gif, to: renamed)
+        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: renamed)) { error in
+            XCTAssertEqual(error as? FileMetadataWriteError, .unsupportedFormat("GIF"))
+        }
+    }
+
+    // MARK: - Alt text
+
+    func testAShortDescriptionIsItsOwnAltText() {
+        XCTAssertEqual(AccessibilityText.altText(from: "  \(short)\n"), short)
+        XCTAssertNil(AccessibilityText.extendedDescription(from: short))
+        let exactly250 = String(repeating: "a", count: 249) + "."
+        XCTAssertEqual(AccessibilityText.altText(from: exactly250), exactly250)
+    }
+
+    func testALongDescriptionKeepsTheWholeSentencesThatFit() {
+        let first = "A brown dog with floppy ears runs along a sandy beach at low tide, chasing a red ball."  // 86
+        let second = "Waves roll in behind it under a pale blue sky with a few thin clouds near the horizon."
+        let third = "In the distance a lighthouse stands on a rocky point, and two people walk a black dog by the water."
+        let text = [first, second, third].joined(separator: " ")
+        XCTAssertGreaterThan(text.count, 250)
+        XCTAssertEqual(AccessibilityText.altText(from: text), first + " " + second)
+        XCTAssertEqual(AccessibilityText.extendedDescription(from: text), text)
+    }
+
+    func testOneLongSentenceIsCutAtAWordWithAnEllipsis() {
+        let words = Array(repeating: "seaside,", count: 40).joined(separator: " ") + " end."
+        let alt = AccessibilityText.altText(from: words)
+        XCTAssertLessThanOrEqual(alt.count, 250)
+        XCTAssertTrue(alt.hasSuffix("seaside…"), alt)
+        XCTAssertFalse(alt.contains("sea…"))
+        XCTAssertEqual(AccessibilityText.extendedDescription(from: words), words)
+    }
+
+    func testOneEndlessWordIsCutWhereItMustBe() {
+        let word = String(repeating: "x", count: 400)
+        let alt = AccessibilityText.altText(from: word)
+        XCTAssertEqual(alt.count, 250)
+        XCTAssertTrue(alt.hasSuffix("x…"))
+    }
+
+    // MARK: - Keeping the description
+
+    func testAWrittenFilesDescriptionMovesToItsNewKeyWithItsEditedMark() throws {
+        let url = try makePhoto("photo.jpg", type: .jpeg)
+        let before = try XCTUnwrap(FolderScanner.file(at: url.path))
+        let cache = DescriptionCache(fileURL: temp.appendingPathComponent("store/Descriptions.json"))
+        cache.remember("Rex on the beach", forKey: before.descriptionKey, edited: true)
+
+        try FileMetadataWriter.write(.init(caption: "Rex on the beach", accessibilityDescription: "Rex on the beach"), to: url)
+        let after = try XCTUnwrap(FolderScanner.file(at: url.path))
+        XCTAssertNotEqual(after.size, before.size, "writing changes the size, which is part of the key")
+        XCTAssertEqual(after.modified, before.modified)
+
+        cache.rekey(from: before.descriptionKey, to: after.descriptionKey)
+        XCTAssertEqual(cache.description(forKey: after.descriptionKey), "Rex on the beach")
+        XCTAssertTrue(cache.isEdited(forKey: after.descriptionKey))
+        XCTAssertNil(cache.description(forKey: before.descriptionKey))
+        // Nothing saved under the old key: nothing to move.
+        cache.rekey(from: "file:/NOWHERE|1|1", to: "file:/ELSEWHERE|1|1")
+        XCTAssertNil(cache.description(forKey: "file:/ELSEWHERE|1|1"))
+    }
+
+    // MARK: - What's said
+
+    func testWhatsSaidNamesOneSkippedFileAndCountsSeveral() {
+        XCTAssertEqual(FileWriteSummary.text(done: "Saved to the file", skipped: [], notDescribed: 0), "Saved to the file")
+        XCTAssertEqual(FileWriteSummary.text(done: "Saved to 2 files", skipped: [("anim.gif", "GIF")], notDescribed: 1),
+                       "Saved to 2 files. Skipped anim.gif: GIF files can't hold captions or descriptions. 1 photo hasn't been described yet")
+        XCTAssertEqual(FileWriteSummary.text(done: nil, skipped: [("a.gif", "GIF"), ("b.webp", "WEBP"), ("c.gif", "GIF")], notDescribed: 2),
+                       "Skipped 3 files: GIF and WEBP files can't hold captions or descriptions. 2 photos haven't been described yet")
+    }
+
+    func testUnsupportedFilesAreFoundByName() {
+        let files = ["a.jpg", "b.gif", "c.NEF", "d.heic"].map {
+            MediaFile(path: "/Pictures/\($0)", size: 1, created: nil, modified: .distantPast)
+        }
+        let unsupported = FileWriteSummary.unsupported(files)
+        XCTAssertEqual(unsupported.map(\.name), ["b.gif", "c.NEF"])
+        XCTAssertEqual(unsupported.map(\.format), ["GIF", "RAW"])
+    }
+}
