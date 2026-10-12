@@ -83,6 +83,13 @@ enum PhotoExporter {
         return url
     }
 
+    /// Copies a file from an added folder (#36) into a folder the user chose, never overwriting an existing file.
+    static func copyFile(_ source: URL, into folder: URL) throws -> URL {
+        let url = uniqueURL(in: folder, fileName: source.lastPathComponent)
+        try FileManager.default.copyItem(at: source, to: url)
+        return url
+    }
+
     private static func requireResource(for asset: PHAsset) throws -> PHAssetResource {
         guard let resource = primaryResource(for: asset) else {
             throw ExportError.noFile(originalFilename(for: asset))

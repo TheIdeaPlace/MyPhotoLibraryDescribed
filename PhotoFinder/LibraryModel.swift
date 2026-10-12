@@ -14,9 +14,30 @@ enum ViewMode: String {
 }
 
 struct InfoTarget: Identifiable {
+    /// A photo in the Photos library, or a file in an added folder (#36).
+    enum Source {
+        case asset(PHAsset)
+        case file(MediaFile, FileRow)
+    }
+
     let id: String
-    let asset: PHAsset
+    let source: Source
     let name: String
+
+    /// The key its description is saved under.
+    var descriptionKey: String {
+        switch source {
+        case .asset(let asset): asset.localIdentifier
+        case .file(let file, _): file.descriptionKey
+        }
+    }
+
+    var isImage: Bool {
+        switch source {
+        case .asset(let asset): asset.mediaType == .image
+        case .file(let file, _): !file.isVideo
+        }
+    }
 }
 
 @MainActor
@@ -78,6 +99,21 @@ final class LibraryModel {
     var errorMessage: String?
 
     @ObservationIgnored private var assetsByID: [String: PHAsset] = [:]
+    /// The files listed when an added folder is showing, by row id (#36). Empty for Photos' albums.
+    @ObservationIgnored private var filesByID: [String: MediaFile] = [:]
+    /// Folders added to the library (File > Add Folder to Library…), in the order they were added.
+    private(set) var folderRoots: [String] = FolderRoots.load()
+    /// The Folders section's tree, from the last scan of the added folders.
+    @ObservationIgnored private var folderNodes: [FolderNode] = []
+    @ObservationIgnored private var folderScan: Task<Void, Never>?
+    /// Metadata already read from files, so going back to a folder doesn't read it all again. Keyed like
+    /// descriptions, so an edited file is read afresh.
+    @ObservationIgnored private var fileMetadata: [String: FileMetadata] = [:]
+    /// Watches the folder showing for files added, removed or renamed.
+    @ObservationIgnored private var folderWatcher: DispatchSourceFileSystemObject?
+    @ObservationIgnored private var folderChangeTask: Task<Void, Never>?
+    /// Said before "All Photos, 12 items" once a removed folder's place has loaded.
+    @ObservationIgnored private var loadAnnouncementPrefix: String?
     @ObservationIgnored private var currentFetch: PHFetchResult<PHAsset>?
     @ObservationIgnored private var loadGeneration = 0
     @ObservationIgnored private var pendingSelection: String?
@@ -161,8 +197,22 @@ final class LibraryModel {
     /// The saved description of a photo, for showing it. Updates when one is saved.
     func savedDescription(for id: String) -> String? {
         _ = descriptionRevision
-        guard let asset = assetsByID[id] else { return nil }
-        return descriptions.description(for: asset)
+        guard let key = descriptionKey(for: id) else { return nil }
+        return descriptions.description(forKey: key)
+    }
+
+    /// The key a row's description is saved under: its Photos identifier, or for a file in an added folder its
+    /// path, size and modified time (#36). Nil for folders and rows no longer listed.
+    private func descriptionKey(for id: String) -> String? {
+        if let asset = assetsByID[id] { return asset.localIdentifier }
+        return filesByID[id]?.descriptionKey
+    }
+
+    /// Whether a row is a photo (not a video), from Photos or a folder.
+    private func isPhoto(_ id: String) -> Bool {
+        if let asset = assetsByID[id] { return asset.mediaType == .image }
+        if let file = filesByID[id] { return !file.isVideo }
+        return false
     }
 
     // MARK: - Describe Photos Automatically
@@ -181,7 +231,7 @@ final class LibraryModel {
     /// The photo automatic describing is about: the one photo selected and shown. Nothing for folders, videos,
     /// several items, or a photo hidden by Search.
     private var autoDescribeCandidate: String? {
-        guard selection.count == 1, let id = selection.first, assetsByID[id]?.mediaType == .image,
+        guard selection.count == 1, let id = selection.first, isPhoto(id),
               let row = (searchText.isEmpty ? rows : visibleRows).first(where: { $0.id == id }), !row.isContainer
         else { return nil }
         return id
@@ -190,14 +240,14 @@ final class LibraryModel {
     private func makeAutoDescriber() -> AutoDescriber {
         let describer = AutoDescriber(isEnabled: describeAutomatically)
         describer.saved = { [weak self] id in
-            guard let self, let asset = self.assetsByID[id] else { return nil }
-            return self.descriptions.description(for: asset)
+            guard let self, let key = self.descriptionKey(for: id) else { return nil }
+            return self.descriptions.description(forKey: key)
         }
         describer.unavailableReason = { [weak self] in self?.describeUnavailableReason }
         describer.describe = { [weak self] id in
-            guard let self, let asset = self.assetsByID[id] else { return nil }
+            guard let self else { return nil }
             // Not downloaded from iCloud just because you arrowed past it, as on Windows; Describe Photo does.
-            return await self.describeAndRemember(asset, allowNetwork: false) { [weak self] in
+            return await self.describeAndRemember(id, allowNetwork: false) { [weak self] in
                 (self?.describingAgain[id] ?? 0) == 0
             }
         }
@@ -298,6 +348,7 @@ final class LibraryModel {
 
         rebuildSidebar()
         selectedSourceID = SidebarID.allPhotos
+        refreshFolders()
         // Watched for new photos only while describing them in the background is on: it's a whole-library fetch.
         if describeInBackground { allPhotosFetch = PHAsset.fetchAssets(with: .image, options: nil) }
         await refreshDateBuckets()
@@ -337,7 +388,10 @@ final class LibraryModel {
         }
     }
 
-    private func rebuildSidebar() {
+    /// Rebuilds the sidebar from Photos and the last scan of the added folders. Returns whether the place showing
+    /// was reloaded because it changed.
+    @discardableResult
+    private func rebuildSidebar() -> Bool {
         let previousItem = currentItem
 
         allPhotosCount = PHAsset.fetchAssets(with: nil).count
@@ -386,8 +440,11 @@ final class LibraryModel {
         if !dates.isEmpty { newSections.append(SidebarSection(id: "dates", title: "Dates", items: dates)) }
         if !albums.isEmpty { newSections.append(SidebarSection(id: "albums", title: "My Albums", items: albums)) }
         if !shared.isEmpty { newSections.append(SidebarSection(id: "shared", title: "Shared Albums", items: shared)) }
+        // Folders added from outside Photos, below Photos' own sections (#36).
+        let folders = FolderScanner.sidebarItems(folderNodes)
+        if !folders.isEmpty { newSections.append(SidebarSection(id: "folders", title: "Folders", items: folders)) }
 
-        guard newSections != sections else { return }
+        guard newSections != sections else { return false }
         sections = newSections
 
         var index: [String: SidebarItem] = [:]
@@ -402,10 +459,12 @@ final class LibraryModel {
 
         if let id = selectedSourceID, index[id] == nil {
             selectedSourceID = SidebarID.allPhotos
-        } else if let item = currentItem, item.children != nil, item != previousItem {
+        } else if let item = currentItem, item.children != nil || item.isDirectory, item != previousItem {
             // A folder's contents changed while it was showing.
             loadSelectedSource(keepSelection: true)
+            return true
         }
+        return false
     }
 
     private func albumItem(_ collection: PHAssetCollection, count: Int, parentID: String?, symbol: String) -> SidebarItem {
@@ -495,7 +554,7 @@ final class LibraryModel {
                   let end = calendar.date(byAdding: .month, value: 1, to: start) else { return nil }
             options.predicate = NSPredicate(format: "creationDate >= %@ AND creationDate < %@", start as NSDate, end as NSDate)
             return PHAsset.fetchAssets(with: options)
-        case .collectionList, .year:
+        case .collectionList, .year, .directory:
             return nil
         }
     }
@@ -515,9 +574,19 @@ final class LibraryModel {
             rows = []
             currentFetch = nil
             assetsByID = [:]
+            filesByID = [:]
+            watchFolder(nil)
             isLoading = false
             return
         }
+
+        if let path = item.directoryPath {
+            loadFolder(item, path: path, previousSelection: previousSelection, keepSelection: keepSelection,
+                       generation: generation)
+            return
+        }
+        filesByID = [:]
+        watchFolder(nil)
 
         if let children = item.children {
             currentFetch = nil
@@ -599,10 +668,205 @@ final class LibraryModel {
         } else {
             selection = previousSelection.intersection(ids)
         }
-        if announceNextLoad || slow {
+        if announceNextLoad || slow || loadAnnouncementPrefix != nil {
             announceNextLoad = false
-            announce("\(item.title), \(rows.count == 1 ? "1 item" : "\(rows.count.formatted()) items")")
+            let prefix = loadAnnouncementPrefix ?? ""
+            loadAnnouncementPrefix = nil
+            announce("\(prefix)\(item.title), \(rows.count == 1 ? "1 item" : "\(rows.count.formatted()) items")")
         }
+    }
+
+    // MARK: - Folders (#36)
+
+    /// Lists an added folder: its subfolders first as containers (from the sidebar, so they open the same place),
+    /// then its photos and videos from the file system, with their metadata read afterwards a batch at a time.
+    private func loadFolder(_ item: SidebarItem, path: String, previousSelection: Set<String>, keepSelection: Bool,
+                            generation: Int) {
+        currentFetch = nil
+        assetsByID = [:]
+        watchFolder(path)
+        let containers = (item.children ?? []).map { FileRow(container: $0) }
+        isLoading = true
+        if !keepSelection {
+            filesByID = [:]
+            rows = containers.sorted(using: sortOrder)
+        }
+        let started = Date()
+        Task {
+            let files = await Task.detached(priority: .userInitiated) { FolderScanner.files(in: path) }.value
+            guard generation == self.loadGeneration else { return }
+            self.filesByID = Dictionary(files.map { (FolderID.file($0.path), $0) }, uniquingKeysWith: { first, _ in first })
+            let fileRows = files.map { FileRow(file: $0, metadata: self.fileMetadata[$0.descriptionKey]) }
+            self.rows = (containers + fileRows).sorted(using: self.sortOrder)
+            self.isLoading = false
+            self.finishLoad(previousSelection: previousSelection, item: item, slow: Date().timeIntervalSince(started) > 1)
+            if self.viewMode == .gallery { self.ensureGallerySelection() }
+            let pending = self.rows.compactMap { row in
+                self.filesByID[row.id].flatMap { self.fileMetadata[$0.descriptionKey] == nil ? $0 : nil }
+            }
+            self.fillFileMetadata(pending, generation: generation)
+        }
+    }
+
+    /// Reads each file's metadata off the main actor, a batch at a time in the order listed, updating rows in place.
+    private func fillFileMetadata(_ files: [MediaFile], generation: Int) {
+        nameFillTask?.cancel()
+        nameProgress = nil
+        guard !files.isEmpty else { return }
+        nameFillTask = Task {
+            var start = 0
+            while start < files.count {
+                let end = min(start + 100, files.count)
+                let batch = Array(files[start..<end])
+                let found = await Task.detached(priority: .userInitiated) { () -> [(MediaFile, FileMetadata)] in
+                    var found: [(MediaFile, FileMetadata)] = []
+                    for file in batch {
+                        found.append((file, file.isVideo ? await FileMetadata.readVideo(file.url) : FileMetadata.read(file.url)))
+                    }
+                    return found
+                }.value
+                guard !Task.isCancelled, generation == self.loadGeneration else { return }
+                var updated: [String: FileRow] = [:]
+                for (file, metadata) in found {
+                    self.fileMetadata[file.descriptionKey] = metadata
+                    updated[FolderID.file(file.path)] = FileRow(file: file, metadata: metadata)
+                }
+                self.rows = self.rows.map { updated[$0.id] ?? $0 }
+                self.nameProgress = "Reading details, \(end.formatted()) of \(files.count.formatted())…"
+                start = end
+            }
+            self.nameProgress = nil
+            self.rows.sort(using: self.sortOrder)
+        }
+    }
+
+    /// Scans the added folders off the main actor and rebuilds the Folders section. With `reloadCurrent`, the
+    /// folder showing is listed again even if its counts didn't change (a file was replaced).
+    private func refreshFolders(reloadCurrent: Bool = false) {
+        let roots = folderRoots
+        folderScan?.cancel()
+        folderScan = Task {
+            let nodes = await Task.detached(priority: .utility) { roots.map(FolderScanner.scan) }.value
+            guard !Task.isCancelled else { return }
+            self.folderNodes = nodes
+            let reloaded = self.rebuildSidebar()
+            if reloadCurrent, !reloaded, self.currentItem?.isDirectory == true {
+                self.loadSelectedSource(keepSelection: true)
+            }
+        }
+    }
+
+    /// Watches the folder showing (or stops watching, for nil): files added, removed or renamed there refresh the
+    /// list and the sidebar's counts a moment later.
+    private func watchFolder(_ path: String?) {
+        folderWatcher?.cancel()
+        folderWatcher = nil
+        guard let path else { return }
+        let descriptor = Darwin.open(path, O_EVTONLY)
+        guard descriptor >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .rename, .delete],
+                                                               queue: .main)
+        source.setEventHandler { [weak self] in
+            MainActor.assumeIsolated { self?.folderDidChange() }
+        }
+        source.setCancelHandler { close(descriptor) }
+        source.resume()
+        folderWatcher = source
+    }
+
+    private func folderDidChange() {
+        folderChangeTask?.cancel()
+        folderChangeTask = Task {
+            // Copying many files in sends many changes; wait for them to settle.
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            refreshFolders(reloadCurrent: true)
+        }
+    }
+
+    /// View > Refresh (Command-R): reads the added folders and the place showing again, as Windows' Refresh (F5).
+    func refresh() {
+        announceNextLoad = true
+        loadSelectedSource(keepSelection: true)
+        if !folderRoots.isEmpty { refreshFolders() }
+    }
+
+    /// File > Add Folder to Library…: folders from anywhere on this Mac or a connected disk, listed under Folders.
+    func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Add"
+        panel.message = "Choose a folder to add to \(AppInfo.name)'s library."
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        addFolders(panel.urls.map(\.path))
+    }
+
+    /// Adds folders to the library and says what happened, as Windows does ("Added Pictures").
+    func addFolders(_ paths: [String]) {
+        var roots = folderRoots
+        var added: [String] = [], already: [String] = []
+        for path in paths {
+            let result = FolderRoots.adding(path, to: roots)
+            roots = result.roots
+            let name = FolderRoots.displayName(FolderRoots.normalize(path))
+            if result.added { added.append(name) } else { already.append(name) }
+        }
+        folderRoots = roots
+        FolderRoots.save(roots)
+        refreshFolders()
+        if added.isEmpty {
+            announce(already.count == 1 ? "\(already[0]) is already in the library" : "Those folders are already in the library")
+        } else {
+            announce(added.count == 1 ? "Added \(added[0])" : "Added \(added.count) folders")
+        }
+    }
+
+    /// The added folder the place showing is in, if it's a folder: what Remove Folder from Library removes.
+    var currentFolderRoot: String? {
+        currentItem?.directoryPath.flatMap { FolderRoots.root(containing: $0, in: folderRoots) }
+    }
+
+    /// File > Remove Folder from Library: takes the added folder you're in out of the library, after asking.
+    /// Nothing on disk changes.
+    func removeCurrentFolder() {
+        guard let root = currentFolderRoot else {
+            NSSound.beep()
+            announce("Only folders in the library can be removed.")
+            return
+        }
+        let name = FolderRoots.displayName(root)
+        let alert = NSAlert()
+        alert.messageText = "Remove “\(name)” from \(AppInfo.name)?"
+        alert.informativeText = "The folder and its photos stay on your Mac; \(AppInfo.name) just stops listing them.\n\n\(root)"
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        folderRoots = FolderRoots.removing(root, from: folderRoots)
+        FolderRoots.save(folderRoots)
+        folderNodes.removeAll { FolderRoots.same($0.path, root) }
+        // You're always in the folder being removed: go to All Photos first, so its place going away isn't announced
+        // as if it happened by itself. Said as on Windows: "Removed Pictures from Photo Finder. Showing All Photos, 12 items".
+        loadAnnouncementPrefix = "Removed \(name) from \(AppInfo.name). Showing "
+        selectedSourceID = SidebarID.allPhotos
+        rebuildSidebar()
+        refreshFolders()
+    }
+
+    /// Delete in the sidebar, as on Windows: removes an added folder (after asking). A folder inside one stays with it.
+    func deleteInSidebar() {
+        guard let item = currentItem, let path = item.directoryPath, let root = currentFolderRoot else {
+            NSSound.beep()
+            announce("Only folders in the library can be removed.")
+            return
+        }
+        guard FolderRoots.same(path, root) else {
+            NSSound.beep()
+            announce("This folder is part of \(FolderRoots.displayName(root)). Only whole library folders can be removed.")
+            return
+        }
+        removeCurrentFolder()
     }
 
     private func libraryDidChange(_ change: PHChange) {
@@ -674,6 +938,11 @@ final class LibraryModel {
         rows.filter { ids.contains($0.id) }.compactMap { assetsByID[$0.id] }
     }
 
+    /// Selected files from an added folder, in the order they are listed (#36).
+    private func files(for ids: Set<String>) -> [MediaFile] {
+        rows.filter { ids.contains($0.id) }.compactMap { filesByID[$0.id] }
+    }
+
     func open(_ ids: Set<String>? = nil) {
         let ids = ids ?? selection
         let chosen = rows.filter { ids.contains($0.id) }
@@ -681,24 +950,40 @@ final class LibraryModel {
             navigate(to: container.id)
             return
         }
+        // Files in an added folder open as they are; Photos' photos are exported first.
+        let files = files(for: ids)
+        if !files.isEmpty {
+            openInApps(files.map(\.url))
+            return
+        }
         let assets = assets(for: ids)
         guard !assets.isEmpty else { NSSound.beep(); return }
         perform("Opening…") {
-            let urls = try await self.exportTemporary(assets)
-            let workspace = NSWorkspace.shared
-            var byApp: [URL: [URL]] = [:]
-            for url in urls {
-                if let app = workspace.urlForApplication(toOpen: url) { byApp[app, default: []].append(url) }
-            }
-            for (app, files) in byApp {
-                workspace.open(files, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
-            }
+            self.openInApps(try await self.exportTemporary(assets))
+        }
+    }
+
+    /// Opens files with the app each opens in, one launch per app.
+    private func openInApps(_ urls: [URL]) {
+        let workspace = NSWorkspace.shared
+        var byApp: [URL: [URL]] = [:]
+        for url in urls {
+            if let app = workspace.urlForApplication(toOpen: url) { byApp[app, default: []].append(url) }
+        }
+        for (app, files) in byApp {
+            workspace.open(files, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
         }
     }
 
     func quickLook(_ ids: Set<String>? = nil) {
         if previewURL != nil {
             previewURL = nil
+            return
+        }
+        let files = Array(files(for: ids ?? selection).prefix(200))
+        if !files.isEmpty {
+            previewURLs = files.map(\.url)
+            previewURL = previewURLs.first
             return
         }
         let assets = Array(assets(for: ids ?? selection).prefix(200))
@@ -712,19 +997,28 @@ final class LibraryModel {
 
     func exportSelection(_ ids: Set<String>? = nil) {
         let assets = assets(for: ids ?? selection)
-        guard !assets.isEmpty else { NSSound.beep(); return }
+        let files = files(for: ids ?? selection)
+        let count = assets.count + files.count
+        guard count > 0 else { NSSound.beep(); return }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.prompt = "Export"
-        panel.message = assets.count == 1 ? "Choose a folder to export 1 item to." : "Choose a folder to export \(assets.count) items to."
+        panel.message = count == 1 ? "Choose a folder to export 1 item to." : "Choose a folder to export \(count) items to."
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         perform("Exporting…") {
             var done = 0
             for asset in assets {
-                self.activity = "Exporting \(done + 1) of \(assets.count)…"
+                self.activity = "Exporting \(done + 1) of \(count)…"
                 _ = try await PhotoExporter.export(asset, into: folder)
+                done += 1
+            }
+            // A file is copied as it is, as Windows does.
+            for file in files {
+                self.activity = "Exporting \(done + 1) of \(count)…"
+                let source = file.url
+                _ = try await Task.detached(priority: .userInitiated) { try PhotoExporter.copyFile(source, into: folder) }.value
                 done += 1
             }
             self.announce("Exported \(done == 1 ? "1 item" : "\(done) items") to \(folder.lastPathComponent)")
@@ -732,6 +1026,13 @@ final class LibraryModel {
     }
 
     func copySelection(_ ids: Set<String>? = nil) {
+        let files = files(for: ids ?? selection)
+        if !files.isEmpty {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.writeObjects(files.map { $0.url as NSURL })
+            announce(files.count == 1 ? "Copied \(files[0].name)" : "Copied \(files.count) items")
+            return
+        }
         let assets = assets(for: ids ?? selection)
         guard !assets.isEmpty else { NSSound.beep(); return }
         perform("Copying…") {
@@ -745,7 +1046,11 @@ final class LibraryModel {
 
     func toggleFavorite(_ ids: Set<String>? = nil) {
         let assets = assets(for: ids ?? selection)
-        guard !assets.isEmpty else { NSSound.beep(); return }
+        guard !assets.isEmpty else {
+            // Windows makes a file a favorite by rating it five stars; writing file metadata on the Mac is to come.
+            if !files(for: ids ?? selection).isEmpty { announce("Favorites aren't available for files yet") } else { NSSound.beep() }
+            return
+        }
         let makeFavorite = !assets.allSatisfy(\.isFavorite)
         let box = UncheckedBox(value: assets)
         perform("Updating favorites…") {
@@ -760,12 +1065,17 @@ final class LibraryModel {
 
     func showInfo(_ ids: Set<String>? = nil) {
         let ids = ids ?? selection
-        guard let row = rows.first(where: { ids.contains($0.id) && !$0.isContainer }),
-              let asset = assetsByID[row.id] else {
+        guard let row = rows.first(where: { ids.contains($0.id) && !$0.isContainer }) else {
             NSSound.beep()
             return
         }
-        infoTarget = InfoTarget(id: row.id, asset: asset, name: row.name)
+        if let asset = assetsByID[row.id] {
+            infoTarget = InfoTarget(id: row.id, source: .asset(asset), name: row.name)
+        } else if let file = filesByID[row.id] {
+            infoTarget = InfoTarget(id: row.id, source: .file(file, row), name: row.name)
+        } else {
+            NSSound.beep()
+        }
     }
 
     private func exportTemporary(_ assets: [PHAsset]) async throws -> [URL] {
@@ -797,12 +1107,17 @@ final class LibraryModel {
     }
 
     func editCaption(_ ids: Set<String>? = nil) {
+        let ids = ids ?? selection
+        // Captions are written to Photos; writing them into files in added folders is to come (#36).
+        if !files(for: ids).isEmpty, assets(for: ids).isEmpty {
+            announce("Editing captions isn't available for files yet")
+            return
+        }
         guard canEditCaptions else {
             errorMessage = "Editing captions requires macOS 27 or later."
             return
         }
-        let ids = ids ?? selection
-        let chosen = rows.filter { ids.contains($0.id) && !$0.isContainer }
+        let chosen = rows.filter { ids.contains($0.id) && !$0.isContainer && assetsByID[$0.id] != nil }
         guard !chosen.isEmpty else { NSSound.beep(); return }
         captionTarget = CaptionTarget(assetIDs: chosen.map(\.id),
                                       initialText: chosen.count == 1 ? chosen[0].caption : "")
@@ -841,6 +1156,10 @@ final class LibraryModel {
     /// Photo > Use Description as Caption: each selected photo's saved description becomes its caption. Asks before
     /// replacing captions people wrote.
     func useDescriptionAsCaption(_ ids: Set<String>? = nil) {
+        if !files(for: ids ?? selection).isEmpty, assets(for: ids ?? selection).isEmpty {
+            announce("Using a description as the caption isn't available for files yet")
+            return
+        }
         guard canEditCaptions else {
             errorMessage = "Editing captions requires macOS 27 or later."
             return
@@ -899,7 +1218,8 @@ final class LibraryModel {
     /// A description was just saved: with Save descriptions as captions on, it goes into the caption too, quietly.
     private func captionFromNewDescription(_ text: String, key: String) {
         let policy = captionPolicy
-        guard policy != .never, canEditCaptions else { return }
+        // Files in added folders keep their captions until writing file metadata comes (#31).
+        guard policy != .never, canEditCaptions, !key.hasPrefix("file:") else { return }
         let names = self.names
         Task.detached(priority: .utility) {
             // The caption as Photos has it now: never the list's copy, which is empty until its details load, so
@@ -990,15 +1310,15 @@ final class LibraryModel {
     /// Photo > Describe Photo (Shift-Command-D): describes the photo you're on with Apple Intelligence and speaks it,
     /// in the list or gallery. A saved description is spoken at once.
     func describeFocusedPhoto() {
-        guard let row = focusedRow, !row.isContainer, let asset = assetsByID[row.id] else {
+        guard let row = focusedRow, !row.isContainer, let key = descriptionKey(for: row.id) else {
             announce("Select a photo to describe")
             return
         }
-        guard asset.mediaType == .image else {
+        guard isPhoto(row.id) else {
             announce("Videos can't be described")
             return
         }
-        if let saved = descriptions.description(for: asset) {
+        if let saved = descriptions.description(forKey: key) {
             announce(saved)
             return
         }
@@ -1016,7 +1336,7 @@ final class LibraryModel {
         announce("Describing \(row.name)")
         let id = row.id
         describeTask = Task { [weak self] in
-            guard let text = await self?.describeAndRemember(asset, allowNetwork: true) else { return }
+            guard let text = await self?.describeAndRemember(id, allowNetwork: true) else { return }
             self?.say(text, ifStillOn: id)
         }
     }
@@ -1025,11 +1345,11 @@ final class LibraryModel {
     /// description, and speaks the new one. For a saved description that's poor, or from before the photo was edited
     /// or the prompt changed.
     func describeFocusedPhotoAgain() {
-        guard let row = focusedRow, !row.isContainer, let asset = assetsByID[row.id] else {
+        guard let row = focusedRow, !row.isContainer, descriptionKey(for: row.id) != nil else {
             announce("Select a photo to describe")
             return
         }
-        guard asset.mediaType == .image else {
+        guard isPhoto(row.id) else {
             announce("Videos can't be described")
             return
         }
@@ -1043,7 +1363,7 @@ final class LibraryModel {
         describeTask?.cancel()
         announce("Describing \(row.name) again")
         describeTask = Task { [weak self] in
-            let text = await self?.describeAndRemember(asset, allowNetwork: true)
+            let text = await self?.describeAndRemember(id, allowNetwork: true)
             self?.describingAgain[id, default: 1] -= 1
             guard let text else { return }
             self?.say(text, ifStillOn: id)
@@ -1094,29 +1414,42 @@ final class LibraryModel {
     }
 
     /// Describes the photo with Apple Intelligence and saves the description. Returns what to say: the description,
-    /// or why there isn't one. Nil, saying nothing, when the photo is only in iCloud and `allowNetwork` is false,
-    /// or when a newer request replaced this one.
-    private func describeAndRemember(_ asset: PHAsset, allowNetwork: Bool,
+    /// or why there isn't one; nil for a row that isn't a photo. Nil too, saying nothing, when the photo is only in
+    /// iCloud and `allowNetwork` is false, or when a newer request replaced this one. A file in an added folder is
+    /// read from disk and saved under its file key (#36).
+    private func describeAndRemember(_ id: String, allowNetwork: Bool,
                                      keep: @MainActor () -> Bool = { true }) async -> String? {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
-            let box = UncheckedBox(value: asset)
-            guard let data = await PhotoData.request(box.value, allowNetwork: allowNetwork)?.data else {
-                return allowNetwork ? "This photo couldn't be loaded" : nil
+            let key: String
+            let data: Data?
+            if let asset = assetsByID[id] {
+                key = asset.localIdentifier
+                let box = UncheckedBox(value: asset)
+                data = await PhotoData.request(box.value, allowNetwork: allowNetwork)?.data
+                if data == nil, !allowNetwork { return nil }
+            } else if let file = filesByID[id] {
+                key = file.descriptionKey
+                let url = file.url
+                data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url, options: .mappedIfSafe) }.value
+            } else {
+                return nil
             }
+            guard let data else { return "This photo couldn't be loaded" }
             do {
                 guard let text = try await PhotoDescriber.describe(data), !text.isEmpty else {
                     return "Apple Intelligence returned an empty description"
                 }
                 // A newer Describe Photo replaced this one: its description is the one to keep.
                 guard !Task.isCancelled, keep() else { return nil }
-                descriptions.remember(text, for: box.value)
+                descriptions.remember(text, forKey: key)
                 return text
             } catch {
                 return ImageConversation.message(for: error)
             }
         }
 #endif
+        guard descriptionKey(for: id) != nil else { return nil }
         return "Describing photos needs Apple Intelligence on macOS 27 or later."
     }
 
@@ -1180,6 +1513,7 @@ final class LibraryModel {
     }
 
     func fullImage(for id: String) async -> NSImage? {
+        if let file = filesByID[id] { return await FileImages.image(file.url, maxPixels: Int(galleryImageSize.width)) }
         guard let asset = assetsByID[id] else { return nil }
         let box = UncheckedBox(value: asset)
         return await withCheckedContinuation { continuation in
@@ -1193,6 +1527,7 @@ final class LibraryModel {
     // MARK: - Thumbnails and drag
 
     func thumbnail(for id: String) async -> NSImage? {
+        if let file = filesByID[id] { return await FileImages.thumbnail(file.url, size: 64) }
         guard let asset = assetsByID[id] else { return nil }
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat
@@ -1208,6 +1543,8 @@ final class LibraryModel {
     }
 
     func itemProvider(for row: FileRow) -> NSItemProvider? {
+        // A file in an added folder is dragged as itself.
+        if let file = filesByID[row.id] { return NSItemProvider(contentsOf: file.url) }
         guard !row.isContainer, let asset = assetsByID[row.id] else { return nil }
         let provider = NSItemProvider()
         provider.suggestedName = (row.name as NSString).deletingPathExtension

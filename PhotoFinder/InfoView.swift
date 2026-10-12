@@ -40,7 +40,7 @@ struct InfoView: View {
                         fields(details)
                     }
                 }
-                if target.asset.mediaType == .image {
+                if target.isImage {
                     Section("Image Contents") { contentsSection }
                 }
             }
@@ -70,7 +70,7 @@ struct InfoView: View {
     @ViewBuilder private var contentsSection: some View {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
-            AppleIntelligenceSection(imageData: imageData, asset: target.asset)
+            AppleIntelligenceSection(imageData: imageData, descriptionKey: target.descriptionKey)
         }
 #endif
         if let contents {
@@ -99,8 +99,15 @@ struct InfoView: View {
     }
 
     private func load() async {
-        general = PhotoMetadata.general(for: target.asset, name: target.name)
-        let result = await PhotoMetadata.details(for: UncheckedBox(value: target.asset))
+        let result: (fields: [InfoField], imageData: Data?)
+        switch target.source {
+        case .asset(let asset):
+            general = PhotoMetadata.general(for: asset, name: target.name)
+            result = await PhotoMetadata.details(for: UncheckedBox(value: asset))
+        case .file(let file, let row):
+            general = PhotoMetadata.general(for: file, row: row)
+            result = await PhotoMetadata.details(for: file)
+        }
         details = result.fields
         imageData = result.imageData
         loadingDetails = false
@@ -182,6 +189,56 @@ enum PhotoMetadata {
         return (fields, imageData)
     }
 
+
+    /// Get Info for a file in an added folder (#36): what the list knows about it, and where it is.
+    static func general(for file: MediaFile, row: FileRow) -> [InfoField] {
+        var fields = [
+            InfoField(label: "Name", value: row.name),
+            InfoField(label: "Kind", value: row.kind),
+        ]
+        if let date = row.date {
+            fields.append(InfoField(label: "Date Taken", value: date.formatted(date: .complete, time: .standard)))
+        }
+        fields.append(InfoField(label: "Modified", value: file.modified.formatted(date: .complete, time: .standard)))
+        if !row.dimensions.isEmpty {
+            fields.append(InfoField(label: "Dimensions", value: "\(row.dimensions) pixels"))
+        }
+        if !row.durationText.isEmpty {
+            fields.append(InfoField(label: "Duration", value: row.durationText))
+        }
+        fields.append(InfoField(label: "Caption", value: row.caption.isEmpty ? "None" : row.caption))
+        if !row.keywords.isEmpty {
+            fields.append(InfoField(label: "Keywords", value: row.keywords))
+        }
+        if !row.ratingText.isEmpty {
+            fields.append(InfoField(label: "Rating", value: row.ratingText))
+        }
+        if !row.locationText.isEmpty {
+            fields.append(InfoField(label: "Coordinates", value: row.locationText))
+        }
+        fields.append(InfoField(label: "Where", value: (file.folder as NSString).abbreviatingWithTildeInPath))
+        return fields
+    }
+
+    /// The slower details of a file: place name, type, size and camera settings, and its data for describing.
+    static func details(for file: MediaFile) async -> (fields: [InfoField], imageData: Data?) {
+        var fields: [InfoField] = []
+        let url = file.url
+        let isVideo = file.isVideo
+        let metadata = isVideo ? FileMetadata() : await Task.detached { FileMetadata.read(url) }.value
+        if let lat = metadata.latitude, let lon = metadata.longitude,
+           let place = await placeName(for: CLLocation(latitude: lat, longitude: lon)) {
+            fields.append(InfoField(label: "Place Taken", value: place))
+        }
+        if let type = UTType(filenameExtension: url.pathExtension) {
+            fields.append(InfoField(label: "File Type", value: type.localizedDescription ?? url.pathExtension.uppercased()))
+        }
+        fields.append(InfoField(label: "File Size", value: ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file)))
+        guard !isVideo else { return (fields, nil) }
+        let data = await Task.detached { try? Data(contentsOf: url, options: .mappedIfSafe) }.value
+        if let data { fields += exifFields(data) }
+        return (fields, data)
+    }
 
     private static func placeName(for location: CLLocation) async -> String? {
         guard let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }

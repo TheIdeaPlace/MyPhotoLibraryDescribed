@@ -41,6 +41,9 @@ struct PhotoCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
+            // As on Windows (#36). Remove is always enabled and says when you're not in an added folder.
+            Button("Add Folder to Library…") { model.addFolder() }
+            Button("Remove Folder from Library") { model.removeCurrentFolder() }
             Divider()
             Button("Open") { model.open() }
                 .keyboardShortcut("o")
@@ -77,6 +80,9 @@ struct PhotoCommands: Commands {
                     ))
                 }
             }
+            // Windows' Refresh (F5): reads added folders again, and the place showing.
+            Button("Refresh") { model.refresh() }
+                .keyboardShortcut("r")
             Divider()
         }
         // Help: the same items as on Windows (#32, #33), plus macOS's own Help search. About stays in the app menu,

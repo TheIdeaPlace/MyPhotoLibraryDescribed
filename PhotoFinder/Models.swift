@@ -14,6 +14,8 @@ enum SourceKind: Hashable {
     case collectionList(String)
     case year(Int)
     case month(year: Int, month: Int)
+    /// A folder added to the library from outside Photos, or a folder inside one (#36).
+    case directory(String)
 }
 
 /// A place in the sidebar. Items with `children` behave like folders: selecting one lists its children.
@@ -27,6 +29,14 @@ struct SidebarItem: Identifiable, Hashable {
     var parentID: String?
     /// Shown in the Kind column when this item appears as a row, e.g. "Album" or "Folder".
     var containerKind: String
+
+    /// The folder on disk, for a folder added to the library or one inside it (#36).
+    var directoryPath: String? {
+        if case .directory(let path) = kind { return path }
+        return nil
+    }
+
+    var isDirectory: Bool { directoryPath != nil }
 }
 
 struct SidebarSection: Identifiable, Hashable {
@@ -132,6 +142,42 @@ struct FileRow: Identifiable, Hashable, Sendable {
         copy.caption = details.caption
         copy.keywords = details.keywords
         return copy
+    }
+
+    /// A photo or video file in an added folder (#36). `metadata` is nil until it's been read; the file system's
+    /// dates and the file's kind stand in until then.
+    init(file: MediaFile, metadata: FileMetadata?) {
+        id = FolderID.file(file.path)
+        payload = .photo
+        let name = file.name
+        self.name = name
+        fileType = Self.fileTypeDescription(for: name)
+        symbol = file.isVideo ? "video" : "photo"
+        // Date Taken is the camera's date when the file has one, as Windows does, otherwise when the file was made.
+        date = metadata?.dateTaken ?? file.created ?? file.modified
+        dateText = date.map { Self.dateStyle.format($0) } ?? ""
+        modified = file.modified
+        modifiedText = Self.dateStyle.format(file.modified)
+        let width = metadata?.width ?? 0, height = metadata?.height ?? 0
+        kind = MediaFiles.kind(name: name, width: width, height: height)
+        pixelCount = width * height
+        dimensions = width > 0 ? "\(width) × \(height)" : ""
+        orientation = width == 0 ? "" : width > height ? "Landscape" : width < height ? "Portrait" : "Square"
+        megapixels = Double(pixelCount) / 1_000_000
+        megapixelsText = pixelCount > 0 && !file.isVideo ? "\(megapixels.formatted(.number.precision(.fractionLength(1)))) MP" : ""
+        duration = metadata?.duration ?? 0
+        durationText = file.isVideo && duration > 0 ? Self.durationText(duration) : ""
+        isFavorite = false
+        caption = metadata?.caption ?? ""
+        keywords = metadata?.keywords.joined(separator: ", ") ?? ""
+        rating = metadata?.rating ?? 0
+        ratingText = rating == 0 ? "" : rating == 1 ? "1 star" : "\(rating) stars"
+        if let lat = metadata?.latitude, let lon = metadata?.longitude {
+            locationText = String(format: "%.4f, %.4f", lat, lon)
+        } else {
+            locationText = ""
+        }
+        source = FolderRoots.displayName(file.folder)
     }
 
     init(container item: SidebarItem) {
