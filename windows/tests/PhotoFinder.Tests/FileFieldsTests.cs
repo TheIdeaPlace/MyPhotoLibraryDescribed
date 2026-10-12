@@ -230,12 +230,16 @@ public sealed class FileFieldsTests : IDisposable
     {
         var path = _lib.AddJpeg("rated.jpg", new TestLibrary.JpegOptions { Rating = 2 });
         File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. Video]);
-        var exif = Segments(File.ReadAllBytes(path)).Where(s => s.Marker == 0xE1 && !IsXmp(File.ReadAllBytes(path), s)).Select(s => s.Length).ToList();
+        var original = File.ReadAllBytes(path);
+        var exif = Segments(original).Where(s => s.Marker == 0xE1 && !IsXmp(original, s)).Select(s => original[s.Offset..(s.Offset + s.Length)]).ToList();
 
         Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 5)).Succeeded);
         Assert.Equal(5, (await MetadataReader.ReadAsync(path)).Rating);
         var after = File.ReadAllBytes(path);
-        Assert.Equal(exif, Segments(after).Where(s => s.Marker == 0xE1 && !IsXmp(after, s)).Select(s => s.Length).ToList());
+        var exifAfter = Segments(after).Where(s => s.Marker == 0xE1 && !IsXmp(after, s)).Select(s => after[s.Offset..(s.Offset + s.Length)]).ToList();
+        Assert.Equal(exif.Select(e => e.Length), exifAfter.Select(e => e.Length));
+        // Only the two rating values (two bytes each) may differ.
+        Assert.InRange(exif.Zip(exifAfter).Sum(p => p.First.Zip(p.Second).Count(b => b.First != b.Second)), 0, 4);
         Assert.Equal(Video, after[^Video.Length..]);
 
         Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 0)).Succeeded);
@@ -294,10 +298,63 @@ public sealed class FileFieldsTests : IDisposable
     {
         var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
         var broken = WithSegment(plain, 0xE1, [.. XmpSignature, .. "<x:xmpmeta not xml"u8.ToArray()]);
-        Assert.Throws<NotSupportedException>(() => JpegMetadata.Apply(broken, new JpegMetadata.Changes { Caption = "A" }));
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(broken, new JpegMetadata.Changes { Caption = "A" }));
         var extended = WithSegment(plain, 0xE1, [.. "http://ns.adobe.com/xmp/extension/\0"u8.ToArray(), 1, 2, 3]);
-        Assert.Throws<NotSupportedException>(() => JpegMetadata.Apply(extended, new JpegMetadata.Changes { Caption = "A" }));
-        Assert.Throws<NotSupportedException>(() => JpegMetadata.Apply("not a jpeg"u8.ToArray(), new JpegMetadata.Changes { Caption = "A" }));
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(extended, new JpegMetadata.Changes { Caption = "A" }));
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply("not a jpeg"u8.ToArray(), new JpegMetadata.Changes { Caption = "A" }));
+    }
+
+    [Fact]
+    public async Task AnAccentedTitleInExif_IsEmptiedWhenTheCaptionReplacesIt()
+    {
+        var path = _lib.AddJpeg("cafe.jpg");
+        // Windows' own handler writes the Title into EXIF (ImageDescription as UTF-8, and XPTitle).
+        var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
+        await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>("System.Title", "Café au lait")]);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        Assert.Equal(1, (await MetadataWriter.SetCaptionAsync([ItemFor(path)], "Un café.")).Succeeded);
+        Assert.Equal("Un café.", await MetadataReader.ReadTitleAsync(path));
+        var check = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
+        var subject = await check.Properties.RetrievePropertiesAsync(["System.Subject"]);
+        Assert.NotEqual("Café au lait", subject.TryGetValue("System.Subject", out var value) ? value as string : null);
+        // Nowhere in the file any more: not in EXIF's ImageDescription, nor its XPTitle (UTF-16), nor the XMP.
+        var bytes = File.ReadAllBytes(path);
+        Assert.True(bytes.AsSpan().IndexOf("Café au lait"u8) < 0, "The old title is still in the file as UTF-8.");
+        Assert.True(bytes.AsSpan().IndexOf(System.Text.Encoding.Unicode.GetBytes("Café au lait")) < 0, "The old title is still in XPTitle.");
+    }
+
+    [Fact]
+    public async Task ARefusal_SaysWhy()
+    {
+        var path = _lib.AddJpeg("ext.jpg");
+        File.WriteAllBytes(path, WithSegment(WithoutRoom(File.ReadAllBytes(path)), 0xE1, [.. "http://ns.adobe.com/xmp/extension/\0"u8.ToArray(), 1, 2, 3]));
+        var result = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
+        Assert.Equal(0, result.Succeeded);
+        Assert.Equal("ext.jpg: Its metadata is spread over several parts (Extended XMP), which isn't changed. It was left as it is.", result.FailureSummary);
+    }
+
+    [Fact]
+    public void XmpThatIsntUtf8_IsLeftAlone_RatherThanChanged()
+    {
+        var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
+        byte[] latin = [.. "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:my=\"urn:my\" my:Name=\"Caf"u8.ToArray(), 0xE9, .. "\"/></rdf:RDF></x:xmpmeta>"u8.ToArray()];
+        var jpeg = WithSegment(plain, 0xE1, [.. XmpSignature, .. latin]);
+        Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(jpeg, new JpegMetadata.Changes { Caption = "A" }));
+    }
+
+    [Fact]
+    public void ACaptionInOneLanguage_IsReplacedThere_AndLineBreaksStayEscaped()
+    {
+        var xmp = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:my=\"urn:my\"><my:Place>Kona&#xD;&#xA;HI</my:Place><dc:description><rdf:Alt><rdf:li xml:lang=\"en-US\">Old</rdf:li></rdf:Alt></dc:description></rdf:Description></rdf:RDF></x:xmpmeta>";
+        var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
+        var jpeg = WithSegment(plain, 0xE1, [.. XmpSignature, .. System.Text.Encoding.UTF8.GetBytes(xmp)]);
+        var changed = JpegMetadata.Apply(jpeg, new JpegMetadata.Changes { Caption = "New" });
+        var seg = Segments(changed).Single(x => IsXmp(changed, x));
+        var text = System.Text.Encoding.UTF8.GetString(changed, seg.Offset + 4 + XmpSignature.Length, seg.Length - 4 - XmpSignature.Length);
+        Assert.DoesNotContain(">Old<", text);
+        Assert.Contains("xml:lang=\"en-US\">New<", text);
+        Assert.Contains("Kona&#xD;", text);
     }
 
     [Fact]

@@ -58,7 +58,7 @@ public static class JpegMetadata
         public int End => Offset + Length;
     }
 
-    /// <summary>The JPEG with the changes made. Throws <see cref="NotSupportedException"/> for a file it can't safely
+    /// <summary>The JPEG with the changes made. Throws <see cref="MetadataRefusedException"/> for a file it can't safely
     /// change (not a JPEG it can follow, unreadable XMP, Extended XMP, too much metadata) and
     /// <see cref="SecondPictureException"/> for a multi-picture file the change won't fit in.</summary>
     public static byte[] Apply(byte[] jpeg, Changes changes)
@@ -66,7 +66,7 @@ public static class JpegMetadata
         var segments = Segments(jpeg);
         var xmpAt = segments.FindIndex(s => IsApp1With(jpeg, s, XmpSignature));
         if (segments.Any(s => IsApp1With(jpeg, s, ExtendedSignature)))
-            throw new NotSupportedException("Its metadata is spread over several parts (Extended XMP), which isn't changed.");
+            throw new MetadataRefusedException("Its metadata is spread over several parts (Extended XMP), which isn't changed.");
         var mpf = segments.FindIndex(s => s.Marker == 0xE2 && Has(jpeg, s.Offset + 4, MpfSignature));
 
         XDocument document;
@@ -88,7 +88,7 @@ public static class JpegMetadata
         var packet = Packet(document, oldPacketLength);
         var segment = new byte[4 + XmpSignature.Length + packet.Length];
         var length = segment.Length - 2;
-        if (length > MaxSegmentLength) throw new NotSupportedException("There's too much metadata to fit.");
+        if (length > MaxSegmentLength) throw new MetadataRefusedException("There's too much metadata to fit.");
         segment[0] = 0xFF;
         segment[1] = 0xE1;
         segment[2] = (byte)(length >> 8);
@@ -126,18 +126,18 @@ public static class JpegMetadata
     /// <summary>The segments before the compressed picture. Throws when the file isn't a JPEG that can be followed.</summary>
     private static List<Segment> Segments(byte[] b)
     {
-        if (b.Length < 4 || b[0] != 0xFF || b[1] != 0xD8) throw new NotSupportedException("It isn't a JPEG that can be followed.");
+        if (b.Length < 4 || b[0] != 0xFF || b[1] != 0xD8) throw new MetadataRefusedException("It isn't a JPEG that can be followed.");
         var list = new List<Segment>();
         var i = 2;
         while (true)
         {
-            if (i + 3 >= b.Length || b[i] != 0xFF) throw new NotSupportedException("It isn't a JPEG that can be followed.");
+            if (i + 3 >= b.Length || b[i] != 0xFF) throw new MetadataRefusedException("It isn't a JPEG that can be followed.");
             var marker = b[i + 1];
             if (marker == 0xFF) { i++; continue; }
             if (marker is 0xDA or 0xD9) return list;  // the picture starts: nothing after it is touched
             if (marker is 0x01 or (>= 0xD0 and <= 0xD7)) { i += 2; continue; }
             var length = (b[i + 2] << 8) | b[i + 3];
-            if (length < 2 || i + 2 + length > b.Length) throw new NotSupportedException("It isn't a JPEG that can be followed.");
+            if (length < 2 || i + 2 + length > b.Length) throw new MetadataRefusedException("It isn't a JPEG that can be followed.");
             list.Add(new Segment(marker, i, 2 + length));
             i += 2 + length;
         }
@@ -151,18 +151,22 @@ public static class JpegMetadata
 
     // MARK: XMP
 
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
     private static XDocument Parse(ReadOnlySpan<byte> packet)
     {
-        var text = Encoding.UTF8.GetString(packet).TrimEnd('\0', ' ', '\r', '\n', '\t');
         try
         {
+            // Strictly: bytes that aren't UTF-8 would otherwise come back as replacement characters, changing another
+            // app's data.
+            var text = StrictUtf8.GetString(packet).TrimEnd('\0', ' ', '\r', '\n', '\t');
             var document = XDocument.Parse(text, LoadOptions.PreserveWhitespace);
             if (document.Descendants(Rdf + "RDF").FirstOrDefault() is null) throw new XmlException("No rdf:RDF.");
             return document;
         }
-        catch (XmlException)
+        catch (Exception ex) when (ex is XmlException or DecoderFallbackException)
         {
-            throw new NotSupportedException("Its existing metadata (XMP) can't be read, so it's left as it is.");
+            throw new MetadataRefusedException("Its existing metadata (XMP) can't be read.");
         }
     }
 
@@ -202,7 +206,13 @@ public static class JpegMetadata
             {
                 foreach (var d in descriptions) d.Attribute(name)?.Remove();
                 var alt = existing.Element(Rdf + "Alt")!;
-                var item = alt.Elements(Rdf + "li").FirstOrDefault(li => (string?)li.Attribute(XNamespace.Xml + "lang") == "x-default");
+                var items = alt.Elements(Rdf + "li").ToList();
+                var item = items.FirstOrDefault(li => string.Equals((string?)li.Attribute(XNamespace.Xml + "lang"), "x-default", StringComparison.OrdinalIgnoreCase));
+                // The text being replaced: the default's, or a single language's when there's no default. Items holding
+                // it are the same caption, so they change too; translations that differ are kept.
+                var old = item?.Value ?? (items.Count == 1 ? items[0].Value : null);
+                if (old is not null)
+                    foreach (var li in items.Where(li => li != item && li.Value == old)) li.Value = value;
                 if (item is null) alt.AddFirst(item = new XElement(Rdf + "li", new XAttribute(XNamespace.Xml + "lang", "x-default")));
                 item.Value = value;
                 return;
@@ -238,7 +248,17 @@ public static class JpegMetadata
     private static byte[] Packet(XDocument document, int oldLength)
     {
         var root = document.Root!;
-        var body = Encoding.UTF8.GetBytes(root.ToString(SaveOptions.DisableFormatting));
+        // Carriage returns in values stay escaped (&#xD;), or a reader would normalise them away.
+        var buffer = new MemoryStream();
+        using (var writer = XmlWriter.Create(buffer, new XmlWriterSettings
+        {
+            OmitXmlDeclaration = true,
+            Encoding = new UTF8Encoding(false),
+            NewLineHandling = NewLineHandling.Entitize,
+            ConformanceLevel = ConformanceLevel.Fragment,
+        }))
+            root.WriteTo(writer);
+        var body = buffer.ToArray();
         var head = Encoding.UTF8.GetBytes("<?xpacket begin=\"﻿\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>");
         var tail = Encoding.UTF8.GetBytes("<?xpacket end=\"w\"?>");
         var bare = head.Length + body.Length + tail.Length;
@@ -255,6 +275,22 @@ public static class JpegMetadata
     }
 
     // MARK: EXIF, in place
+
+    /// <summary>An EXIF text value, read as UTF-8 when it is that, and as Latin-1.</summary>
+    private static IEnumerable<string> TextOf(byte[] b, int at, int n)
+    {
+        string? utf8 = null;
+        try
+        {
+            utf8 = StrictUtf8.GetString(b, at, n);
+        }
+        catch (DecoderFallbackException)
+        {
+            // Not UTF-8.
+        }
+        if (utf8 is not null) yield return utf8.TrimEnd('\0').Trim();
+        yield return Encoding.Latin1.GetString(b, at, n).TrimEnd('\0').Trim();
+    }
 
     /// <summary>The rating tags Windows writes (Rating, RatingPercent) set where they exist, and EXIF title fields
     /// holding <see cref="Changes.ClearExifTitle"/> emptied. Only values the same size; nothing is added or moved.</summary>
@@ -295,12 +331,17 @@ public static class JpegMetadata
             if (changes.ClearExifTitle is { Length: > 0 } old && ((tag == 0x010E && type == 2) || (tag == 0x9C9B && type == 1)) && n > 0)
             {
                 var at = n <= 4 ? entry + 8 : tiff + U32(entry + 8);
-                if (at < tiff || at + n > end) continue;
-                var text = tag == 0x010E
-                    ? Encoding.Latin1.GetString(b, at, n).TrimEnd('\0').Trim()
-                    : Encoding.Unicode.GetString(b, at, n - n % 2).TrimEnd('\0').Trim();
-                if (text == old.Trim()) Array.Clear(b, at, n);
+                if (n < 0 || at < tiff || n > end - at) continue;
+                // Windows writes ImageDescription as UTF-8; older cameras and tools as Latin-1.
+                var matches = tag == 0x010E
+                    ? TextOf(b, at, n).Any(t => t == old.Trim())
+                    : Encoding.Unicode.GetString(b, at, n - n % 2).TrimEnd('\0').Trim() == old.Trim();
+                if (matches) Array.Clear(b, at, n);
             }
         }
     }
 }
+
+/// <summary>A JPEG whose metadata can't be changed safely, with why (Extended XMP, XMP that can't be read, too much to
+/// fit). The photo is left as it is.</summary>
+public sealed class MetadataRefusedException(string message) : Exception(message);

@@ -104,13 +104,15 @@ public static class MetadataWriter
                 // Saving properties rewrites the file, which changes its modified date. Put it back, so a
                 // photo without a Date Taken doesn't jump to today in the list.
                 // UTC, so the hour that repeats when daylight saving ends can't shift it.
-                if (XmpFields.IsJpeg(item.Path) && key is "System.Rating" or "System.Title")
+                if (XmpFields.IsJpeg(item.Path) && key == "System.Rating")
                 {
                     // Windows' handler rebuilds a JPEG's EXIF (re-encoding its thumbnail, dropping tags, moving its
                     // MakerNote) and loses a motion photo's video: JPEGs are changed segment by segment instead (#86).
-                    await XmpFields.WriteJpegAsync(item.Path, key == "System.Rating"
-                        ? new JpegMetadata.Changes { Stars = MediaTypes.StarsFromRating(Convert.ToUInt32(value ?? 0u, System.Globalization.CultureInfo.InvariantCulture)) }
-                        : new JpegMetadata.Changes { Title = (value as string) ?? "", ClearExifTitle = await MetadataReader.ReadTitleAsync(item.Path) });
+                    // A JPEG's Title is written with its caption, in SetFieldsAsync.
+                    await XmpFields.WriteJpegAsync(item.Path, new JpegMetadata.Changes
+                    {
+                        Stars = MediaTypes.StarsFromRating(Convert.ToUInt32(value ?? 0u, System.Globalization.CultureInfo.InvariantCulture)),
+                    });
                 }
                 else
                 {
@@ -154,12 +156,14 @@ public static class MetadataWriter
     {
         SecondPictureException => $"{item.Name} holds a second picture, such as an HDR map, and there's no room to change it without breaking that, so it was left as it is.",
         InvalidDataException => $"{item.Name} isn't the kind of file its name says, so it was left as it is.",
+        MetadataRefusedException => $"{item.Name}: {ex.Message} It was left as it is.",
         UnauthorizedAccessException => $"{item.Name} is read-only or in use.",
         FileNotFoundException => $"{item.Name} is no longer there.",
         // E_FAIL and "not implemented" are what a format without a writable property handler gives.
         NotImplementedException or NotSupportedException => $"{item.Name} is a {MediaTypes.FileTypeDescription(item.Path)}, which can't store this.",
         _ when ex.HResult is unchecked((int)0x80004005) or unchecked((int)0x80004001) or unchecked((int)0x8007000D) or unchecked((int)0x80030005)
             => $"{item.Name} is a {MediaTypes.FileTypeDescription(item.Path)}, which can't store this.",
+        _ when ex.Message.Trim().Length == 0 => $"{item.Name} couldn't be read as a photo, so it was left as it is.",
         _ => $"{item.Name}: {ex.Message.Trim()}",
     };
 }

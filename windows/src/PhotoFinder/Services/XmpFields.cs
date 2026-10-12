@@ -89,7 +89,7 @@ public static class XmpFields
         {
             after = JpegMetadata.Apply(before, changes);
         }
-        catch (NotSupportedException) when (!LooksLikeJpeg(before))
+        catch (MetadataRefusedException) when (!LooksLikeJpeg(before))
         {
             throw new InvalidDataException("The file isn't the kind its name says.");
         }
