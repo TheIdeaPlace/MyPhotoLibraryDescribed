@@ -42,7 +42,7 @@ public sealed class CaptionTests : IDisposable
     private async Task<LibraryModel> StartAsync(bool saveInPhotos)
     {
         var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
-        var model = new LibraryModel(new Settings { SaveDescriptionsInPhotos = saveInPhotos }, _lib.PathOf(@"data\Settings.json"),
+        var model = new LibraryModel(new Settings { SaveDescriptionsInPhotos = saveInPhotos, ReadOnly = false }, _lib.PathOf(@"data\Settings.json"),
             new MetadataCache(_lib.PathOf(@"data\m.json")), () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1))
         { Descriptions = store };
         await model.StartAsync();

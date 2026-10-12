@@ -61,7 +61,15 @@ public partial class MainWindow : Window
         BuildColumns();
         BuildSortMenu();
         BuildKindMenu();
-        SaveInPhotosItem.IsChecked = model.Settings.SaveDescriptionsInPhotos;
+        ReadOnlyItem.IsChecked = model.IsReadOnly;
+        ShowSaveInPhotos();
+        // Ctrl+F9 from Preview and Get Info too, which are modal over this window.
+        if (!_statusKeyRegistered)
+        {
+            _statusKeyRegistered = true;
+            EventManager.RegisterClassHandler(typeof(Window), Keyboard.PreviewKeyDownEvent, new KeyEventHandler(OtherWindow_PreviewKeyDown));
+        }
+        UpdateTitle();
         SetUpDescriptionPanel();
         // WPF presses a button by its access key on a plain letter when focus is somewhere that doesn't take typing (the
         // gallery photo, the sidebar, the status bar): "c" in the gallery would run Use as Caption and change the file.
@@ -154,8 +162,10 @@ public partial class MainWindow : Window
         Bind(AppCommands.AllPhotos, () => _model.Navigate(SidebarIds.AllPhotos));
         Bind(AppCommands.NextPane, () => MovePane(1));
         Bind(AppCommands.PreviousPane, () => MovePane(-1));
-        Bind(AppCommands.ToggleFavorite, () => { if (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite")) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
+        Bind(AppCommands.ToggleFavorite, () => { if (CanChangePhotos() && (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite"))) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, () => EditCaption(), HasFiles);
+        Bind(AppCommands.ReadStatusBar, ReadStatusBar);
+        Bind(AppCommands.GoToStatusBar, FocusStatusBar);
         Bind(AppCommands.UseDescriptionAsCaption, () => _model.Fire(UseDescriptionAsCaptionAsync(_model.SelectedRows)), HasFiles);
         Bind(AppCommands.About, ShowAbout);
         Bind(AppCommands.CheckForUpdates, CheckForUpdates);
@@ -190,7 +200,7 @@ public partial class MainWindow : Window
         CommandBindings.Add(new CommandBinding(AppCommands.Rate,
             (_, e) =>
             {
-                if (int.TryParse(e.Parameter?.ToString(), out var stars) && (_model.IsWriting || ConfirmBulkWrite("Set Rating"))) _model.Fire(_model.SetRatingAsync(stars));
+                if (int.TryParse(e.Parameter?.ToString(), out var stars) && CanChangePhotos() && (_model.IsWriting || ConfirmBulkWrite("Set Rating"))) _model.Fire(_model.SetRatingAsync(stars));
                 e.Handled = true;
             },
             (_, e) => { e.CanExecute = HasFiles(); e.Handled = true; }));
@@ -311,6 +321,12 @@ public partial class MainWindow : Window
 
     internal void SetSaveInPhotos(bool on)
     {
+        // While read-only, turning it on would promise something that can't happen.
+        if (on && !CanChangePhotos())
+        {
+            SaveInPhotosItem.IsChecked = false;
+            return;
+        }
         if (on && !QuestionDialog.Ask(ActiveWindow, "Save Descriptions in Photos", "Save descriptions in your photos?",
                 "From now on, each new description is also saved in the photo: as its caption when it has none, and in the file's accessibility fields. Captions and alt text that you or other apps wrote are never replaced. You can turn this off at any time.",
                 "Save in Photos"))
@@ -333,6 +349,7 @@ public partial class MainWindow : Window
     internal async Task UseDescriptionAsCaptionAsync(IReadOnlyList<FileRow> rows, Window? owner = null, string? kind = null)
     {
         owner ??= this;
+        if (!CanChangePhotos()) return;
         var photos = rows.Where(r => r.Item is { IsVideo: false }).ToList();
         if (photos.Count == 0)
         {
@@ -444,8 +461,9 @@ public partial class MainWindow : Window
     {
         switch (e.PropertyName)
         {
-            case nameof(LibraryModel.Title):
+            case nameof(LibraryModel.Title) or nameof(LibraryModel.IsReadOnly):
                 UpdateTitle();
+                ReadOnlyItem.IsChecked = _model.IsReadOnly;
                 break;
             case nameof(LibraryModel.Rows):
                 UpdateEmptyText();
@@ -462,7 +480,51 @@ public partial class MainWindow : Window
         }
     }
 
-    private void UpdateTitle() => Title = _model.CurrentSource is null ? AppInfo.Name : $"{_model.Title} - {AppInfo.Name}";
+    /// <summary>"Pictures - Photo Finder - Read-Only", or "- Editing" once changes to photos are allowed (#83), so it's
+    /// heard with the window's name.</summary>
+    private void UpdateTitle()
+    {
+        var mode = _model.IsReadOnly ? "Read-Only" : "Editing";
+        Title = _model.CurrentSource is null ? $"{AppInfo.Name} - {mode}" : $"{_model.Title} - {AppInfo.Name} - {mode}";
+    }
+
+    /// <summary>Before a command that would change a photo: while read-only, says why it can't and says no.</summary>
+    internal bool CanChangePhotos()
+    {
+        if (!_model.IsReadOnly) return true;
+        System.Media.SystemSounds.Beep.Play();
+        Services.Announcer.Announce(Services.PhotoChanges.ReadOnlyMessage);
+        return false;
+    }
+
+    /// <summary>File > Read-Only. Turning it off asks every time, with the risk said plainly; turning it on doesn't.</summary>
+    private void ReadOnly_Click(object sender, RoutedEventArgs e) => SetReadOnly(!_model.IsReadOnly);
+
+    internal void SetReadOnly(bool on)
+    {
+        // Keep Read-Only is the default and has focus: Enter alone never turns the protection off.
+        if (!on && !QuestionDialog.AskRisky(ActiveWindow, "Allow Changes to Photos", $"Let {AppInfo.Name} change your photos?",
+                $"{AppInfo.Name} will be able to write captions, alt text and ratings into your photo files, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to read-only at any time.",
+                "Allow Changes", "Keep Read-Only"))
+        {
+            ReadOnlyItem.IsChecked = true;
+            return;
+        }
+        _model.IsReadOnly = on;
+        ReadOnlyItem.IsChecked = on;
+        // Queued behind the menu closing and focus returning, so it isn't cut off.
+        ShowSaveInPhotos();
+        Services.Announcer.AnnounceAfter(on ? "Read-only. Photos won't be changed" : $"Editing. {AppInfo.Name} can change your photos", "PhotoFinderSetting");
+    }
+
+    /// <summary>Save Descriptions in Photos reads as checked only when it's working: while read-only it's paused (the
+    /// choice is kept for when changes are allowed), and descriptions made meanwhile aren't saved into photos later.</summary>
+    private void ShowSaveInPhotos()
+    {
+        SaveInPhotosItem.IsChecked = _model.Settings.SaveDescriptionsInPhotos && !_model.IsReadOnly;
+        AutomationProperties.SetHelpText(SaveInPhotosItem,
+            _model.Settings.SaveDescriptionsInPhotos && _model.IsReadOnly ? "Paused while read-only" : "");
+    }
 
     private void UpdateEmptyText()
     {
@@ -749,7 +811,22 @@ public partial class MainWindow : Window
     internal List<TextBlock> StatusSections() =>
         new[] { StatusBarText, ActivityText, BackgroundText }.Where(t => t.IsVisible || t == StatusBarText).ToList();
 
-    /// <summary>F6 to the status bar: its first section, announced as the status bar, as QuickMail does.</summary>
+    private static bool _statusKeyRegistered;
+
+    private static void OtherWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Handled || sender is MainWindow || e.Key != Key.F9 || Keyboard.Modifiers != ModifierKeys.Control) return;
+        if (Application.Current?.Windows.OfType<MainWindow>().FirstOrDefault() is not { } main) return;
+        main.ReadStatusBar();
+        e.Handled = true;
+    }
+
+    /// <summary>Ctrl+F9: the status bar's sections, spoken from wherever you are, without moving focus.</summary>
+    internal void ReadStatusBar() =>
+        Services.Announcer.Announce(string.Join(". ", StatusSections().Select(t => t.Text.Trim()).Where(t => t.Length > 0)) is { Length: > 0 } text
+            ? text : "The status bar is empty", interrupt: true);
+
+    /// <summary>F6 (or Ctrl+Shift+F9) to the status bar: its first section, announced as the status bar, as QuickMail does.</summary>
     internal void FocusStatusBar()
     {
         StatusBarText.Focus();
@@ -987,6 +1064,7 @@ public partial class MainWindow : Window
     {
         var rows = (chosen ?? _model.SelectedRows).Where(r => r.Item is not null).ToList();
         if (rows.Count == 0) { System.Media.SystemSounds.Beep.Play(); return; }
+        if (!CanChangePhotos()) return;
         if (!ConfirmBulkWrite("Edit Caption", rows.Select(r => r.Item!).ToList())) return;
         // A caption not read yet would show as blank, and saving would erase it. Read it first.
         var initial = "";

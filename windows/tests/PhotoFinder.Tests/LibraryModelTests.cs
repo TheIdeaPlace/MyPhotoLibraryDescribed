@@ -32,7 +32,7 @@ public sealed class LibraryModelTests : IDisposable
 
     private async Task<LibraryModel> StartAsync(Settings? settings = null)
     {
-        var model = new LibraryModel(settings ?? new Settings(), _lib.PathOf(@"data\Settings.json"),
+        var model = new LibraryModel(settings ?? new Settings { ReadOnly = false }, _lib.PathOf(@"data\Settings.json"),
             new MetadataCache(_lib.PathOf(@"data\Metadata.json")), () => Task.FromResult(new List<string> { _lib.Root }),
             // Years after the files were made, so nothing counts as Recently Added.
             () => DateTime.Now.AddYears(1));
@@ -135,7 +135,7 @@ public sealed class LibraryModelTests : IDisposable
     [WpfFact]
     public async Task SortBy_TogglesDirection_AnnouncesIt_AndIsRemembered()
     {
-        var settings = new Settings();
+        var settings = new Settings { ReadOnly = false };
         using var model = await StartAsync(settings);
         model.SortBy("name");
         Assert.Equal(["IMG_1.jpg", "IMG_2.jpg", "IMG_10.jpg", "Screenshot 2024-07-01.jpg"], model.Rows.Select(r => r.Name));
@@ -225,7 +225,7 @@ public sealed class LibraryModelTests : IDisposable
     [WpfFact]
     public async Task Columns_ChangeWhatScreenReadersHearForEachRow()
     {
-        var settings = new Settings();
+        var settings = new Settings { ReadOnly = false };
         using var model = await StartAsync(settings);
         var row = model.Rows.Single(r => r.Name == "IMG_10.jpg");
         Assert.DoesNotContain("holiday", row.AccessibleName);
@@ -276,7 +276,7 @@ public sealed class LibraryModelTests : IDisposable
     {
         using var other = new TestLibrary();
         other.AddJpeg("elsewhere.jpg");
-        var settings = new Settings();
+        var settings = new Settings { ReadOnly = false };
         using var model = await StartAsync(settings);
         await model.AddFolderAsync(other.Root);
         Assert.Equal(5, model.ItemsById[SidebarIds.AllPhotos].Count);

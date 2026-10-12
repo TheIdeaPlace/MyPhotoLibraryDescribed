@@ -268,7 +268,7 @@ public sealed class WindowTests : IDisposable
         try
         {
             Assert.True(await WaitFor(() => model.Rows.Count == 2 && model.DetailProgress is null && model.Rows.Any(r => r.Caption == "Beach")));
-            Assert.Equal("All Photos - Photo Finder", window.Title);
+            Assert.Equal("All Photos - Photo Finder - Read-Only", window.Title);
             Assert.Equal("All Photos", AutomationProperties.GetName(window.FileList));
             Assert.Equal(2, window.FileList.Items.Count);
 

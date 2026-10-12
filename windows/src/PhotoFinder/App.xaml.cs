@@ -25,6 +25,8 @@ public partial class App : Application
             args.Handled = true;
         };
         var settings = Settings.Load(Settings.DefaultPath);
+        // Nothing may change a photo until the person's choice says so (#83).
+        PhotoChanges.Allowed = !settings.ReadOnly;
         var descriptions = new DescriptionStore(DescriptionStore.DefaultPath);
         var model = new LibraryModel(settings, Settings.DefaultPath, new MetadataCache(MetadataCache.DefaultPath),
             LibraryRoots.PicturesLibraryAsync) { Descriptions = descriptions };
