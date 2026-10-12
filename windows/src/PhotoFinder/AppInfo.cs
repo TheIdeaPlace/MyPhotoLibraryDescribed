@@ -18,6 +18,18 @@ internal static class AppInfo
     /// and descriptions.</summary>
     public const string DataFolderName = "PhotoFinder";
 
-    /// <summary>Where Report a Bug files issues, until the app kit's relay is set up for this app (#33).</summary>
-    public const string IssuesUrl = "https://github.com/kellylford/PhotoFinder/issues/new";
+    /// <summary>The GitHub repository, in one place (as the Mac's AppInfo.repository), for an eventual move.</summary>
+    public const string Repository = "kellylford/PhotoFinder";
+
+    /// <summary>Where Report a Bug files issues.</summary>
+    public const string IssuesUrl = $"https://github.com/{Repository}/issues/new";
+
+    /// <summary>Windows releases are tagged windows-v&lt;version&gt;, as the Mac's are mac-v&lt;version&gt;.</summary>
+    public const string ReleaseTagPrefix = "windows-v";
+
+    /// <summary>All the releases.</summary>
+    public const string ReleasesUrl = $"https://github.com/{Repository}/releases";
+
+    /// <summary>A version's release notes, for See what's new.</summary>
+    public static string ReleaseNotesUrl(string version) => $"https://github.com/{Repository}/releases/tag/{ReleaseTagPrefix}{version}";
 }
