@@ -1739,6 +1739,11 @@ final class LibraryModel {
             self?.backgroundProgress = text
         }
         // A photo whose folder was taken out of the library meanwhile isn't described.
+        describer.isForegroundBusy = { [weak self] in
+            guard let self else { return false }
+            return self.autoDescriber.describingID != nil || self.autoDescriber.aheadID != nil
+                || self.describingIDs.keys.contains { self.focusedRow?.id == $0 }
+        }
         describer.isWanted = { [weak self] path in
             guard let self else { return false }
             return FolderRoots.root(containing: path, in: self.folderRoots) != nil
