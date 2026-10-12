@@ -121,6 +121,10 @@ final class AutoDescriber {
         }
     }
 
+    /// Describe Photo or Describe Again spoke this photo's description, so coming back to the window doesn't say it
+    /// again.
+    func spoken(_ id: String) { spokenID = id }
+
     private func say(_ text: String, about id: String) {
         spokenID = id
         speak(text)

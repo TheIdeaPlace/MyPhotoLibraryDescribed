@@ -1578,6 +1578,7 @@ final class LibraryModel {
     /// Spoken only if you're still on that photo and haven't asked about another since.
     private func say(_ text: String, ifStillOn id: String) {
         guard !Task.isCancelled, focusedRow?.id == id else { return }
+        autoDescriber.spoken(id)
         announce(text)
     }
 
