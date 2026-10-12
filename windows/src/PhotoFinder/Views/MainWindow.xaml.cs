@@ -176,6 +176,11 @@ public partial class MainWindow : Window
         Bind(AppCommands.ToggleFavorite, () => { if (CanChangePhotos() && (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite"))) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, () => EditCaption(), HasFiles);
         Bind(AppCommands.ReadStatusBar, ReadStatusBar);
+        Bind(AppCommands.OpenLogFolder, () =>
+        {
+            Directory.CreateDirectory(Services.Log.Folder);
+            OpenInBrowser(Services.Log.Folder, "The log files");
+        });
         Bind(AppCommands.GoToStatusBar, FocusStatusBar);
         Bind(AppCommands.UseDescriptionAsCaption, () => _model.Fire(UseDescriptionAsCaptionAsync(_model.SelectedRows)), HasFiles);
         Bind(AppCommands.About, ShowAbout);

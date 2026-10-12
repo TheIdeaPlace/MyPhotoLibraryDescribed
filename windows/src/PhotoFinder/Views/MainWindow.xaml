@@ -95,6 +95,7 @@
                 <v:AppMenuItem x:Name="UpdatesItem" Command="v:AppCommands.CheckForUpdates" />
                 <v:AppMenuItem Command="v:AppCommands.ReportBug" />
                 <v:AppMenuItem Command="v:AppCommands.CheckSystem" />
+                <v:AppMenuItem Command="v:AppCommands.OpenLogFolder" />
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.About" />
             </v:AppMenuItem>

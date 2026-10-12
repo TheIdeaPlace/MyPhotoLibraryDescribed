@@ -67,5 +67,7 @@ public static class AppCommands
     public static readonly RoutedUICommand CheckForUpdates = Make("Check for _Updates…", nameof(CheckForUpdates));
     public static readonly RoutedUICommand ReportBug = Make("_Report a Bug…", nameof(ReportBug));
     public static readonly RoutedUICommand CheckSystem = Make("Check _System…", nameof(CheckSystem));
+    /// <summary>The diagnostic log's folder, in File Explorer, for attaching to a bug report.</summary>
+    public static readonly RoutedUICommand OpenLogFolder = Make("Open _Log Folder", nameof(OpenLogFolder));
     public static readonly RoutedUICommand About = Make($"_About {AppInfo.Name}", nameof(About));
 }
