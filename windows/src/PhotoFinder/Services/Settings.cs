@@ -44,6 +44,11 @@ public sealed class Settings
     /// <summary>View > Show Description: the Description panel beside the list or gallery. On unless hidden.</summary>
     public bool ShowDescriptionPanel { get; set; } = true;
     public double DescriptionPanelWidth { get; set; } = 320;
+    /// <summary>The installed version that last ran, so the first launch after an update can say so
+    /// (The-Idea-Place-Projects#12). Only recorded for installed copies.</summary>
+    public string? LastRunVersion { get; set; }
+    /// <summary>When Help's update item last found out whether there's an update, so it looks quietly once a day.</summary>
+    public DateTime? LastUpdateCheck { get; set; }
 
     /// <summary>The columns shown, in order, always including Name.</summary>
     public List<string> ShownColumnIds()

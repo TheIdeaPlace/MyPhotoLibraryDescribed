@@ -1,3 +1,5 @@
+using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using Windows.ApplicationModel;
 using Windows.Management.Deployment;
@@ -108,6 +110,62 @@ public static class Updates
         catch (Exception ex)
         {
             return ex.Message;
+        }
+    }
+
+    // MARK: The shared update experience (The-Idea-Place-Projects#12, #85)
+
+    /// <summary>The version people see: major.minor.build. The package's fourth number counts builds.</summary>
+    public static string ShortVersion(string version) =>
+        Version.TryParse(version, out var v) ? $"{v.Major}.{v.Minor}.{Math.Max(v.Build, 0)}" : version;
+
+    /// <summary>Two versions as people see them, with the build number when that's all that differs.</summary>
+    public static (string Running, string Other) Shown(string running, string other) =>
+        ShortVersion(running) == ShortVersion(other) && running != other
+            ? (running, other)
+            : (ShortVersion(running), ShortVersion(other));
+
+    /// <summary>Help's update item, which always says what's running, or what's available once an update is known.</summary>
+    public static string MenuTitle(string running, bool available, string? availableVersion)
+    {
+        if (!available) return $"Check for _Updates (running {ShortVersion(running)})…";
+        return availableVersion is null ? "_Update Available…" : $"_Update to {Shown(running, availableVersion).Other} available…";
+    }
+
+    /// <summary>Whether to say "updated" on this launch: only when a version ran here before and this one is newer. Never
+    /// on a first run or after going back to an older version.</summary>
+    public static bool JustUpdated(string? last, string current) =>
+        last is not null && Version.TryParse(last, out var before) && Version.TryParse(current, out var now) && now > before;
+
+    /// <summary>The version a .appinstaller file offers, or null.</summary>
+    internal static string? VersionIn(string appInstaller)
+    {
+        try
+        {
+            return System.Xml.Linq.XDocument.Parse(appInstaller).Root?.Attribute("Version")?.Value;
+        }
+        catch (System.Xml.XmlException)
+        {
+            return null;
+        }
+    }
+
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
+
+    /// <summary>Quietly: whether there's an update and, from the .appinstaller it comes from, which version. Nothing is
+    /// said or shown; Help's update item changes.</summary>
+    public static async Task<(bool Available, string? Version)> CheckQuietlyAsync()
+    {
+        var result = await CheckAsync();
+        if (result.State != State.Available || result.Source is not { } source) return (false, null);
+        try
+        {
+            var text = source.IsFile ? await File.ReadAllTextAsync(source.LocalPath) : await Http.GetStringAsync(source);
+            return (true, VersionIn(text));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or HttpRequestException or TaskCanceledException)
+        {
+            return (true, null);
         }
     }
 

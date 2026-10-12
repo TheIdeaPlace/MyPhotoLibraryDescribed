@@ -91,6 +91,10 @@ public partial class MainWindow : Window
             UpdateTitle();
             ApplyViewMode();
             FileList.Focus();
+            ShowUpdatesItem();
+            // Once the window has settled: say so if this is the first launch after an update, then look for updates.
+            _ = Dispatcher.BeginInvoke(SayIfJustUpdated, System.Windows.Threading.DispatcherPriority.ContextIdle);
+            _ = LookForUpdatesQuietlyAsync();
             try
             {
                 await model.StartAsync();
@@ -504,7 +508,7 @@ public partial class MainWindow : Window
     internal void SetReadOnly(bool on)
     {
         // Keep Read-Only is the default and has focus: Enter alone never turns the protection off.
-        if (!on && !QuestionDialog.AskRisky(ActiveWindow, "Allow Changes to Photos", $"Let {AppInfo.Name} change your photos?",
+        if (!on && !QuestionDialog.AskSafely(ActiveWindow, "Allow Changes to Photos", $"Let {AppInfo.Name} change your photos?",
                 $"{AppInfo.Name} will be able to write captions, alt text and ratings into your photo files, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to read-only at any time.",
                 "Allow Changes", "Keep Read-Only"))
         {
@@ -1145,6 +1149,56 @@ public partial class MainWindow : Window
     }
 
     private bool _updating;
+    /// <summary>What Help's update item says: an update known to be available, and its version when known.</summary>
+    private (bool Available, string? Version) _update;
+
+    /// <summary>Help's update item always says what's running ("Check for Updates (running 0.2.0)…"), or "Update to 0.3.0
+    /// available…" once one is found (The-Idea-Place-Projects#12).</summary>
+    private void ShowUpdatesItem() =>
+        UpdatesItem.Header = Services.Updates.MenuTitle(Services.Updates.AppVersion, _update.Available, _update.Version);
+
+    /// <summary>A quiet look for an update, a few seconds after starting and at most once a day: nothing is said, only
+    /// Help's item changes. Only for copies that update themselves.</summary>
+    private async Task LookForUpdatesQuietlyAsync()
+    {
+        if (!Services.Updates.UpdatesItself) return;
+        if (_model.Settings.LastUpdateCheck is { } last && DateTime.UtcNow - last < TimeSpan.FromDays(1)) return;
+        await Task.Delay(TimeSpan.FromSeconds(5));
+        var found = await Services.Updates.CheckQuietlyAsync();
+        _model.Settings.LastUpdateCheck = DateTime.UtcNow;
+        _model.SaveSettings();
+        _update = found;
+        ShowUpdatesItem();
+    }
+
+    /// <summary>The first launch after an update: "Photo Finder Update Installed", with See What's New, as the apps' shared
+    /// update experience asks. Only for installed copies, and not on a first run or after going back to an older version.
+    /// OK is the default, so Enter and Escape close it.</summary>
+    internal void SayIfJustUpdated()
+    {
+        if (Services.Updates.PackageVersion is not { } current) return;
+        var last = _model.Settings.LastRunVersion;
+        if (last == current) return;
+        _model.Settings.LastRunVersion = current;
+        _model.SaveSettings();
+        if (!Services.Updates.JustUpdated(last, current)) return;
+        var shown = Services.Updates.Shown(current, last!).Running;
+        if (QuestionDialog.AskSafely(this, $"{AppInfo.Name} Update Installed", $"{AppInfo.Name} is now version {shown}.",
+                "See What's New opens this version's release notes in your browser.", "See What's New", "OK"))
+            OpenInBrowser(AppInfo.ReleaseNotesUrl(Services.Updates.ShortVersion(current)));
+    }
+
+    private void OpenInBrowser(string url)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            ShowError($"The browser couldn't be opened. The release notes are at {url}.");
+        }
+    }
 
     private async void CheckForUpdates()
     {
@@ -1168,7 +1222,9 @@ public partial class MainWindow : Window
                            "Open PhotoFinder.appinstaller to install it again; your settings are kept.");
                     break;
                 case Services.Updates.State.UpToDate:
-                    Inform($"{AppInfo.Name} is up to date (version {Services.Updates.PackageVersion}).");
+                    _update = (false, null);
+                    ShowUpdatesItem();
+                    Inform($"{AppInfo.Name} is up to date (version {Services.Updates.ShortVersion(Services.Updates.AppVersion)}).");
                     break;
                 case Services.Updates.State.Failed:
                     ShowError($"{AppInfo.Name} couldn't check for updates. {result.Message}");
