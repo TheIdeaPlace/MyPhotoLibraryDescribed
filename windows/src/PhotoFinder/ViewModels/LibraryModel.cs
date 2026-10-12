@@ -155,7 +155,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         private set { _detailProgress = value; OnPropertyChanged(); OnStatusChanged(); }
     }
 
-    public bool IsBusy => IsLoading || Activity is not null || DetailProgress is not null || BackgroundProgress is not null;
+    public bool IsBusy => IsLoading || Activity is not null || DetailProgress is not null || (BackgroundProgress is not null && !_backgroundProblem);
 
     public string StatusText
     {
@@ -924,7 +924,19 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     public string? BackgroundProgress
     {
         get => _backgroundProgress;
-        set { _backgroundProgress = value; OnPropertyChanged(); OnStatusChanged(); }
+        set { _backgroundProgress = value; _backgroundProblem = false; OnPropertyChanged(); OnStatusChanged(); }
+    }
+
+    private bool _backgroundProblem;
+
+    /// <summary>Why background describing isn't working, shown where its progress goes, but without the busy indicator,
+    /// since nothing is going on. Replaced by the next progress, and cleared by turning it off.</summary>
+    public void ShowBackgroundProblem(string text)
+    {
+        _backgroundProgress = text;
+        _backgroundProblem = true;
+        OnPropertyChanged(nameof(BackgroundProgress));
+        OnStatusChanged();
     }
 
     /// <summary>Takes a folder out of Photo Finder's library. Nothing on disk changes.</summary>
