@@ -14,8 +14,8 @@ Kelly's goals for the app, from 11 October 2026 (status updated later that day, 
 | — | In list view, the user chooses which columns are shown and in what order. | Done on both (View > Columns). | |
 | 6 | Gallery view uses the photo's name and nothing else by default. Customizing it is a nice-to-have. | Name only on both, with the description shown under the photo (Mac in #40). Customizing: not yet. | #38 |
 | — | Keep what the app already does well: export, search, the library concept and the rest. | Kept. | |
-| 7 | The user can put a description into a field of the photo (the caption). | Mac: Photo > Use Description as Caption (#43). Windows: not yet. Files in added folders: waits on #31. | #30, #31 |
-| 8 | A setting to use the generated description automatically. | Mac: Settings > Save descriptions as captions (#43). Windows: not yet. | #30 |
+| 7 | The user can put a description into a field of the photo (the caption). | Done on both: Photo > Use Description as Caption (Mac in #43). On the Mac, files in added folders wait on #31. | #30, #31 |
+| 8 | A setting to use the generated description automatically. | Done on both: Save descriptions as captions (Mac Settings, #43; Windows Photo menu). | #30 |
 | 9 | The Help menu, or somewhere else, checks the computer meets the requirements and everything is installed. | Done on both: Help > Check System (Mac in #42). | #32 |
 | 10 | Some image formats have more fields worth offering, such as IPTC's accessibility Alt Text and Extended Description. IDT already writes descriptions into files. | Caption only. | #31 |
 | 11 | Follow the emerging standards for all of Kelly's apps: automatic updates, bug reporting and the rest (The Idea Place app kit). | Help > Report a Bug on both (Mac in #42). Updates: Windows through MSIX, the Mac not yet. The app kit relay needs Kelly. | #33, #22 |

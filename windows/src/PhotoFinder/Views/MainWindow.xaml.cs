@@ -60,6 +60,7 @@ public partial class MainWindow : Window
         BuildColumns();
         BuildSortMenu();
         BuildKindMenu();
+        BuildCaptionPolicyMenu();
 
         model.PropertyChanged += Model_PropertyChanged;
         model.SelectionRequested += Model_SelectionRequested;
@@ -85,8 +86,17 @@ public partial class MainWindow : Window
             FocusContent();
         };
         model.FilesChanged += paths => { foreach (var p in paths) _thumbnails.Forget(p); };
-        Closing += (_, e) =>
+        Closing += async (_, e) =>
         {
+            // A caption being written from a description is finished first, so no file is left half written.
+            if (model.IsWritingCaptions && !_closingAfterCaptions)
+            {
+                e.Cancel = true;
+                _closingAfterCaptions = true;
+                await model.StopCaptionsAsync();
+                Close();
+                return;
+            }
             if (model.IsWriting && MessageBox.Show(this,
                     $"{AppInfo.Name} is still saving changes to your photos. If you quit now, the rest won't be changed. Quit anyway?",
                     "Still Saving", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
@@ -137,6 +147,7 @@ public partial class MainWindow : Window
         Bind(AppCommands.PreviousPane, () => MovePane(-1));
         Bind(AppCommands.ToggleFavorite, () => { if (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite")) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, EditCaption, HasFiles);
+        Bind(AppCommands.UseDescriptionAsCaption, () => _model.Fire(UseDescriptionAsCaptionAsync(_model.SelectedRows)), HasFiles);
         Bind(AppCommands.About, ShowAbout);
         Bind(AppCommands.CheckForUpdates, CheckForUpdates);
         Bind(AppCommands.CheckSystem, ShowCheckSystem);
@@ -278,6 +289,108 @@ public partial class MainWindow : Window
         {
             foreach (MenuItem item in KindMenu.Items) item.IsChecked = (string)item.Tag == _model.Settings.DescriptionKind;
         };
+    }
+
+    /// <summary>Photo > Save Descriptions as Captions: Never, Only When There's No Caption, or Always.</summary>
+    private void BuildCaptionPolicyMenu()
+    {
+        foreach (var (policy, _, header) in CaptionPolicies.All)
+        {
+            var item = new AppMenuItem { Header = header, IsCheckable = true, Tag = policy };
+            item.Click += (_, _) => SetCaptionPolicy(policy);
+            CaptionPolicyMenu.Items.Add(item);
+        }
+        CaptionPolicyMenu.SubmenuOpened += (_, _) =>
+        {
+            foreach (MenuItem item in CaptionPolicyMenu.Items) item.IsChecked = (CaptionPolicy)item.Tag == _model.Settings.CaptionPolicy;
+        };
+    }
+
+    internal void SetCaptionPolicy(CaptionPolicy policy)
+    {
+        _model.Settings.CaptionPolicy = policy;
+        _model.SaveSettings();
+        Services.Announcer.Announce(policy switch
+        {
+            CaptionPolicy.WhenEmpty => "New descriptions are saved as captions when a photo has no caption",
+            CaptionPolicy.Always => "New descriptions are saved as captions",
+            _ => "Descriptions aren't saved as captions",
+        });
+    }
+
+    /// <summary>Photo > Use Description as Caption: each chosen photo's saved description becomes its caption, the
+    /// file's Title. Captions are read from the files first, never the list's copy (empty until details load), so one
+    /// someone wrote is never replaced without asking.</summary>
+    /// <param name="owner">The window asking: Get Info, or this one.</param>
+    /// <param name="kind">The description type to use (Get Info's choice); otherwise Photo > Description Type.</param>
+    internal async Task UseDescriptionAsCaptionAsync(IReadOnlyList<FileRow> rows, Window? owner = null, string? kind = null)
+    {
+        owner ??= this;
+        var photos = rows.Where(r => r.Item is { IsVideo: false }).ToList();
+        if (photos.Count == 0)
+        {
+            Services.Announcer.Announce("Select a photo");
+            return;
+        }
+        kind ??= _model.Settings.DescriptionKind;
+        var described = photos
+            .Select(r => (Row: r, Text: _model.Descriptions?.Get(r.Item!, kind)))
+            .Where(d => !string.IsNullOrWhiteSpace(d.Text))
+            .Select(d => (d.Row, Text: d.Text!.Trim()))
+            .ToList();
+        if (described.Count == 0)
+        {
+            Services.Announcer.Announce(NotDescribedMessage(photos, kind));
+            return;
+        }
+        if (!ConfirmBulkWrite("Use Description as Caption", described.Select(d => d.Row.Item!).ToList(), owner)) return;
+        // Each caption as the file has it now. One that can't be read (locked, moved) is left alone.
+        var current = await Task.Run(async () =>
+        {
+            var list = new List<(FileRow Row, string Text, string Caption)>();
+            foreach (var (row, text) in described)
+            {
+                try
+                {
+                    list.Add((row, text, (await MetadataReader.ReadAsync(row.Item!.Path)).Caption.Trim()));
+                }
+                catch (Exception)
+                {
+                }
+            }
+            return list;
+        });
+        var unreadable = described.Count - current.Count;
+        if (current.Count == 0)
+        {
+            ShowError("The captions couldn't be read, so they weren't changed.", owner);
+            return;
+        }
+        var replacing = current.Where(c => c.Caption.Length > 0 && c.Caption != c.Text).ToList();
+        if (replacing.Count > 0)
+        {
+            var question = replacing.Count == 1
+                ? $"Replace the caption of {replacing[0].Row.Name}?\n\nIts caption is: {replacing[0].Caption}"
+                : $"Replace the captions of {replacing.Count} photos?\n\nTheir captions will be replaced with their descriptions.";
+            if (MessageBox.Show(owner, question, "Use Description as Caption", MessageBoxButton.YesNo, MessageBoxImage.Question,
+                    MessageBoxResult.No) != MessageBoxResult.Yes)
+                return;
+        }
+        // Already the caption: nothing to write, but it counts as saved.
+        var toWrite = current.Where(c => c.Caption != c.Text).Select(c => (c.Row.Item!, c.Text)).ToList();
+        await _model.SaveCaptionsAsync(toWrite, current.Count - toWrite.Count, photos.Count - described.Count);
+        if (unreadable > 0)
+            ShowError(unreadable == 1 ? "1 caption couldn't be read, so it wasn't changed." : $"{unreadable} captions couldn't be read, so they weren't changed.", owner);
+    }
+
+    /// <summary>Why there's nothing to use: not described at all, or only as another Description Type.</summary>
+    private string NotDescribedMessage(IReadOnlyList<FileRow> photos, string kind)
+    {
+        var otherKind = photos.Any(p => Services.WindowsAI.Kinds.Any(k => k.Id != kind && _model.Descriptions?.Get(p.Item!, k.Id) is not null));
+        var title = Services.WindowsAI.Kinds.FirstOrDefault(k => k.Id == kind).Title ?? kind;
+        if (photos.Count == 1)
+            return otherKind ? $"{photos[0].Name} hasn't been described as {title} yet. Describe it first." : $"{photos[0].Name} hasn't been described yet. Describe it first.";
+        return otherKind ? $"None of these photos have been described as {title} yet." : "None of these photos have been described yet.";
     }
 
     internal void SetDescriptionKind(string id, string title)
@@ -756,7 +869,8 @@ public partial class MainWindow : Window
     {
         var row = _model.SelectedRows.FirstOrDefault(r => r.Item is not null);
         if (row?.Item is null) { System.Media.SystemSounds.Beep.Play(); return; }
-        new InfoWindow(row, _model.Settings, _model.SaveSettings, describeNow: false, _model.Descriptions) { Owner = this }.ShowDialog();
+        new InfoWindow(row, _model.Settings, _model.SaveSettings, describeNow: false, _model.Descriptions,
+            useAsCaption: (r, info, kind) => UseDescriptionAsCaptionAsync([r], info, kind)) { Owner = this }.ShowDialog();
         // The rows may have been rebuilt while it was open, so the element WPF would return to can be gone.
         FocusContent();
     }
@@ -798,14 +912,14 @@ public partial class MainWindow : Window
 
     /// <summary>Changing many files, or files that are only in the cloud (each is downloaded to change it),
     /// is checked with the person first.</summary>
-    private bool ConfirmBulkWrite(string action)
+    private bool ConfirmBulkWrite(string action, IReadOnlyList<MediaItem>? chosen = null, Window? owner = null)
     {
-        var files = _model.SelectedRows.Select(r => r.Item).OfType<MediaItem>().ToList();
+        var files = chosen ?? _model.SelectedRows.Select(r => r.Item).OfType<MediaItem>().ToList();
         var online = files.Count(f => f.IsOnlineOnly);
         if (files.Count <= 50 && online == 0) return true;
         var message = $"{action} changes {files.Count:N0} files on your PC.";
         if (online > 0) message += $" {online:N0} of them are online-only, and each will be downloaded to change it.";
-        return MessageBox.Show(this, message + " Continue?", action, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No)
+        return MessageBox.Show(owner ?? this, message + " Continue?", action, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No)
             == MessageBoxResult.Yes;
     }
 
@@ -897,6 +1011,7 @@ public partial class MainWindow : Window
             return;
         }
         _model.SaveCaches();
+        await _model.StopCaptionsAsync();
         Services.Announcer.Announce($"Downloading the update. {AppInfo.Name} will close and open again when it's ready.");
         if (await Services.Updates.InstallAsync(source) is { } error) ShowError($"The update couldn't be installed. {error}");
     }
@@ -999,6 +1114,11 @@ public partial class MainWindow : Window
             $"Press Ctrl+C to copy this report, then paste it into a new issue at {AppInfo.IssuesUrl}.\n\n{body}",
             "Report a Bug", MessageBoxButton.OK, MessageBoxImage.Information);
 
-    private void ShowError(string message) =>
-        MessageBox.Show(this, message, "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Warning);
+    /// <summary>Over the window in front (Get Info, say), so focus goes back there afterwards, not to this one behind it.</summary>
+    private void ShowError(string message, Window? owner = null) =>
+        MessageBox.Show(owner ?? ActiveWindow, message, "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Warning);
+
+    private Window ActiveWindow => Application.Current?.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? this;
+
+    private bool _closingAfterCaptions;
 }

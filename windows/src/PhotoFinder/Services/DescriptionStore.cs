@@ -42,7 +42,11 @@ public sealed class DescriptionStore
     {
         lock (_lock) Entries[Key(item, kind)] = text;
         ScheduleSave();
+        Saved?.Invoke(item, text);
     }
+
+    /// <summary>A description was saved, however it was made: Save Descriptions as Captions writes it to the caption.</summary>
+    public event Action<MediaItem, string>? Saved;
 
     /// <summary>Saves a couple of seconds after the last change, not after every one: background describing adds
     /// descriptions one after another, and rewriting the whole file each time adds up fast.</summary>

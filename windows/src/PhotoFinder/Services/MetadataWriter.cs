@@ -14,6 +14,15 @@ public static class MetadataWriter
         return WriteAsync(items, "System.Title", text.Length == 0 ? null : text);
     }
 
+    /// <summary>Sets a different caption on each file.</summary>
+    public static async Task<WriteResult> SetCaptionsAsync(IReadOnlyList<(MediaItem Item, string Caption)> captions)
+    {
+        var failures = new List<(MediaItem Item, string Reason)>();
+        foreach (var (item, caption) in captions)
+            failures.AddRange((await SetCaptionAsync([item], caption)).Failures);
+        return new WriteResult(captions.Count - failures.Count, failures);
+    }
+
     /// <summary>Sets the rating, 0 to 5 stars. 0 removes it.</summary>
     public static Task<WriteResult> SetRatingAsync(IReadOnlyList<MediaItem> items, int stars) =>
         WriteAsync(items, "System.Rating", stars <= 0 ? null : MediaTypes.RatingFromStars(stars));

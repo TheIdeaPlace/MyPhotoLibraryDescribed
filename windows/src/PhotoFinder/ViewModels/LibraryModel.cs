@@ -62,7 +62,17 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     public Settings Settings => _settings;
 
     /// <summary>Saved Windows AI descriptions, shared by automatic descriptions and Get Info.</summary>
-    public DescriptionStore? Descriptions { get; init; }
+    public DescriptionStore? Descriptions
+    {
+        get => _descriptions;
+        init
+        {
+            _descriptions = value;
+            if (value is not null) value.Saved += DescriptionSaved;
+        }
+    }
+
+    private readonly DescriptionStore? _descriptions;
 
     public SidebarItem? CurrentSource
     {
@@ -558,6 +568,122 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         if (result.Succeeded > 0) Announcer.Announce(stars == 0 ? "Rating removed" : $"Rated {FileRow.StarsText(stars)}");
     }
 
+    /// <summary>Photo > Use Description as Caption, once the person has agreed to any replacements: each file gets its own
+    /// caption. <paramref name="alreadyCaptioned"/> photos already had their description as the caption, and
+    /// <paramref name="skipped"/> weren't described; both are counted in what's said, as on the Mac.</summary>
+    public async Task SaveCaptionsAsync(IReadOnlyList<(MediaItem Item, string Caption)> captions, int alreadyCaptioned, int skipped)
+    {
+        var saved = alreadyCaptioned;
+        if (captions.Count > 0)
+        {
+            var result = await WriteAsync("Saving caption…", captions.Select(c => c.Item).ToList(), _ => MetadataWriter.SetCaptionsAsync(captions));
+            saved += result.Succeeded;
+        }
+        if (saved == 0) return;
+        var done = saved == 1 ? "Caption saved" : $"Captions saved for {saved} photos";
+        if (skipped > 0) done += $". {(skipped == 1 ? "1 photo hasn't" : $"{skipped} photos haven't")} been described yet";
+        Announcer.Announce(done);
+    }
+
+    // MARK: Descriptions as captions (#30)
+
+    /// <summary>Descriptions saved, by file, waiting to go into captions under Save Descriptions as Captions.</summary>
+    private readonly Dictionary<string, string> _pendingCaptions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly int _uiThread = Environment.CurrentManagedThreadId;
+    private bool _writingCaptions;
+
+    /// <summary>For tests: finishes when no caption from a description is waiting or being written.</summary>
+    internal Task CaptionsWritten { get; private set; } = Task.CompletedTask;
+
+    private void DescriptionSaved(MediaItem item, string text)
+    {
+        // Online-only photos would have to be downloaded to be changed, which isn't done without asking.
+        if (_settings.CaptionPolicy == CaptionPolicy.Never || item.IsVideo || item.IsOnlineOnly) return;
+        var path = item.Path;
+        void Queue()
+        {
+            _pendingCaptions[path] = text;
+            if (!_writingCaptions) CaptionsWritten = WriteCaptionsFromDescriptionsAsync();
+        }
+        // WPF gives each turn of the dispatcher its own context object, so the thread says whether this is the UI.
+        if (_ui is null || Environment.CurrentManagedThreadId == _uiThread) Queue();
+        else _ui.Post(_ => Queue(), null);
+    }
+
+    /// <summary>
+    /// Writes the waiting captions quietly, in batches: no status, no dialog per photo (background describing saves one
+    /// description after another), and never in the way of the person's own changes, which wait for it rather than
+    /// being refused. Each file's caption is read from the file itself, inside the write gate just before writing,
+    /// never the list's copy (empty until details load): "Only When There's No Caption" mustn't mistake an unread
+    /// caption for none, or overwrite one the person saved a moment ago. Captions still waiting when the app closes
+    /// aren't written; the descriptions are kept.
+    /// </summary>
+    private async Task WriteCaptionsFromDescriptionsAsync()
+    {
+        _writingCaptions = true;
+        try
+        {
+            while (_pendingCaptions.Count > 0 && !_disposed)
+            {
+                var batch = _pendingCaptions.ToList();
+                _pendingCaptions.Clear();
+                if (_settings.CaptionPolicy == CaptionPolicy.Never) continue;
+                var byPath = _items.ToDictionary(i => i.Path, StringComparer.OrdinalIgnoreCase);
+                var candidates = batch.Where(b => byPath.TryGetValue(b.Key, out var i) && !i.IsOnlineOnly)
+                    .Select(b => (Item: byPath[b.Key], Text: b.Value.Trim())).ToList();
+                if (candidates.Count == 0) continue;
+                try
+                {
+                    await WriteAsync("", candidates.Select(c => c.Item).ToList(), async _ =>
+                    {
+                        // Decided here, holding the write gate: nothing can change a caption between reading and writing.
+                        var policy = _settings.CaptionPolicy;
+                        var chosen = new List<(MediaItem Item, string Caption)>();
+                        foreach (var (item, text) in candidates)
+                        {
+                            try
+                            {
+                                if (policy.ShouldWrite(text, (await MetadataReader.ReadAsync(item.Path)).Caption)) chosen.Add((item, text));
+                            }
+                            catch (Exception)
+                            {
+                                // Unreadable now (moved, locked): its caption is left alone.
+                            }
+                        }
+                        return chosen.Count == 0 ? new WriteResult(0, []) : await MetadataWriter.SetCaptionsAsync(chosen);
+                    }, quiet: true);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Trace.WriteLine($"Saving descriptions as captions: {ex.Message}");
+                }
+            }
+        }
+        finally
+        {
+            _writingCaptions = false;
+            if (!_disposed) SaveCacheInBackground();
+            // A file changed outside the app while captions were being written: look again now.
+            if (_missedDiskChange && !_disposed)
+            {
+                _missedDiskChange = false;
+                ScheduleRescan();
+            }
+        }
+    }
+
+    /// <summary>Stops writing captions from descriptions: the waiting ones are dropped, and the file being written is
+    /// finished. For closing and updating, so no file is left half written.</summary>
+    public async Task StopCaptionsAsync()
+    {
+        _pendingCaptions.Clear();
+        await _writeGate.WaitAsync();
+        _writeGate.Release();
+    }
+
+    /// <summary>A caption from a description is being written right now.</summary>
+    public bool IsWritingCaptions { get; private set; }
+
     public async Task SaveCaptionAsync(IReadOnlyList<FileRow> rows, string caption)
     {
         var files = Files(rows);
@@ -566,23 +692,47 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         if (result.Succeeded > 0) Announcer.Announce(caption.Trim().Length == 0 ? "Caption removed" : "Caption saved");
     }
 
-    /// <summary>Writes to the files, then reads them back so the list shows what's really stored.</summary>
-    /// <summary>True while a caption, rating or favorite is being written.</summary>
+    /// <summary>True while a change the person asked for (a caption, rating or favorite) is being saved.</summary>
     public bool IsWriting { get; private set; }
 
-    private async Task<WriteResult> WriteAsync(string label, List<MediaItem> files, Func<IReadOnlyList<MediaItem>, Task<WriteResult>> write)
+    /// <summary>One write to the files at a time: two at once would fight over the same files. The person's own changes
+    /// wait here for a quiet caption write to finish; they're never refused because of one.</summary>
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
+
+    /// <summary>Files being written quietly, and until when changes to them are Photo Finder's own. Only those files are
+    /// ignored, so the watcher still notices everything else while captions are written in the background.</summary>
+    private readonly Dictionary<string, DateTime> _ownChanges = new(StringComparer.OrdinalIgnoreCase);
+    private bool _missedDiskChange;
+
+    /// <summary>Writes to the files, then reads them back so the list shows what's really stored.</summary>
+    /// <param name="quiet">For captions written from descriptions: nothing in the status bar or the sidebar, failures
+    /// only traced rather than shown (they can come one after another while describing in the background), and the
+    /// metadata cache saved once at the end of the queue rather than after every photo.</param>
+    private async Task<WriteResult> WriteAsync(string label, List<MediaItem> files, Func<IReadOnlyList<MediaItem>, Task<WriteResult>> write, bool quiet = false)
     {
-        // One write at a time: two at once would fight over the same files.
-        if (IsWriting)
+        if (!quiet)
         {
-            Beep();
-            Announcer.Announce("Still saving the last change");
-            return new WriteResult(0, []);
+            // Two of the person's own changes at once: the second says why it isn't done.
+            if (IsWriting)
+            {
+                Beep();
+                Announcer.Announce("Still saving the last change");
+                return new WriteResult(0, []);
+            }
+            IsWriting = true;
+            Activity = files.Count > 1 ? $"{label.TrimEnd('…')} for {files.Count:N0} items…" : label;
         }
-        IsWriting = true;
-        Activity = files.Count > 1 ? $"{label.TrimEnd('…')} for {files.Count:N0} items…" : label;
-        // Writing changes the files, which the watcher would otherwise take for outside edits.
-        _ignoreChangesUntil = DateTime.MaxValue;
+        await _writeGate.WaitAsync();
+        if (quiet)
+        {
+            IsWritingCaptions = true;
+            foreach (var f in files) _ownChanges[f.Path] = DateTime.MaxValue;
+        }
+        else
+        {
+            // Writing changes the files, which the watcher would otherwise take for outside edits.
+            _ignoreChangesUntil = DateTime.MaxValue;
+        }
         try
         {
             var result = await Task.Run(() => write(files));
@@ -609,19 +759,36 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
                 }
                 if (_rowsByPath.TryGetValue(item.Path, out var row)) row.Refresh();
             }
-            FilesChanged?.Invoke(files.Select(f => f.Path).ToList());
-            SaveCacheInBackground();
-            RebuildSidebar();
-            // A photo that stops being a favorite leaves Favorites.
-            if (CurrentSource is { Kind: SourceKind.Favorites }) ReloadCurrent(keepSelection: true);
-            if (result.Failures.Count > 0) RaiseError(result.FailureSummary);
+            if (!quiet)
+            {
+                FilesChanged?.Invoke(files.Select(f => f.Path).ToList());
+                SaveCacheInBackground();
+                RebuildSidebar();
+                // A photo that stops being a favorite leaves Favorites.
+                if (CurrentSource is { Kind: SourceKind.Favorites }) ReloadCurrent(keepSelection: true);
+            }
+            if (result.Failures.Count > 0)
+            {
+                if (quiet) System.Diagnostics.Trace.WriteLine($"Saving descriptions as captions: {result.FailureSummary}");
+                else RaiseError(result.FailureSummary);
+            }
             return result;
         }
         finally
         {
-            _ignoreChangesUntil = DateTime.UtcNow.AddSeconds(3);
-            IsWriting = false;
-            Activity = null;
+            if (quiet)
+            {
+                var until = DateTime.UtcNow.AddSeconds(3);
+                foreach (var f in files) _ownChanges[f.Path] = until;
+                IsWritingCaptions = false;
+            }
+            else
+            {
+                _ignoreChangesUntil = DateTime.UtcNow.AddSeconds(3);
+                IsWriting = false;
+                Activity = null;
+            }
+            _writeGate.Release();
         }
     }
 
@@ -735,13 +902,30 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         _ui ??= SynchronizationContext.Current;
         _ui?.Post(_ =>
         {
-            _rescanDebounce?.Cancel();
-            var cancel = _rescanDebounce = new CancellationTokenSource();
-            _ = Task.Delay(1500, cancel.Token).ContinueWith(t =>
+            // A caption Photo Finder is writing from a description: its own change, not an outside edit.
+            if (_ownChanges.TryGetValue(e.FullPath, out var until))
             {
-                if (!t.IsCanceled) Fire(RescanAsync());
-            }, TaskScheduler.FromCurrentSynchronizationContext());
+                if (DateTime.UtcNow < until) return;
+                _ownChanges.Remove(e.FullPath);
+            }
+            // Rescanning mid-write would swap items under it: once the captions are written.
+            if (IsWritingCaptions)
+            {
+                _missedDiskChange = true;
+                return;
+            }
+            ScheduleRescan();
         }, null);
+    }
+
+    private void ScheduleRescan()
+    {
+        _rescanDebounce?.Cancel();
+        var cancel = _rescanDebounce = new CancellationTokenSource();
+        _ = Task.Delay(1500, cancel.Token).ContinueWith(t =>
+        {
+            if (!t.IsCanceled) Fire(RescanAsync());
+        }, TaskScheduler.FromCurrentSynchronizationContext());
     }
 
     // MARK: Gallery
