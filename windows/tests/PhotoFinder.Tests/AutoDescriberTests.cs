@@ -809,24 +809,70 @@ public sealed class AutoDescriberTests : IDisposable
     [WpfFact]
     public async Task ANoSelectionMomentDuringAReload_IsntMovingAway()
     {
-        var (model, auto, _) = await StartAsync();
+        var turn = new TaskCompletionSource();
+        var asked = new List<string>();
+        var (model, auto, _) = await StartAsync(describeAhead: async (item, kind, drop) =>
+        {
+            await turn.Task.WaitAsync(drop);
+            asked.Add(item.Name);
+            return $"Ahead {item.Name}";
+        });
         using (model) using (auto)
         {
             var o = PhotoOrder(model);
             Select(model, o[0]);
             await Settle(auto);
             Select(model, o[1]);
-            await Settle(auto);
+            await WaitUntil(() => auto.IsDescribing(model.Rows.Single(r => r.Name == o[2]).Item!.Path));
             _announced.Clear();
             // As the list does when its rows are replaced: nothing selected, then the same photo again.
             model.SelectedRows = [];
             Select(model, o[1]);
+            await Task.Delay(50);
+            turn.SetResult();
             await Settle(auto);
             Assert.DoesNotContain($"A picture called {o[1]}.", _announced);
-            // Still a step: the next one along is spoken at once, described ahead.
+            // The work ahead wasn't dropped by it.
+            Assert.Equal([o[2]], asked);
+        }
+    }
+
+    [WpfFact]
+    public async Task WhenWindowsAIIsntReady_StepsDontKeepAskingForWorkAhead()
+    {
+        var checks = 0;
+        var ready = true;
+        var (model, auto, store) = await StartAsync(readinessNow: () => { checks++; return ready ? Ready : new AIReadiness(true, "NotReady", null); });
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            foreach (var name in o) store.Put(model.Rows.Single(r => r.Name == name).Item!, "accessible", $"Saved {name}.");
+            ready = false;
+            Select(model, o[0]);
+            await Settle(auto);
+            Select(model, o[1]);
+            await Settle(auto);
+            var after = checks;
             Select(model, o[2]);
             await Settle(auto);
-            Assert.Single(_described, d => d.StartsWith(o[2]));
+            Select(model, o[1]);
+            await Settle(auto);
+            Assert.Equal(after, checks);
+        }
+    }
+
+    [WpfFact]
+    public async Task SelectingASecondRow_DoesntSpeakTheFirst()
+    {
+        var (model, auto, store) = await StartAsync();
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            store.Put(model.Rows.Single(r => r.Name == o[0]).Item!, "accessible", "Saved first.");
+            Select(model, o[0]);
+            model.SelectedRows = model.Rows.Where(r => r.Name == o[0] || r.Name == o[1]).ToList();
+            await Settle(auto);
+            Assert.DoesNotContain("Saved first.", _announced);
         }
     }
 
@@ -972,6 +1018,8 @@ public sealed class AutoDescriberTests : IDisposable
             await WaitUntil(() => _described.Contains($"{o[2]}:ahead"));
             Select(model, o[2]);
             await Task.Delay(150);
+            // Background describing waits meanwhile.
+            Assert.True(auto.IsBusy);
             finish.SetResult();
             await Settle(auto);
             Assert.Contains($"Ahead {o[2]}", _announced);

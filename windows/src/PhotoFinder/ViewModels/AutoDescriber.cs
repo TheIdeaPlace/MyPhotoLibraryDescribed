@@ -68,6 +68,9 @@ public sealed class AutoDescriber : IDisposable
     private CancellationTokenSource? _aheadDrop;
     /// <summary>A look again is posted for after a moment with nothing selected.</summary>
     private bool _settlePending;
+    /// <summary>Windows AI wasn't ready when work ahead last asked: no more is tried (each asking starts the helper) until
+    /// describing finds it ready again or the feature is turned on.</summary>
+    private bool _aheadNotReady;
 
     /// <param name="check">Whether Windows AI can describe now. Never downloads anything.</param>
     /// <param name="prepare">Gets the model ready, downloading it if needed. Only used when the person turns the feature on.</param>
@@ -236,6 +239,7 @@ public sealed class AutoDescriber : IDisposable
                 return;
             }
             _unavailable = false;
+            _aheadNotReady = false;
             Announcer.Announce(again ? $"Describing {item.Name} again" : $"Describing {item.Name}");
             // Automatic describing is already asking about this photo: wait for that rather than asking twice. Describe
             // Again still asks afresh afterwards; the automatic result isn't saved (see _againPaths).
@@ -284,11 +288,11 @@ public sealed class AutoDescriber : IDisposable
         {
             if (_settlePending) return;
             _settlePending = true;
-            Task.Factory.StartNew(() =>
+            Busy(Task.Factory.StartNew(() =>
             {
                 _settlePending = false;
                 Moved(force: false);
-            }, CancellationToken.None, TaskCreationOptions.None, _ui);
+            }, CancellationToken.None, TaskCreationOptions.None, _ui));
             return;
         }
         Moved(force);
@@ -342,7 +346,7 @@ public sealed class AutoDescriber : IDisposable
         {
             while (_target is { } path && !_closing.IsCancellationRequested)
             {
-                if (_model.FocusedRow is not { Item: { } item } || item.Path != path || !CanSpeak())
+                if (_model.FocusedRow is not { Item: { } item } || item.Path != path || CurrentPath() != path || !CanSpeak())
                 {
                     // Moved on, or not on the photo (in the sidebar, a dialog): don't spend the NPU on it.
                     _target = null;
@@ -371,6 +375,7 @@ public sealed class AutoDescriber : IDisposable
                     _target = null;
                     break;
                 }
+                _aheadNotReady = false;
                 try
                 {
                     _describingPath = path;
@@ -437,7 +442,8 @@ public sealed class AutoDescriber : IDisposable
     {
         if (_model.FocusedRow is not { Item: { } item } row || item.Path != path) return false;
         row.Description = text;
-        if (_target != path || !CanSpeak()) return false;
+        // Not when more than one row is selected now.
+        if (_target != path || CurrentPath() != path || !CanSpeak()) return false;
         Announcer.AnnounceAfter(text, "PhotoFinderDescription");
         _spokenPath = path;
         return true;
@@ -456,7 +462,7 @@ public sealed class AutoDescriber : IDisposable
     /// that direction, quietly, if it's a photo not described yet.</summary>
     private void LookAhead(string path)
     {
-        if (_step == 0 || _aheadTask is not null || !Enabled || _unavailable || !CanSpeak() || !MayDescribeAhead()) return;
+        if (_step == 0 || _aheadTask is not null || !Enabled || _unavailable || _aheadNotReady || !CanSpeak() || !MayDescribeAhead()) return;
         if (_model.FocusedRow?.Item?.Path != path) return;
         var next = _model.FocusedIndex + _step;
         if (next < 0 || next >= _model.Rows.Count) return;
@@ -480,7 +486,11 @@ public sealed class AutoDescriber : IDisposable
         {
             using var cancel = CancellationTokenSource.CreateLinkedTokenSource(drop.Token, _closing.Token);
             // Never what gets the model downloaded or starts the helper for nothing: only when Windows AI is ready.
-            if ((await _check(cancel.Token)).State != "Ready") return;
+            if ((await _check(cancel.Token)).State != "Ready")
+            {
+                _aheadNotReady = true;
+                return;
+            }
             var text = await _describeAhead(item, kind, cancel.Token);
             // Saved, not spoken (the store puts it on its row); a correction or Describe Again meanwhile is newer.
             if (text.Length > 0 && !_againPaths.ContainsKey(item.Path)) _store.PutUnlessEdited(item, kind, text);
@@ -501,6 +511,7 @@ public sealed class AutoDescriber : IDisposable
 
     private void Reset()
     {
+        _aheadNotReady = false;
         _aheadDrop?.Cancel();
         _step = 0;
         _lastIndex = -1;
