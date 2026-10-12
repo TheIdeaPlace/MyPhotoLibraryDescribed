@@ -5,23 +5,31 @@ import SwiftUI
 struct SystemCheckView: View {
     @Environment(LibraryModel.self) private var model
     @State private var check: SystemCheck?
+    /// The check you're on, so the arrow keys move through them and VoiceOver reads each one.
+    @State private var selected: SystemCheck.Item.ID?
+    @FocusState private var listFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let check {
                 Text(check.summary)
                     .font(.headline)
-                List(check.items) { item in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                // A list you can arrow through, one check a row: with a selection, so the arrow keys move and
+                // VoiceOver reads the row's text (a grouped row read only as "cell"). The OK or Needs attention is in
+                // the words, so the symbol is only for the eye.
+                List(check.items, selection: $selected) { item in
+                    Label {
+                        Text(item.line)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
                         Image(systemName: symbol(item.status))
                             .foregroundStyle(color(item.status))
                             .accessibilityHidden(true)
-                        Text(item.line)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(item.line)
+                    .tag(item.id)
                 }
+                .focused($listFocused)
                 .accessibilityLabel("Checks")
                 HStack {
                     Button("Check Again") { refresh() }
@@ -46,6 +54,9 @@ struct SystemCheckView: View {
 
     private func refresh() {
         check = model.systemCheck()
+        // On the first check, ready to arrow through, and VoiceOver starts there.
+        selected = check?.items.first?.id
+        listFocused = true
         if let check { AccessibilityNotification.Announcement(check.summary).post() }
     }
 

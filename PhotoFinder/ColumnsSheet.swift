@@ -105,6 +105,7 @@ struct ColumnsSheet: View {
         }
         .padding()
         .frame(minWidth: 620, minHeight: 480)
+        .closesWithKeyboard(escape: false) { dismiss() }
         // Set as the sheet's default rather than on appear, which can run before the sheet has a window.
         .defaultFocus($focus, .shown)
     }
