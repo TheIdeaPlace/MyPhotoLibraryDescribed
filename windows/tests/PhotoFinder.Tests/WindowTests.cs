@@ -348,8 +348,11 @@ public sealed class WindowTests : IDisposable
             Assert.Equal([window.StatusBarText, window.ActivityText, window.BackgroundText], window.StatusSections());
             Assert.Equal("Exporting…", window.ActivityText.Text);
 
-            // F6 from the gallery goes Search, then the status bar, then round to the sidebar.
+            // F6 from the gallery goes to the Description panel, Search, then the status bar, then round to the sidebar.
             Assert.True(window.GalleryImage.Focus());
+            AppCommands.NextPane.Execute(null, window);
+            Assert.True(window.DescriptionPanel.IsKeyboardFocusWithin);
+            Assert.True(window.DescriptionPanel.DescriptionBox.IsKeyboardFocused);
             AppCommands.NextPane.Execute(null, window);
             Assert.True(window.SearchBox.IsKeyboardFocusWithin);
             AppCommands.NextPane.Execute(null, window);

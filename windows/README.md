@@ -22,6 +22,7 @@ On Windows your photo library is ordinary files, so Photo Finder reads the **Pic
 - **Background descriptions**: with Photo > Describe Added Folders in the Background turned on, adding a folder to the library describes its photos behind the scenes, one at a time, so their descriptions are ready when you get to them: spoken after the usual short pause, without waiting for Windows AI. The status bar shows progress, and you hear when a folder is finished. Photo > Stop Background Describing stops a run (the setting stays on for folders added later); arrowing to a photo always comes first. Photos already described, videos and online-only cloud photos are skipped. It's off until you turn it on; turning it on says if Windows AI isn't available, and gets the model ready if it only needs downloading.
 - **Open, Copy, Export, Show in File Explorer and drag** work on the files themselves. Export never overwrites: a second copy of `IMG_1.JPG` becomes `IMG_1 2.JPG`.
 - Folders, years and months also appear as rows in the list, so you can move through the library like File Explorer.
+- **Description panel** (View > Show Description, Ctrl+Shift+I, on by default): beside the list or gallery, the photo you're on with its description in a box you can read by line, word or character and correct (Enter saves; Shift+Enter starts a new line), marked "Edited by you" so nothing replaces it without asking. A status line says "Describing…", "Saved description", "Edited by you" or "Not described yet", with Describe Again, Use as Caption and Copy, and the caption with Edit Caption. It's in the F6 cycle after the list or gallery, and its width can be dragged. View > Columns also has a **Description** column, off by default, which is read with the row when shown.
 - **Help** has Check for Updates…, Report a Bug…, Check System… and About, the order agreed for both apps. **Check System** lists, one line each, whether this PC can describe photos (Windows build, NPU, Windows AI's model and the AI helper) and the library folders, saved descriptions and describing settings, each OK or what to do, with Check Again, Copy to Clipboard and Report a Bug. **Report a Bug** opens a new GitHub issue with those details filled in (without folder paths, since issues are public) and copies the same text.
 - Screen readers hear the results of navigation, sorting, exports, copies and favorite changes.
 
@@ -45,7 +46,8 @@ On Windows your photo library is ordinary files, so Photo Finder reads the **Pic
 | Previous or next item in the gallery | Left or Right Arrow (Up or Down also work); Home and End go to the first and last |
 | Pause or play a video in Preview | K or P |
 | Search the current list | Ctrl+F or F3; Escape clears it, Enter or Down Arrow goes to the results |
-| Move between the sidebar, the list or gallery, search and the status bar | F6 and Shift+F6 |
+| Move between the sidebar, the list or gallery, the Description panel, search and the status bar | F6 and Shift+F6 |
+| Show or hide the Description panel | Ctrl+Shift+I |
 | Move between status bar sections | Left and Right Arrow |
 | Go to All Photos | Ctrl+Shift+A |
 | Refresh | F5 |

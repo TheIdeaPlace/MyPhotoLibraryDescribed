@@ -27,6 +27,7 @@ public static class Columns
         new("megapixels", "Megapixels", false, 90),
         new("location", "Place Taken", false, 150),
         new("folder", "Folder", false, 260),
+        new("description", "Description", false, 320),
     ];
 
     public static IEnumerable<ColumnInfo> All => Optional.Prepend(NameColumn);

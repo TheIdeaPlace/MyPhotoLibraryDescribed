@@ -173,7 +173,7 @@ public sealed class BackgroundDescriber : IDisposable
                 try
                 {
                     var text = await _describe(item, kind, _closing.Token);
-                    if (text.Length > 0) _store.Put(item, kind, text);
+                    if (text.Length > 0) _store.PutUnlessEdited(item, kind, text);
                 }
                 catch (OperationCanceledException) when (_closing.IsCancellationRequested)
                 {

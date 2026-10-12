@@ -55,6 +55,7 @@
                 <v:AppMenuItem x:Name="AsListItem" Command="v:AppCommands.AsList" IsCheckable="False" />
                 <v:AppMenuItem x:Name="AsGalleryItem" Command="v:AppCommands.AsGallery" IsCheckable="False" />
                 <Separator />
+                <v:AppMenuItem x:Name="ShowDescriptionItem" Command="v:AppCommands.ShowDescription" IsCheckable="False" />
                 <v:AppMenuItem Command="v:AppCommands.ChooseColumns" />
                 <v:AppMenuItem Header="_Sort By" x:Name="SortMenu" />
             </v:AppMenuItem>
@@ -187,87 +188,98 @@
             <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Focusable="False"
                           Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
 
-            <Grid Grid.Column="2">
-                <v:FileListView x:Name="FileList" ItemsSource="{Binding Rows}" SelectionMode="Extended"
-                                KeyboardNavigation.TabNavigation="Once"
-                                AutomationProperties.Name="{Binding Title}"
-                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                                VirtualizingPanel.ScrollUnit="Item" BorderThickness="0"
-                                SelectionChanged="FileList_SelectionChanged" PreviewKeyDown="FileList_PreviewKeyDown"
-                                MouseDoubleClick="FileList_MouseDoubleClick"
-                                PreviewMouseLeftButtonDown="FileList_PreviewMouseLeftButtonDown" PreviewMouseMove="FileList_PreviewMouseMove">
-                    <v:FileListView.ItemContainerStyle>
-                        <Style TargetType="ListViewItem">
-                            <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        </Style>
-                    </v:FileListView.ItemContainerStyle>
-                    <v:FileListView.View>
-                        <GridView x:Name="ListColumns" AllowsColumnReorder="False" />
-                    </v:FileListView.View>
-                    <v:FileListView.ContextMenu>
-                        <ContextMenu>
-                            <v:AppMenuItem Command="v:AppCommands.OpenItem" />
-                            <v:AppMenuItem Command="v:AppCommands.Preview" InputGestureText="Space" />
-                            <v:AppMenuItem Command="v:AppCommands.GetInfo" />
-                            <v:AppMenuItem Command="v:AppCommands.EditCaption" />
-                            <v:AppMenuItem Command="v:AppCommands.ShowInExplorer" />
-                            <Separator />
-                            <v:AppMenuItem Header="_Copy" Command="ApplicationCommands.Copy" />
-                            <v:AppMenuItem Command="v:AppCommands.Export" />
-                            <Separator />
-                            <v:AppMenuItem Command="v:AppCommands.ToggleFavorite" />
-                            <v:AppMenuItem Command="v:AppCommands.DescribePhoto" />
-                            <v:AppMenuItem Command="v:AppCommands.DescribeAgain" />
-                            <v:AppMenuItem Command="v:AppCommands.UseDescriptionAsCaption" />
-                        </ContextMenu>
-                    </v:FileListView.ContextMenu>
-                </v:FileListView>
+            <!-- The list or gallery, and View > Show Description's panel beside it (#50), resizable. -->
+            <Grid Grid.Column="2" x:Name="ContentArea">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" MinWidth="240" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition x:Name="PanelColumn" Width="320" />
+                </Grid.ColumnDefinitions>
+                <Grid Grid.Column="0">
+                    <v:FileListView x:Name="FileList" ItemsSource="{Binding Rows}" SelectionMode="Extended"
+                                    KeyboardNavigation.TabNavigation="Once"
+                                    AutomationProperties.Name="{Binding Title}"
+                                    VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                    VirtualizingPanel.ScrollUnit="Item" BorderThickness="0"
+                                    SelectionChanged="FileList_SelectionChanged" PreviewKeyDown="FileList_PreviewKeyDown"
+                                    MouseDoubleClick="FileList_MouseDoubleClick"
+                                    PreviewMouseLeftButtonDown="FileList_PreviewMouseLeftButtonDown" PreviewMouseMove="FileList_PreviewMouseMove">
+                        <v:FileListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            </Style>
+                        </v:FileListView.ItemContainerStyle>
+                        <v:FileListView.View>
+                            <GridView x:Name="ListColumns" AllowsColumnReorder="False" />
+                        </v:FileListView.View>
+                        <v:FileListView.ContextMenu>
+                            <ContextMenu>
+                                <v:AppMenuItem Command="v:AppCommands.OpenItem" />
+                                <v:AppMenuItem Command="v:AppCommands.Preview" InputGestureText="Space" />
+                                <v:AppMenuItem Command="v:AppCommands.GetInfo" />
+                                <v:AppMenuItem Command="v:AppCommands.EditCaption" />
+                                <v:AppMenuItem Command="v:AppCommands.ShowInExplorer" />
+                                <Separator />
+                                <v:AppMenuItem Header="_Copy" Command="ApplicationCommands.Copy" />
+                                <v:AppMenuItem Command="v:AppCommands.Export" />
+                                <Separator />
+                                <v:AppMenuItem Command="v:AppCommands.ToggleFavorite" />
+                                <v:AppMenuItem Command="v:AppCommands.DescribePhoto" />
+                                <v:AppMenuItem Command="v:AppCommands.DescribeAgain" />
+                                <v:AppMenuItem Command="v:AppCommands.UseDescriptionAsCaption" />
+                            </ContextMenu>
+                        </v:FileListView.ContextMenu>
+                    </v:FileListView>
 
-                <TextBlock x:Name="EmptyText" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14"
-                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" Visibility="Collapsed" />
+                    <TextBlock x:Name="EmptyText" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" Visibility="Collapsed" />
 
-                <!-- In Tab order: the photo, then its name, details, caption and description, then Previous, the
-                     position and Next. -->
-                <Grid x:Name="GalleryPanel" Visibility="Collapsed" PreviewKeyDown="Gallery_PreviewKeyDown">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <!-- One focusable image named with just the file name, so arrowing says which photo and its
-                         description follows, and a screen reader's image description (JAWS Picture Smart, NVDA's
-                         describers) looks at the full-size picture. -->
-                    <v:GalleryImage x:Name="GalleryImage" Margin="16" Focusable="True" FocusVisualStyle="{x:Null}"
-                                    MouseDown="GalleryImage_MouseDown" />
-                    <Border Grid.Row="1" Padding="12,8" BorderThickness="0,1,0,0"
-                            BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBox x:Name="GalleryName" FontWeight="SemiBold" IsReadOnly="True" BorderThickness="0" Background="Transparent"
-                                         AutomationProperties.Name="Name" />
-                                <TextBox x:Name="GalleryDetails" IsReadOnly="True" BorderThickness="0" Background="Transparent"
-                                         Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" AutomationProperties.Name="Details" />
-                                <TextBox x:Name="GalleryCaption" IsReadOnly="True" BorderThickness="0" Background="Transparent"
-                                         TextWrapping="Wrap" AutomationProperties.Name="Caption" />
-                                <TextBox x:Name="GalleryDescription" IsReadOnly="True" BorderThickness="0" Background="Transparent"
-                                         TextWrapping="Wrap" MaxHeight="120" VerticalScrollBarVisibility="Auto"
-                                         AutomationProperties.Name="Description" Visibility="Collapsed" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                <Button x:Name="PreviousButton" Content="◀ Previous" Padding="10,3" Click="PreviousButton_Click"
-                                        AutomationProperties.Name="Previous" />
-                                <TextBox x:Name="GalleryPositionText" Margin="10,0" VerticalAlignment="Center" IsReadOnly="True"
-                                         BorderThickness="0" Background="Transparent" AutomationProperties.Name="Position" />
-                                <Button x:Name="NextButton" Content="Next ▶" Padding="10,3" Click="NextButton_Click"
-                                        AutomationProperties.Name="Next" />
-                            </StackPanel>
-                        </Grid>
-                    </Border>
+                    <!-- In Tab order: the photo, then its name, details, caption and description, then Previous, the
+                         position and Next. -->
+                    <Grid x:Name="GalleryPanel" Visibility="Collapsed" PreviewKeyDown="Gallery_PreviewKeyDown">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <!-- One focusable image named with just the file name, so arrowing says which photo and its
+                             description follows, and a screen reader's image description (JAWS Picture Smart, NVDA's
+                             describers) looks at the full-size picture. -->
+                        <v:GalleryImage x:Name="GalleryImage" Margin="16" Focusable="True" FocusVisualStyle="{x:Null}"
+                                        MouseDown="GalleryImage_MouseDown" />
+                        <Border Grid.Row="1" Padding="12,8" BorderThickness="0,1,0,0"
+                                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBox x:Name="GalleryName" FontWeight="SemiBold" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                                             AutomationProperties.Name="Name" />
+                                    <TextBox x:Name="GalleryDetails" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                                             Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" AutomationProperties.Name="Details" />
+                                    <TextBox x:Name="GalleryCaption" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                                             TextWrapping="Wrap" AutomationProperties.Name="Caption" />
+                                    <TextBox x:Name="GalleryDescription" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                                             TextWrapping="Wrap" MaxHeight="120" VerticalScrollBarVisibility="Auto"
+                                             AutomationProperties.Name="Description" Visibility="Collapsed" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button x:Name="PreviousButton" Content="◀ Previous" Padding="10,3" Click="PreviousButton_Click"
+                                            AutomationProperties.Name="Previous" />
+                                    <TextBox x:Name="GalleryPositionText" Margin="10,0" VerticalAlignment="Center" IsReadOnly="True"
+                                             BorderThickness="0" Background="Transparent" AutomationProperties.Name="Position" />
+                                    <Button x:Name="NextButton" Content="Next ▶" Padding="10,3" Click="NextButton_Click"
+                                            AutomationProperties.Name="Next" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </Grid>
                 </Grid>
+                <GridSplitter x:Name="PanelSplitter" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Focusable="False"
+                              Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" DragCompleted="PanelSplitter_DragCompleted" />
+                <v:DescriptionPanel x:Name="DescriptionPanel" Grid.Column="2" />
             </Grid>
         </Grid>
     </DockPanel>

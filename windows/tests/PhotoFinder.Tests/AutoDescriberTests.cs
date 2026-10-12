@@ -623,6 +623,35 @@ public sealed class AutoDescriberTests : IDisposable
     }
 
     [WpfFact]
+    public async Task ACorrectionMadeWhileDescribing_IsKept_ButAnAgreedDescribeAgainReplacesIt()
+    {
+        var release = new TaskCompletionSource();
+        var calls = 0;
+        var (model, auto, store) = await StartAsync(describe: async _ =>
+        {
+            if (++calls == 1) await release.Task;
+            return calls == 1 ? "Windows' first try." : "Windows, asked again.";
+        });
+        using (model) using (auto)
+        {
+            Select(model, "a.jpg");
+            var row = model.FocusedRow!;
+            await WaitUntil(() => _described.Count == 1);
+            Assert.True(auto.IsDescribing(row.Item!.Path));
+            store.Put(row.Item!, "accessible", "My correction.", edited: true);
+            release.SetResult();
+            await Settle(auto);
+            Assert.False(auto.IsDescribing(row.Item!.Path));
+            Assert.Equal("My correction.", store.Get(row.Item!, "accessible"));
+            Assert.DoesNotContain("Windows' first try.", _announced);
+
+            await auto.DescribeNowAsync(row, () => true, again: true, replaceEdited: true);
+            Assert.Equal("Windows, asked again.", store.Get(row.Item!, "accessible"));
+            Assert.False(store.IsEdited(row.Item!, "accessible"));
+        }
+    }
+
+    [WpfFact]
     public async Task DescribeNow_ACaughtFailureIsSpoken()
     {
         var (model, auto, _) = await StartAsync(settings: ManualOnly,

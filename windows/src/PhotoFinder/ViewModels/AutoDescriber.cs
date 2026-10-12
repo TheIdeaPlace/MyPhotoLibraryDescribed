@@ -71,6 +71,15 @@ public sealed class AutoDescriber : IDisposable
     /// Set by the window; descriptions aren't made or spoken while it's false.</summary>
     public Func<bool> CanSpeak { get; set; } = () => true;
 
+    /// <summary>Whether a photo is being described right now, automatically or because you asked: the Description panel
+    /// says "Describing…".</summary>
+    public bool IsDescribing(string path) =>
+        string.Equals(_describingPath, path, StringComparison.OrdinalIgnoreCase)
+        || (_manualRuns.TryGetValue(path, out var run) && !run.IsCompleted);
+
+    /// <summary>A photo started or stopped being described.</summary>
+    public event Action? DescribingChanged;
+
     /// <summary>Describing, or about to (the pause after arrowing): background describing waits for this.</summary>
     public bool IsBusy => _waiting || _running || _manual > 0;
 
@@ -125,26 +134,32 @@ public sealed class AutoDescriber : IDisposable
     /// With <paramref name="again"/> (Photo > Describe Again, Ctrl+Alt+Shift+D), a saved description isn't used: the
     /// photo is described afresh and the new description replaces it, for one that's poor or from another prompt.
     /// </summary>
-    public Task DescribeNowAsync(FileRow row, Func<bool> stillOn, bool again = false)
+    /// <param name="replaceEdited">Describe Again on a description the person corrected, after they agreed to replace it.
+    /// Otherwise a correction made meanwhile is kept and the new description dropped.</param>
+    public Task DescribeNowAsync(FileRow row, Func<bool> stillOn, bool again = false, bool replaceEdited = false)
     {
         if (row.Item is { } item && _manualRuns.TryGetValue(item.Path, out var running) && !running.IsCompleted)
         {
             Announcer.Announce($"Still describing {item.Name}");
             return running;
         }
-        var task = DescribeNowCoreAsync(row, stillOn, again);
+        var task = DescribeNowCoreAsync(row, stillOn, again, replaceEdited);
         if (row.Item is { } described && !task.IsCompleted)
         {
             _manualRuns[described.Path] = task;
+            DescribingChanged?.Invoke();
             var path = described.Path;
-            task.ContinueWith(_ => { if (_manualRuns.TryGetValue(path, out var t) && t == task) _manualRuns.Remove(path); },
-                CancellationToken.None, TaskContinuationOptions.None, _ui);
+            task.ContinueWith(_ =>
+            {
+                if (_manualRuns.TryGetValue(path, out var t) && t == task) _manualRuns.Remove(path);
+                DescribingChanged?.Invoke();
+            }, CancellationToken.None, TaskContinuationOptions.None, _ui);
         }
         Busy(task);
         return task;
     }
 
-    private async Task DescribeNowCoreAsync(FileRow row, Func<bool> stillOn, bool again)
+    private async Task DescribeNowCoreAsync(FileRow row, Func<bool> stillOn, bool again, bool replaceEdited)
     {
         if (row.Item is not { } item)
         {
@@ -202,7 +217,8 @@ public sealed class AutoDescriber : IDisposable
                 if (stillOn()) Announcer.Announce("Windows returned an empty description.");
                 return;
             }
-            _store.Put(item, kind, text);
+            if (replaceEdited) _store.Put(item, kind, text);
+            else if (!_store.PutUnlessEdited(item, kind, text)) return;  // corrected in the Description panel meanwhile: kept
             row.Description = text;
             if (!stillOn()) return;
             Announcer.Announce(text);
@@ -300,6 +316,7 @@ public sealed class AutoDescriber : IDisposable
                 try
                 {
                     _describingPath = path;
+                    DescribingChanged?.Invoke();
                     string text;
                     try
                     {
@@ -308,6 +325,7 @@ public sealed class AutoDescriber : IDisposable
                     finally
                     {
                         _describingPath = null;
+                        DescribingChanged?.Invoke();
                     }
                     if (_againPaths.ContainsKey(path))
                     {
@@ -315,8 +333,8 @@ public sealed class AutoDescriber : IDisposable
                     }
                     else if (text.Length > 0)
                     {
-                        _store.Put(item, kind, text);
-                        Speak(path, text);
+                        // A correction made in the Description panel while it was being described is kept.
+                        if (_store.PutUnlessEdited(item, kind, text)) Speak(path, text);
                     }
                     else if (_target == path && CanSpeak())
                     {
