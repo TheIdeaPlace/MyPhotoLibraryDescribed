@@ -154,10 +154,11 @@ enum FolderScanner {
         // root as it was added, so they match the sidebar's folders.
         let resolved = URL(fileURLWithPath: root).resolvingSymlinksInPath().path
         var paths: [String] = []
-        for case let url as URL in enumerator where MediaFiles.isMedia(url.lastPathComponent) {
+        for case let url as URL in enumerator {
             // A newer scan of this folder replaced this one: stop rather than walk a big folder for nothing.
             if Task.isCancelled { return [] }
-            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
+            guard MediaFiles.isMedia(url.lastPathComponent),
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
             let path = url.path
             for base in [root, resolved, "/private" + resolved] where FolderRoots.isInside(path, base) {
                 paths.append(root + path.dropFirst(base.count))

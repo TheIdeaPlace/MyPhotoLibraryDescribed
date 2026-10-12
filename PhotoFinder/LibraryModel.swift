@@ -107,8 +107,6 @@ final class LibraryModel {
     @ObservationIgnored private var folderNodes: [FolderNode] = []
     /// The scan of each added folder in progress, by lowercased path; a newer scan of the same folder cancels it.
     @ObservationIgnored private var folderScans: [String: Task<FolderNode, Never>] = [:]
-    /// The folder being watched for changes, the one showing.
-    @ObservationIgnored private var watchedFolder: String?
     /// Metadata already read from files, so going back to a folder doesn't read it all again. Keyed like
     /// descriptions, so an edited file is read afresh.
     @ObservationIgnored private var fileMetadata: [String: FileMetadata] = [:]
@@ -759,11 +757,13 @@ final class LibraryModel {
         }
         Task {
             var fresh: [String: FolderNode] = [:]
-            for scan in scans {
-                let node = await scan.value
-                guard !scan.isCancelled else { continue }
-                fresh[node.path.lowercased()] = node
-                if folderScans[node.path.lowercased()] == scan { folderScans[node.path.lowercased()] = nil }
+            var nodes: [(Task<FolderNode, Never>, FolderNode)] = []
+            for scan in scans { nodes.append((scan, await scan.value)) }
+            // Checked once they're all in: a folder scanned again meanwhile has its older result left out.
+            for (scan, node) in nodes where !scan.isCancelled {
+                let key = node.path.lowercased()
+                fresh[key] = node
+                if folderScans[key] == scan { folderScans[key] = nil }
             }
             guard !fresh.isEmpty else { return }
             // In the order they were added; folders removed meanwhile drop out.
@@ -781,30 +781,27 @@ final class LibraryModel {
     private func watchFolder(_ path: String?) {
         folderWatcher?.cancel()
         folderWatcher = nil
-        watchedFolder = path
         guard let path else { return }
         let descriptor = Darwin.open(path, O_EVTONLY)
         guard descriptor >= 0 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .rename, .delete],
                                                                queue: .main)
         source.setEventHandler { [weak self] in
-            MainActor.assumeIsolated { self?.folderDidChange() }
+            MainActor.assumeIsolated { self?.folderDidChange(path) }
         }
         source.setCancelHandler { close(descriptor) }
         source.resume()
         folderWatcher = source
     }
 
-    private func folderDidChange() {
+    private func folderDidChange(_ folder: String) {
         folderChangeTask?.cancel()
         folderChangeTask = Task {
             // Copying many files in sends many changes; wait for them to settle.
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
             // Only the added folder holding the one that changed is scanned again.
-            let root = watchedFolder.flatMap { folder in
-                folderRoots.first { FolderRoots.same($0, folder) || FolderRoots.isInside(folder, $0) }
-            }
+            let root = folderRoots.first { FolderRoots.same($0, folder) || FolderRoots.isInside(folder, $0) }
             refreshFolders(only: root, reloadCurrent: true)
         }
     }
