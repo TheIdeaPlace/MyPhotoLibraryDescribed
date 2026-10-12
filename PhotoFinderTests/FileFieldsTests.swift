@@ -18,11 +18,18 @@ final class FileFieldsTests: XCTestCase {
         XCTAssertEqual(fields.map(\.field), ["caption", "alt text"])
     }
 
-    func testSavingInPhotosOnlyFillsEmptyAltText() {
-        XCTAssertTrue(FileFields.mayWriteAltText("A dog.", over: "", policy: .whenEmpty))
-        XCTAssertFalse(FileFields.mayWriteAltText("A dog.", over: "A dog.", policy: .whenEmpty), "already there")
-        XCTAssertFalse(FileFields.mayWriteAltText("A dog.", over: "Rex (Lightroom)", policy: .whenEmpty))
-        XCTAssertFalse(FileFields.mayWriteAltText("A dog.", over: "", policy: .never))
+    func testSavingInPhotosOnlyFillsEmptyAccessibilityFields() {
+        XCTAssertTrue(FileFields.mayWriteAccessibility("A dog.", altText: "", extendedDescription: "", policy: .whenEmpty))
+        XCTAssertFalse(FileFields.mayWriteAccessibility("A dog.", altText: "A dog.", extendedDescription: "", policy: .whenEmpty))
+        XCTAssertFalse(FileFields.mayWriteAccessibility("A dog.", altText: "Rex (Lightroom)", extendedDescription: "", policy: .whenEmpty))
+        // IDT wrote an extended description but no alt text: left alone (#79).
+        XCTAssertFalse(FileFields.mayWriteAccessibility("A dog.", altText: "", extendedDescription: "A long one from IDT", policy: .whenEmpty))
+        XCTAssertFalse(FileFields.mayWriteAccessibility("A dog.", altText: "", extendedDescription: "", policy: .never))
+    }
+
+    func testAnExtendedDescriptionAnotherAppWroteIsAskedAbout() {
+        let fields = FileFields.replaced(caption: "", altText: "", extendedDescription: "From IDT", with: "A dog.")
+        XCTAssertEqual(fields.map(\.field), ["extended description"], "a short description would clear it")
     }
 
     func testTheTitleFollowsTheCaptionOnlyWhenItWasTheCaption() {

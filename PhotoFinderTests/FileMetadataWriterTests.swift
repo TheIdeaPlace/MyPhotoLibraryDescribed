@@ -17,7 +17,7 @@ final class FileMetadataWriterTests: XCTestCase {
         try? FileManager.default.removeItem(at: temp)
     }
 
-    private static let formats: [(String, UTType)] = [("jpg", .jpeg), ("tiff", .tiff), ("heic", .heic)]
+    private static let formats: [(String, UTType)] = [("jpg", .jpeg), ("png", .png), ("tiff", .tiff), ("heic", .heic)]
 
     /// A small photo with a camera date, a title and keywords, like one a camera or another app wrote.
     private func makePhoto(_ name: String, type: UTType, caption: String? = nil, title: String? = "Original title") throws -> URL {
@@ -223,13 +223,56 @@ final class FileMetadataWriterTests: XCTestCase {
         XCTAssertEqual(FileMetadataWriter.formatName(of: "a.webp"), "WEBP")
     }
 
-    func testPNGsAreLeftAloneUntilTheirOwnWriterComes() throws {
-        // ImageIO's copy damaged a PNG's EXIF UserComment (#61), so PNGs are refused, untouched, for now.
+    func testPNGsAreWrittenByTheirOwnWriter() throws {
+        // ImageIO's copy damaged a PNG's EXIF UserComment (#61); PNGMetadata edits the chunks instead
+        // (PNGMetadataTests covers it in depth).
+        XCTAssertTrue(FileMetadataWriter.canWrite(name: "Screenshot.PNG"))
         let url = try makePhoto("shot.png", type: .png)
+        let read = try FileMetadataWriter.write(.init(caption: "A dog", accessibilityDescription: "A dog"), to: url)
+        XCTAssertEqual(read.caption, "A dog")
+        XCTAssertEqual(read.altText, "A dog")
+    }
+
+    /// A JPEG with something after its picture, as a motion photo keeps its video, or with an MPF segment as Ultra
+    /// HDR has (#79).
+    private func jpeg(trailer: Data? = nil, mpf: Bool = false) throws -> URL {
+        let url = try makePhoto("motion.jpg", type: .jpeg)
+        var bytes = try Data(contentsOf: url)
+        if mpf {
+            // APP2 "MPF\0" with a minimal big-endian TIFF header, right after SOI.
+            let body: [UInt8] = Array("MPF".utf8) + [0] + [0x4D, 0x4D, 0, 42, 0, 0, 0, 8, 0, 0]
+            let segment: [UInt8] = [0xFF, 0xE2, 0, UInt8(body.count + 2)] + body
+            bytes.insert(contentsOf: segment, at: 2)
+        }
+        if let trailer { bytes.append(trailer) }
+        try bytes.write(to: url)
+        return url
+    }
+
+    func testAMotionPhotosVideoAfterThePictureComesThroughExactly() throws {
+        let video = Data("ftypmp42 pretend motion photo video ".utf8) + Data(repeating: 0xAB, count: 4096)
+        let url = try jpeg(trailer: video)
+        XCTAssertEqual(JPEGLayout.trailingData(try Data(contentsOf: url)), video)
+        let read = try FileMetadataWriter.write(.init(caption: "Two dogs", accessibilityDescription: "Two dogs."), to: url)
+        XCTAssertEqual(read.caption, "Two dogs")
+        XCTAssertEqual(JPEGLayout.trailingData(try Data(contentsOf: url)), video, "the video is byte-for-byte the same")
+    }
+
+    func testAMultiPictureJPEGIsRefusedAndLeftAlone() throws {
+        let url = try jpeg(mpf: true)
         let before = try Data(contentsOf: url)
-        XCTAssertFalse(FileMetadataWriter.canWrite(name: "shot.png"))
-        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: "A dog"), to: url))
+        XCTAssertTrue(JPEGLayout.hasMultiPicture(before))
+        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: "A dog"), to: url)) { error in
+            XCTAssertEqual(error as? FileMetadataWriteError, .multiPicture)
+        }
         XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+
+    func testAnOrdinaryJPEGHasNoTrailerAndOnePicture() throws {
+        let bytes = try Data(contentsOf: try makePhoto("plain.jpg", type: .jpeg))
+        XCTAssertFalse(JPEGLayout.hasMultiPicture(bytes))
+        XCTAssertEqual(JPEGLayout.trailingData(bytes), Data())
+        XCTAssertNil(JPEGLayout.trailingData(Data([0x89, 0x50, 0x4E, 0x47])), "not a JPEG")
     }
 
     func testAGIFNamedLikeAJPEGIsRefusedToo() throws {

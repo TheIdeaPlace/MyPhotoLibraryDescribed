@@ -1504,7 +1504,8 @@ final class LibraryModel {
             let replacing = zip(described, existing).flatMap { pair, metadata -> [(name: String, field: String, current: String)] in
                 let (file, text) = pair
                 guard FileMetadataWriter.canWrite(name: file.name) else { return [] }
-                return FileFields.replaced(caption: metadata.caption, altText: metadata.altText, with: text)
+                return FileFields.replaced(caption: metadata.caption, altText: metadata.altText,
+                                           extendedDescription: metadata.extendedDescription, with: text)
                     .map { (file.name, $0.field, $0.current) }
             }
             guard confirmReplacingInFiles(replacing) else { return }
@@ -1575,6 +1576,8 @@ final class LibraryModel {
                 outcome.written.append(written.now)
             case .failure(FileMetadataWriteError.unsupportedFormat(let format)):
                 outcome.skipped.append((file.name, format))
+            case .failure(FileMetadataWriteError.multiPicture):
+                outcome.skipped.append((file.name, "Multi-picture JPEG"))
             case .failure(let error):
                 Self.log.error("Couldn't write into \(file.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 outcome.failed.append((file.name, error.localizedDescription))
@@ -1652,7 +1655,10 @@ final class LibraryModel {
             var changes = FileMetadataChanges()
             if policy.shouldWrite(trimmed, over: existing.caption) { changes.caption = trimmed }
             // Only empty alt text is filled; what another app wrote is left alone, as a caption is.
-            if FileFields.mayWriteAltText(trimmed, over: existing.altText, policy: policy) { changes.accessibilityDescription = trimmed }
+            if FileFields.mayWriteAccessibility(trimmed, altText: existing.altText, extendedDescription: existing.extendedDescription,
+                                                policy: policy) {
+                changes.accessibilityDescription = trimmed
+            }
             guard changes != FileMetadataChanges() else { return }
             // Without the status bar or an error dialog, as for Photos; failures are logged.
             _ = await writeFiles([(file, changes)])

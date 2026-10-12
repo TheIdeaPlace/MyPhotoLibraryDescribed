@@ -28,7 +28,8 @@ public partial class App : Application
         var descriptions = new DescriptionStore(DescriptionStore.DefaultPath);
         var model = new LibraryModel(settings, Settings.DefaultPath, new MetadataCache(MetadataCache.DefaultPath),
             LibraryRoots.PicturesLibraryAsync) { Descriptions = descriptions };
-        var autoDescriber = new AutoDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
+        var autoDescriber = new AutoDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync,
+            describeAhead: DescribeAheadAsync) { MayDescribeAhead = () => !EnergySaverOn() };
         var backgroundDescriber = new BackgroundDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
         backgroundDescriber.ForegroundBusy = () => autoDescriber.IsBusy;
         MainWindow = new MainWindow(model) { AutoDescriber = autoDescriber, BackgroundDescriber = backgroundDescriber };
@@ -36,11 +37,34 @@ public partial class App : Application
     }
 
     private static Task<string> DescribeAsync(Models.MediaItem item, string kind, CancellationToken cancel) =>
-        WindowsAI.DescribeAsync(async size =>
+        WindowsAI.DescribeAsync(JpegOf(item, default), kind, cancel);
+
+    /// <summary>Describes a photo ahead (#64): <paramref name="drop"/> gives it up while it's being decoded or waiting its
+    /// turn, but not once Windows has it.</summary>
+    private static Task<string> DescribeAheadAsync(Models.MediaItem item, string kind, CancellationToken drop) =>
+        WindowsAI.DescribeAsync(JpegOf(item, drop), kind, drop: drop);
+
+    /// <summary>The photo as a JPEG at a given size, for Windows AI; <paramref name="drop"/> stops it before and after decoding.</summary>
+    private static Func<uint, Task<byte[]>> JpegOf(Models.MediaItem item, CancellationToken drop) => async size =>
+    {
+        drop.ThrowIfCancellationRequested();
+        using var bitmap = await ImageDecoding.DecodeAsync(item.Path, size);
+        drop.ThrowIfCancellationRequested();
+        return await ImageDecoding.ToJpegAsync(bitmap);
+    };
+
+    /// <summary>Windows' energy saver (battery saver) is on: work ahead waits.</summary>
+    private static bool EnergySaverOn()
+    {
+        try
         {
-            using var bitmap = await ImageDecoding.DecodeAsync(item.Path, size);
-            return await ImageDecoding.ToJpegAsync(bitmap);
-        }, kind, cancel);
+            return global::Windows.System.Power.PowerManager.EnergySaverStatus == global::Windows.System.Power.EnergySaverStatus.On;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 
     protected override void OnExit(ExitEventArgs e)
     {
