@@ -56,3 +56,7 @@ The app is signed with an Apple Development certificate. Don't switch it to ad h
 - Live Photos export as the still image only.
 - Captions, keywords and ratings need macOS 27 or later. People and photo titles aren't available through Apple's public PhotoKit API.
 - Original file names are saved to `~/Library/Application Support/PhotoFinder` after the first read, so albums open instantly afterwards. Captions and keywords fill in a few seconds after a list appears.
+
+## Releasing the Mac app
+
+`scripts/release-mac.sh` builds a signed, notarized disk image on a Mac with Xcode 27 (the Apple Intelligence code needs the macOS 27 SDK, which GitHub's runners don't have yet). It uses the Developer ID certificate in the keychain and the App Store Connect key in `~/.signing-kit`. With `--publish` it creates the GitHub release `mac-v<version>` from `MARKETING_VERSION` in `project.yml`; raise that first. The app's Help > Check for Updates looks for these releases.
