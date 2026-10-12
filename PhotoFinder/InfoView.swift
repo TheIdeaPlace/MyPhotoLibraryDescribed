@@ -54,6 +54,7 @@ struct InfoView: View {
             .padding()
         }
         .frame(minWidth: 460, idealWidth: 520, minHeight: 420, idealHeight: 620)
+        .closesWithKeyboard { dismiss() }
         .task { await load() }
     }
 

@@ -407,6 +407,7 @@ private struct CaptionEditor: View {
         }
         .padding()
         .frame(width: 440)
+        .closesWithKeyboard(escape: false) { dismiss() }
         .onAppear { text = target.initialText }
     }
 }
