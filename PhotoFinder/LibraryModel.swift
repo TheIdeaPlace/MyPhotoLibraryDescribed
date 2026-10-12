@@ -158,6 +158,10 @@ final class LibraryModel {
     @ObservationIgnored private var backgroundDescriber: AnyObject?
     /// Describe Photo in progress; a newer one replaces it.
     @ObservationIgnored private var describeTask: Task<Void, Never>?
+    /// The photo Describe Photo is working on, so Describe Again on the same photo can supersede it.
+    @ObservationIgnored private var describeTaskID: String?
+    /// Describe Again in progress; a newer Describe Again replaces it, but Describe Photo doesn't.
+    @ObservationIgnored private var describeAgainTask: Task<Void, Never>?
     /// Photos Describe Again is describing: an automatic description of one finishing meanwhile is older, so it's
     /// neither saved nor spoken.
     @ObservationIgnored private var describingAgain: [String: Int] = [:]
@@ -1684,6 +1688,11 @@ final class LibraryModel {
             announce("Videos can't be described")
             return
         }
+        // Describe Again is replacing this one: the saved description is the old one, so wait for the new (#58).
+        if (describingAgain[row.id] ?? 0) > 0 {
+            announce("Describing \(row.name) again")
+            return
+        }
         if let saved = descriptions.description(forKey: key) {
             announce(saved)
             return
@@ -1701,6 +1710,7 @@ final class LibraryModel {
         describeTask?.cancel()
         announce("Describing \(row.name)")
         let id = row.id
+        describeTaskID = id
         describeTask = Task { [weak self] in
             guard let text = await self?.describeAndRemember(id, allowNetwork: true) else { return }
             self?.say(text, ifStillOn: id)
@@ -1737,9 +1747,12 @@ final class LibraryModel {
         let id = row.id
         autoDescriber.describingManually(id)
         describingAgain[id, default: 0] += 1
-        describeTask?.cancel()
+        // Its own task: Describe Photo on another photo doesn't cut it short (#58); only a newer Describe Again does.
+        describeAgainTask?.cancel()
+        // A Describe Photo still running on this photo would save and speak an older description after this one.
+        if describeTaskID == id { describeTask?.cancel() }
         announce("Describing \(row.name) again")
-        describeTask = Task { [weak self] in
+        describeAgainTask = Task { [weak self] in
             let text = await self?.describeAndRemember(id, allowNetwork: true, replacingEdit: agreed)
             self?.describingAgain[id, default: 1] -= 1
             guard let text else { return }
