@@ -4,10 +4,11 @@ using PhotoFinder.Services;
 namespace PhotoFinder.ViewModels;
 
 /// <summary>
-/// Describes the photos in a folder behind the scenes when the folder is added to the library (a setting, off
-/// until turned on), so their descriptions are ready when you arrow to them, spoken after the usual short pause
-/// without waiting for Windows AI.
+/// Describes the library's photos behind the scenes (a setting, off until turned on), so their descriptions are ready
+/// when you arrow to them, spoken after the usual short pause without waiting for Windows AI (#96).
 ///
+/// - It works through every photo in the library not described yet, newest first: when it's turned on, each time
+///   Photo Finder starts (so a big library carries on across restarts), and for a folder as it's added.
 /// - One photo at a time, into the same store automatic descriptions and Get Info use.
 /// - Photos are queued by path and looked up again when their turn comes, so a folder removed meanwhile is
 ///   skipped and a photo Photo Finder edited is described under its current details.
@@ -22,7 +23,7 @@ public sealed class BackgroundDescriber : IDisposable
     private readonly AutoDescriber.DescribeFunc _describe;
     private readonly Func<CancellationToken, Task<AIReadiness>> _check;
     private readonly Func<CancellationToken, Task<AIReadiness>> _prepare;
-    private readonly Queue<(string Path, string Folder)> _queue = new();
+    private readonly Queue<(string Path, string Folder, int Run)> _queue = new();
     private readonly HashSet<string> _queued = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _perFolder = new(StringComparer.OrdinalIgnoreCase);
     private readonly CancellationTokenSource _closing = new();
@@ -73,34 +74,109 @@ public sealed class BackgroundDescriber : IDisposable
                 var stopped = StopQueue();
                 Announcer.Announce(stopped > 0
                     ? $"Background describing off. Stopped with {Plural(stopped)} not described."
-                    : "Added folders won't be described in the background");
+                    : "Photos won't be described in the background");
                 return;
             }
-            Announcer.Announce("Folders you add will be described in the background");
-            Busy(CheckWhenTurnedOnAsync());
+            Announcer.Announce("Photos in the library will be described in the background");
+            Busy(TurnedOnAsync());
         }
     }
 
-    /// <summary>Photo > Stop Background Describing: stops this run, leaving the setting on for folders added later.</summary>
+    /// <summary>Photo > Stop Background Describing: stops this run. The setting stays on, so folders added later are
+    /// described, and the next start carries on with the library.</summary>
     public void Stop()
     {
         var stopped = StopQueue();
-        Announcer.Announce(stopped > 0 ? $"Stopped describing in the background. {Plural(stopped)} not described." : "Nothing is being described in the background");
+        Announcer.Announce(stopped > 0
+            ? $"Stopped describing in the background. {Plural(stopped)} not described; it carries on the next time {AppInfo.Name} starts."
+            : "Nothing is being described in the background");
     }
 
-    /// <summary>Empties the queue (the photo being described finishes) and returns how many were left.</summary>
+    /// <summary>Empties the queues (the photo being described finishes, but no longer counts) and returns how many were
+    /// left.</summary>
     private int StopQueue()
     {
-        var left = _queue.Count;
+        var left = _front.Count + _queue.Count;
+        _front.Clear();
         _queue.Clear();
         _queued.Clear();
         _perFolder.Clear();
-        if (!IsRunning) Finish();
+        _announceLibrary = false;
+        // A new run: the photo still being described belongs to the old one, so it isn't counted again.
+        _run++;
+        // The status bar clears now, even while the photo already being described finishes.
+        Finish();
         return left;
     }
 
-    /// <summary>Turned on by the person: say now if it can't work, or get the model ready if that's all it needs.</summary>
-    private async Task CheckWhenTurnedOnAsync()
+    private async Task TurnedOnAsync()
+    {
+        if (await CheckWhenTurnedOnAsync()) await DescribeLibraryAsync(announce: true);
+    }
+
+    /// <summary>At a start: the library's photos not described yet, quietly, tracked so tests can wait for it.</summary>
+    public void Resume() => Busy(DescribeLibraryAsync());
+
+    /// <summary>The library's photos not described yet, newest first, queued: when it's turned on, and when Photo Finder
+    /// starts. Said aloud only when the person turned it on; at a start the status bar shows it. "Newest" is the date
+    /// taken when the details have been read, and otherwise the file's modified date.</summary>
+    public async Task DescribeLibraryAsync(bool announce = false)
+    {
+        if (!Enabled) return;
+        AIReadiness readiness;
+        try { readiness = await _check(_closing.Token); }
+        catch (Exception) { return; }
+        if (readiness.State != "Ready" || !Enabled) return;
+        var kind = _model.Settings.DescriptionKind;
+        var todo = _model.AllItems
+            .Where(i => !i.IsVideo && !i.IsOnlineOnly && MediaTypes.KindOf(i.Path) == MediaKind.Image && Wanted(i.Path) && _store.Get(i, kind) is null
+                        && !_failed.Contains(FailureKey(i)))
+            .OrderByDescending(i => i.Metadata?.DateTaken ?? i.Modified)
+            .Select(i => i.Path)
+            .ToList();
+        if (todo.Count == 0) return;
+        foreach (var path in todo)
+        {
+            _queue.Enqueue((path, LibraryKey, _run));
+            _queued.Add(path);
+        }
+        _perFolder[LibraryKey] = _perFolder.GetValueOrDefault(LibraryKey) + todo.Count;
+        _total += todo.Count;
+        _announceLibrary |= announce;
+        if (announce) Announcer.AnnounceAfter($"Describing {Plural(todo.Count)} in the background", "PhotoFinderBackground");
+        ShowProgress();
+        if (!IsRunning) _running = RunAsync();
+    }
+
+    /// <summary>Not queued already, and not the photo being described now.</summary>
+    private bool Wanted(string path) => !_queued.Contains(path) && !string.Equals(path, _current, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The queue's name for the library as a whole, rather than a folder that was added.</summary>
+    private const string LibraryKey = "";
+    private bool _announceLibrary;
+
+    /// <summary>Folders as they're added, described before the library's backlog.</summary>
+    private readonly Queue<(string Path, string Folder, int Run)> _front = new();
+    /// <summary>Which run the queues belong to: Stop starts a new one, so an older photo finishing isn't counted.</summary>
+    private int _run;
+    /// <summary>The photo being described now.</summary>
+    private string? _current;
+
+    /// <summary>Photos that couldn't be described this session, by path, size and date, so a new run doesn't try them
+    /// again.</summary>
+    private readonly HashSet<string> _failed = new(StringComparer.OrdinalIgnoreCase);
+    private static string FailureKey(MediaItem item) => $"{item.Path}|{item.Size}|{item.Modified.Ticks}";
+
+    /// <summary>After this many photos in a row fail, the run stops and says why, rather than failing through thousands
+    /// of photos (a missing HEIF codec, a broken helper).</summary>
+    internal const int FailuresInARow = 5;
+
+    /// <summary>Whether it's a good time to work: not on energy saver. Set by the app; it waits meanwhile.</summary>
+    public Func<bool> MayRun { get; set; } = () => true;
+
+    /// <summary>Turned on by the person: say now if it can't work, or get the model ready if that's all it needs. True
+    /// when Windows AI is ready.</summary>
+    private async Task<bool> CheckWhenTurnedOnAsync()
     {
         try
         {
@@ -111,15 +187,21 @@ public sealed class BackgroundDescriber : IDisposable
                 readiness = await _prepare(_closing.Token);
             }
             if (readiness.State != "Ready")
+            {
                 Announcer.Announce($"Photos can't be described in the background. {readiness.Message}");
+                return false;
+            }
+            return true;
         }
         catch (OperationCanceledException) when (_closing.IsCancellationRequested)
         {
             // Closing.
+            return false;
         }
         catch (Exception ex)
         {
             Announcer.Announce($"Photos can't be described in the background. {ex.Message}");
+            return false;
         }
     }
 
@@ -135,17 +217,28 @@ public sealed class BackgroundDescriber : IDisposable
         var kind = _model.Settings.DescriptionKind;
         var items = _model.AllItems.ToDictionary(i => i.Path, StringComparer.OrdinalIgnoreCase);
         var todo = paths
-            .Where(p => MediaTypes.KindOf(p) == MediaKind.Image && !_queued.Contains(p))
+            .Where(p => MediaTypes.KindOf(p) == MediaKind.Image && !string.Equals(p, _current, StringComparison.OrdinalIgnoreCase))
             .Where(p => !items.TryGetValue(p, out var item) || (!item.IsOnlineOnly && _store.Get(item, kind) is null))
             .ToList();
         if (todo.Count == 0) return;
-        foreach (var path in todo)
+        // Moved ahead of the library's backlog: one already waiting there is taken out of it, and counted for the folder.
+        var moved = todo.Where(_queued.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (moved.Count > 0)
         {
-            _queue.Enqueue((path, folder));
-            _queued.Add(path);
+            var rest = _queue.Where(q => !moved.Contains(q.Path)).ToList();
+            var fromLibrary = _queue.Count - rest.Count;
+            _queue.Clear();
+            foreach (var q in rest) _queue.Enqueue(q);
+            if (_perFolder.ContainsKey(LibraryKey) && (_perFolder[LibraryKey] -= fromLibrary) <= 0) _perFolder.Remove(LibraryKey);
+            _total -= fromLibrary;
         }
-        _perFolder[folder] = _perFolder.GetValueOrDefault(folder) + todo.Count;
-        _total += todo.Count;
+        foreach (var path in todo.Where(p => !_front.Any(f => string.Equals(f.Path, p, StringComparison.OrdinalIgnoreCase))))
+        {
+            _front.Enqueue((path, folder, _run));
+            _queued.Add(path);
+            _perFolder[folder] = _perFolder.GetValueOrDefault(folder) + 1;
+            _total++;
+        }
         Announcer.AnnounceAfter($"Describing {Plural(todo.Count)} from {DisplayName(folder)} in the background", "PhotoFinderBackground");
         ShowProgress();
         if (!IsRunning) _running = RunAsync();
@@ -153,16 +246,22 @@ public sealed class BackgroundDescriber : IDisposable
 
     private async Task RunAsync()
     {
-        while (_queue.Count > 0 && !_closing.IsCancellationRequested)
+        var failedInARow = 0;
+        var lastRun = _run;
+        while (_front.Count + _queue.Count > 0 && !_closing.IsCancellationRequested)
         {
-            // Arrowing comes first: wait while automatic descriptions are describing or about to.
-            while (ForegroundBusy() && !_closing.IsCancellationRequested)
+            // Arrowing comes first: wait while automatic descriptions are describing or about to. And not on energy saver.
+            // Stop empties the queues, which ends the wait.
+            while ((ForegroundBusy() || !MayRun()) && _front.Count + _queue.Count > 0 && !_closing.IsCancellationRequested)
             {
+                if (!MayRun()) _model.BackgroundProgress = "Background describing paused on energy saver";
                 try { await Task.Delay(250, _closing.Token); }
                 catch (OperationCanceledException) { return; }
             }
-            if (_queue.Count == 0) break;
-            var (path, folder) = _queue.Dequeue();
+            if (_front.Count + _queue.Count == 0) break;
+            var (path, folder, run) = _front.Count > 0 ? _front.Dequeue() : _queue.Dequeue();
+            // A new run (after Stop, or turning it off and on) counts failures afresh.
+            if (run != lastRun) (failedInARow, lastRun) = (0, run);
             _queued.Remove(path);
             ShowProgress();
             // Looked up now, not when queued: the folder may have been removed, or the photo edited.
@@ -170,33 +269,60 @@ public sealed class BackgroundDescriber : IDisposable
             var kind = _model.Settings.DescriptionKind;
             if (item is { IsVideo: false, IsOnlineOnly: false } && _store.Get(item, kind) is null)
             {
+                _current = path;
                 try
                 {
                     var text = await _describe(item, kind, _closing.Token);
                     if (text.Length > 0) _store.PutUnlessEdited(item, kind, text);
+                    failedInARow = 0;
                 }
                 catch (OperationCanceledException) when (_closing.IsCancellationRequested)
                 {
                     return;
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    // One photo that can't be described (filtered, unreadable, timed out) doesn't stop the rest.
+                    // One photo that can't be described (filtered, unreadable, timed out) doesn't stop the rest, but many
+                    // in a row means something's wrong with every photo: stop and say what, once.
+                    _failed.Add(FailureKey(item));
+                    if (run == _run && ++failedInARow >= FailuresInARow)
+                    {
+                        var left = StopQueue();
+                        Announcer.AnnounceAfter(
+                            $"Background describing stopped: {Plural(FailuresInARow)} in a row couldn't be described, so {Plural(left)} weren't tried. " +
+                            (ex is DescriptionException ? ex.Message : $"Windows couldn't describe them: {ex.Message}"), "PhotoFinderBackground");
+                        break;
+                    }
+                }
+                finally
+                {
+                    _current = null;
                 }
             }
+            // Stop or turning it off started a new run meanwhile: this photo belonged to the old one.
+            if (run != _run) continue;
             _done++;
             if (_perFolder.ContainsKey(folder) && --_perFolder[folder] == 0)
             {
                 _perFolder.Remove(folder);
-                if (_model.Roots.Any(r => r.Equals(folder, StringComparison.OrdinalIgnoreCase) || LibraryScanner.IsInside(folder, r)))
+                if (folder != LibraryKey && _model.Roots.Any(r => r.Equals(folder, StringComparison.OrdinalIgnoreCase) || LibraryScanner.IsInside(folder, r)))
                     Announcer.AnnounceAfter($"Finished describing the photos in {DisplayName(folder)}", "PhotoFinderBackground");
+            }
+            // The whole library: said when the person started it, once none of it is left, including photos moved ahead
+            // for a folder added meanwhile. Otherwise the status bar just clears.
+            if (_announceLibrary && !_perFolder.ContainsKey(LibraryKey) && _front.Count == 0)
+            {
+                Announcer.AnnounceAfter("Finished describing the library's photos", "PhotoFinderBackground");
+                _announceLibrary = false;
             }
         }
         Finish();
     }
 
-    private void ShowProgress() =>
-        _model.BackgroundProgress = $"Describing photos in the background, {Math.Min(_done + 1, Math.Max(_total, 1)):N0} of {_total:N0}";
+    private void ShowProgress()
+    {
+        if (_total > 0) _model.BackgroundProgress = $"Describing photos in the background, {Math.Min(_done + 1, _total):N0} of {_total:N0}";
+    }
 
     private void Finish()
     {

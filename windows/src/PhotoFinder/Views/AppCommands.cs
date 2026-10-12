@@ -56,7 +56,7 @@ public static class AppCommands
     /// Shift-Option-Command-D.</summary>
     public static readonly RoutedUICommand DescribeAgain = Make("Describe A_gain", nameof(DescribeAgain),
         new KeyGesture(Key.D, ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift));
-    public static readonly RoutedUICommand DescribeInBackground = Make("Describe Added Folders in the Bac_kground", nameof(DescribeInBackground));
+    public static readonly RoutedUICommand DescribeInBackground = Make("Describe Photos in the Bac_kground", nameof(DescribeInBackground));
     public static readonly RoutedUICommand StopBackground = Make("_Stop Background Describing", nameof(StopBackground));
     public static readonly RoutedUICommand AutoDescribe = Make("Describe Photos _Automatically", nameof(AutoDescribe),
         new KeyGesture(Key.U, ModifierKeys.Control | ModifierKeys.Shift));

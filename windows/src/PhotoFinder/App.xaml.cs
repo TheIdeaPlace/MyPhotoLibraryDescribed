@@ -34,6 +34,7 @@ public partial class App : Application
             describeAhead: DescribeAheadAsync) { MayDescribeAhead = () => !EnergySaverOn() };
         var backgroundDescriber = new BackgroundDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
         backgroundDescriber.ForegroundBusy = () => autoDescriber.IsBusy;
+        backgroundDescriber.MayRun = () => !EnergySaverOn();
         MainWindow = new MainWindow(model) { AutoDescriber = autoDescriber, BackgroundDescriber = backgroundDescriber };
         MainWindow.Show();
     }
