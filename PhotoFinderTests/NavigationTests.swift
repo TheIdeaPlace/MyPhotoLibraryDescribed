@@ -44,7 +44,9 @@ final class NavigationTests: XCTestCase {
         XCTAssertEqual(restored.first?.order, .reverse)
 
         defaults.set("noSuchColumn", forKey: ColumnOrder.sortColumnKey)
+        defaults.set(false, forKey: ColumnOrder.sortDescendingKey)
         XCTAssertEqual(ColumnOrder.sortColumn(of: ColumnOrder.savedSort(defaults)), "date")
+        XCTAssertEqual(ColumnOrder.savedSort(defaults).first?.order, .reverse, "the default direction, not the stale one")
         defaults.removePersistentDomain(forName: "NavigationTests.sort")
     }
 }

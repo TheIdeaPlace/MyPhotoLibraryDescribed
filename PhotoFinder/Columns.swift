@@ -81,9 +81,14 @@ enum ColumnOrder {
 
     /// The sort saved by `saveSort`, or Date Taken, newest first, as Windows starts.
     static func savedSort(_ defaults: UserDefaults) -> [KeyPathComparator<FileRow>] {
-        let id = defaults.string(forKey: sortColumnKey).flatMap { info($0)?.id } ?? "date"
+        // An unknown column (a setting from a later version) falls back to the default sort, direction and all.
+        guard let id = defaults.string(forKey: sortColumnKey).flatMap({ info($0)?.id }) else {
+            var byDate = comparator("date")
+            byDate.order = .reverse
+            return [byDate]
+        }
         var comparator = comparator(id)
-        let descending = defaults.object(forKey: sortDescendingKey) as? Bool ?? (id == "date")
+        let descending = defaults.object(forKey: sortDescendingKey) as? Bool ?? sortsDescendingFirst(id)
         comparator.order = descending ? .reverse : .forward
         return [comparator]
     }
