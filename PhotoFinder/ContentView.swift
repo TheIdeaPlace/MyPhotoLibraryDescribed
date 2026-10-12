@@ -266,6 +266,8 @@ struct GalleryView: View {
         .onKeyPress(.upArrow) { model.moveSelection(by: -1); return .handled }
         .onKeyPress(.rightArrow) { model.moveSelection(by: 1); return .handled }
         .onKeyPress(.downArrow) { model.moveSelection(by: 1); return .handled }
+        .onKeyPress(.home) { model.moveSelectionToEnd(last: false); return .handled }
+        .onKeyPress(.end) { model.moveSelectionToEnd(last: true); return .handled }
         .onKeyPress(.space) { model.quickLook(); return .handled }
         .onKeyPress(.return) { model.open(); return .handled }
         .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }

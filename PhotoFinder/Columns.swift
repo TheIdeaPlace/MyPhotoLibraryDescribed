@@ -70,6 +70,19 @@ enum ColumnOrder {
     }
 
     /// How a column sorts the list.
+    /// Which way a column sorts when first chosen: dates and sizes read best newest or largest first, text A to Z.
+    /// The same columns as Windows' SortBy.
+    static func sortsDescendingFirst(_ id: String) -> Bool {
+        ["date", "modified", "dimensions", "megapixels", "rating", "favorite", "duration"].contains(id)
+    }
+
+    /// The column a sort order is by, or nil if it isn't one of the columns.
+    static func sortColumn(of order: [KeyPathComparator<FileRow>]) -> String? {
+        guard var first = order.first else { return nil }
+        first.order = .forward
+        return all.first { comparator($0.id) == first }?.id
+    }
+
     static func comparator(_ id: String) -> KeyPathComparator<FileRow> {
         switch id {
         case "date": KeyPathComparator(\FileRow.sortDate)
