@@ -201,8 +201,17 @@ struct AppleIntelligenceSection: View {
             if let conversation, conversation.startedFromSaved, !conversation.isWorking {
                 // A saved description may be stale (the photo was edited) or poor: describing again replaces it.
                 Button("Describe Again") {
+                    // As Photo > Describe Again: a description the person corrected is replaced only if they agree.
+                    if model.descriptions.isEdited(forKey: descriptionKey) {
+                        let alert = NSAlert()
+                        alert.messageText = "Replace the description you edited?"
+                        alert.informativeText = "The photo will be described again, and the new description replaces yours."
+                        alert.addButton(withTitle: "Describe Again")
+                        alert.addButton(withTitle: "Cancel")
+                        guard alert.runModal() == .alertFirstButtonReturn else { return }
+                    }
                     self.conversation = nil
-                    start()
+                    start(replacingEdited: true)
                 }
             }
             if conversation?.exchanges.isEmpty ?? true {
@@ -242,12 +251,14 @@ struct AppleIntelligenceSection: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func start() {
+    /// `replacingEdited` is for Describe Again, after the person agreed; otherwise a description corrected in the
+    /// Description panel meanwhile is kept.
+    private func start(replacingEdited: Bool = false) {
         guard let imageData else { return }
         let cache = model.descriptions
         let key = descriptionKey
         guard let conversation = conversation ?? ImageConversation(imageData: imageData, onDescribed: { text in
-            cache.remember(text, forKey: key)
+            if replacingEdited || !cache.isEdited(forKey: key) { cache.remember(text, forKey: key) }
         }) else {
             return
         }

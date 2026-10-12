@@ -1,18 +1,23 @@
 import Foundation
 
-/// The places F6 and Shift-F6 move between, in order: the sidebar, the list or gallery, Search, then the status bar.
+/// The places F6 and Shift-F6 move between, in order: the sidebar, the list or gallery, the Description panel (when
+/// it's showing, #50), Search, then the status bar.
 enum Pane: Hashable {
-    case sidebar, content, search
+    case sidebar, content, description, search
     case status(StatusSection)
 
-    static let ring: [Pane] = [.sidebar, .content, .search, .status(.status)]
+    static func ring(showingDescription: Bool) -> [Pane] {
+        showingDescription ? [.sidebar, .content, .description, .search, .status(.status)]
+            : [.sidebar, .content, .search, .status(.status)]
+    }
 
     /// Where F6 (direction 1) or Shift-F6 (-1) goes from `current`. Anywhere in the status bar counts as the status bar;
-    /// nowhere in particular counts as the list or gallery.
-    static func next(from current: Pane?, by direction: Int) -> Pane {
+    /// nowhere in particular (or the Description panel just hidden) counts as the list or gallery.
+    static func next(from current: Pane?, by direction: Int, showingDescription: Bool = true) -> Pane {
+        let ring = ring(showingDescription: showingDescription)
         let at: Int
         switch current {
-        case .status: at = 3
+        case .status: at = ring.count - 1
         case let pane?: at = ring.firstIndex(of: pane) ?? 1
         case nil: at = 1
         }

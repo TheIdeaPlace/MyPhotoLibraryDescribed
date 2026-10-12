@@ -30,6 +30,7 @@ enum ColumnOrder {
         ColumnInfo(id: "megapixels", title: "Megapixels", visibleByDefault: false),
         ColumnInfo(id: "location", title: "Place Taken", visibleByDefault: false),
         ColumnInfo(id: "source", title: "Source", visibleByDefault: false),
+        ColumnInfo(id: "description", title: "Description", visibleByDefault: false),
     ]
 
     static let all: [ColumnInfo] = [nameColumn] + optional
@@ -99,6 +100,7 @@ enum ColumnOrder {
         case "megapixels": KeyPathComparator(\FileRow.megapixels)
         case "location": KeyPathComparator(\FileRow.locationText)
         case "source": KeyPathComparator(\FileRow.source)
+        case "description": KeyPathComparator(\FileRow.descriptionText)
         default: KeyPathComparator(\FileRow.name)
         }
     }
@@ -119,6 +121,7 @@ enum ColumnOrder {
         case "megapixels": (60, 80)
         case "location": (100, 150)
         case "source": (70, 100)
+        case "description": (160, 320)
         default: (50, 80)
         }
     }
@@ -143,6 +146,7 @@ extension FileRow {
         case "megapixels": megapixelsText
         case "location": locationText
         case "source": source
+        case "description": descriptionText
         default: ""
         }
     }
@@ -154,6 +158,7 @@ extension FileRow {
             guard !value.isEmpty else { return nil }
             switch id {
             case "caption": return "Caption: \(value)"
+            case "description": return "Description: \(value)"
             case "keywords": return "Keywords: \(value)"
             case "favorite": return "Favorite"
             case "modified": return "Modified \(value)"

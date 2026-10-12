@@ -2,14 +2,23 @@ import XCTest
 @testable import Photo_Finder
 
 final class PaneTests: XCTestCase {
-    func testF6GoesSidebarContentSearchStatusBarAndRound() {
+    func testF6GoesSidebarContentDescriptionSearchStatusBarAndRound() {
         XCTAssertEqual(Pane.next(from: .sidebar, by: 1), .content)
-        XCTAssertEqual(Pane.next(from: .content, by: 1), .search)
+        XCTAssertEqual(Pane.next(from: .content, by: 1), .description)
+        XCTAssertEqual(Pane.next(from: .description, by: 1), .search)
         XCTAssertEqual(Pane.next(from: .search, by: 1), .status(.status))
         XCTAssertEqual(Pane.next(from: .status(.background), by: 1), .sidebar)
         XCTAssertEqual(Pane.next(from: .sidebar, by: -1), .status(.status))
         XCTAssertEqual(Pane.next(from: .status(.activity), by: -1), .search)
-        XCTAssertEqual(Pane.next(from: nil, by: 1), .search)
+        XCTAssertEqual(Pane.next(from: .search, by: -1), .description)
+        XCTAssertEqual(Pane.next(from: nil, by: 1), .description)
+    }
+
+    func testWithTheDescriptionPanelHiddenF6SkipsIt() {
+        XCTAssertEqual(Pane.next(from: .content, by: 1, showingDescription: false), .search)
+        XCTAssertEqual(Pane.next(from: .search, by: -1, showingDescription: false), .content)
+        // Hidden while you were in it: you're treated as being on the list or gallery.
+        XCTAssertEqual(Pane.next(from: .description, by: 1, showingDescription: false), .search)
     }
 
     func testLeftAndRightWrapThroughTheSectionsShown() {

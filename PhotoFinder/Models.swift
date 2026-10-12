@@ -69,12 +69,21 @@ struct FileRow: Identifiable, Hashable, Sendable {
     let isFavorite: Bool
     private(set) var caption: String
     private(set) var keywords: String
+    /// The saved description, for the Description column (#50). Filled by the library model only while that column
+    /// is showing, so a big library doesn't copy every description into its rows for nothing.
+    private(set) var descriptionText = ""
     let rating: Int
     let ratingText: String
     let locationText: String
     let source: String
 
     var isContainer: Bool { payload == .container }
+
+    func withDescription(_ text: String) -> FileRow {
+        var copy = self
+        copy.descriptionText = text
+        return copy
+    }
     var sortDate: Date { date ?? .distantPast }
     var sortModified: Date { modified ?? .distantPast }
     var favoriteSort: Int { isFavorite ? 1 : 0 }
