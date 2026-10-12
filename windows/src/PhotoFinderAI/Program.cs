@@ -83,7 +83,7 @@ catch (Exception ex)
 int Relaunch()
 {
     const string notInstalled = "The Windows AI helper isn't installed as a package, and Windows only lets a package use its model. " +
-                                "Install it with Photo Finder, or for development run scripts\build-ai-helper.ps1 -Register.";
+                                $"Install it with {PhotoFinder.AppInfo.Name}, or for development run scripts\\build-ai-helper.ps1 -Register.";
     var alias = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps", Alias);
     if (Environment.GetEnvironmentVariable(RelaunchedVariable) == "1" || !File.Exists(alias))
     {

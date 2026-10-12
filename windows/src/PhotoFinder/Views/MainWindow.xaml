@@ -2,8 +2,9 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:v="clr-namespace:PhotoFinder.Views"
+        xmlns:local="clr-namespace:PhotoFinder"
         xmlns:m="clr-namespace:PhotoFinder.Models"
-        Title="Photo Finder" Width="1200" Height="760" MinWidth="720" MinHeight="420"
+        Title="{x:Static local:AppInfo.Name}" Width="1200" Height="760" MinWidth="720" MinHeight="420"
         WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
@@ -84,6 +85,9 @@
             </v:AppMenuItem>
             <v:AppMenuItem Header="_Help">
                 <v:AppMenuItem Command="v:AppCommands.CheckForUpdates" />
+                <v:AppMenuItem Command="v:AppCommands.ReportBug" />
+                <v:AppMenuItem Command="v:AppCommands.CheckSystem" />
+                <Separator />
                 <v:AppMenuItem Command="v:AppCommands.About" />
             </v:AppMenuItem>
         </Menu>

@@ -77,8 +77,8 @@ public sealed class WindowsAI : IDisposable
 
     public static bool IsInstalled => File.Exists(HelperPath);
 
-    public const string NotInstalledMessage =
-        "Describe Image uses Windows' on-device AI on Copilot+ PCs, through the Photo Finder AI helper, which isn't installed on this PC.";
+    public static readonly string NotInstalledMessage =
+        $"Describe Image uses Windows' on-device AI on Copilot+ PCs, through the {AppInfo.HelperName}, which isn't installed on this PC.";
 
     private static AIReadiness? _ready;
 
@@ -97,7 +97,7 @@ public sealed class WindowsAI : IDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return new AIReadiness(false, "Error", $"The Photo Finder AI helper didn't start: {ex.Message}");
+            return new AIReadiness(false, "Error", $"The {AppInfo.HelperName} didn't start: {ex.Message}");
         }
     }
 
@@ -110,7 +110,7 @@ public sealed class WindowsAI : IDisposable
 
     internal static AIReadiness ParseReadiness(string? line)
     {
-        if (string.IsNullOrWhiteSpace(line)) return new AIReadiness(false, "Error", "The Photo Finder AI helper didn't answer.");
+        if (string.IsNullOrWhiteSpace(line)) return new AIReadiness(false, "Error", $"The {AppInfo.HelperName} didn't answer.");
         try
         {
             var o = JsonNode.Parse(line) as JsonObject;
@@ -121,7 +121,7 @@ public sealed class WindowsAI : IDisposable
         }
         catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or FormatException)
         {
-            return new AIReadiness(false, "Error", $"The Photo Finder AI helper gave an answer that couldn't be read: {line.Trim()}");
+            return new AIReadiness(false, "Error", $"The {AppInfo.HelperName} gave an answer that couldn't be read: {line.Trim()}");
         }
     }
 
@@ -183,13 +183,13 @@ public sealed class WindowsAI : IDisposable
                 if (ex is OperationCanceledException && !cancel.IsCancellationRequested)
                     throw new DescriptionException("timeout", "Windows took too long to describe this photo. Try again.");
                 if (ex is IOException)
-                    throw new DescriptionException("internal_error", "The Photo Finder AI helper stopped unexpectedly.");
+                    throw new DescriptionException("internal_error", $"The {AppInfo.HelperName} stopped unexpectedly.");
                 throw;
             }
             if (line is null)
             {
                 StopServer();
-                throw new DescriptionException("internal_error", "The Photo Finder AI helper stopped unexpectedly.");
+                throw new DescriptionException("internal_error", $"The {AppInfo.HelperName} stopped unexpectedly.");
             }
             try
             {
@@ -216,9 +216,9 @@ public sealed class WindowsAI : IDisposable
         JsonObject? o;
         try { o = JsonNode.Parse(line) as JsonObject; }
         catch (System.Text.Json.JsonException) { o = null; }
-        if (o is null) throw new DescriptionException("bad_response", $"The Photo Finder AI helper gave an answer that couldn't be read.");
+        if (o is null) throw new DescriptionException("bad_response", $"The {AppInfo.HelperName} gave an answer that couldn't be read.");
         if (o["id"]?.GetValue<int>() is { } id && id != expectedId && id != 0)
-            throw new DescriptionException("bad_response", "The Photo Finder AI helper answered a different request.");
+            throw new DescriptionException("bad_response", $"The {AppInfo.HelperName} answered a different request.");
         if (o["ok"]?.GetValue<bool>() == true)
             return (o["text"]?.GetValue<string>() ?? "").Trim();
         var code = o["code"]?.GetValue<string>() ?? "internal_error";

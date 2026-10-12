@@ -56,5 +56,7 @@ public static class AppCommands
     public static readonly RoutedUICommand Rate = Make("_Rating", nameof(Rate));
 
     public static readonly RoutedUICommand CheckForUpdates = Make("Check for _Updates…", nameof(CheckForUpdates));
-    public static readonly RoutedUICommand About = Make("_About Photo Finder", nameof(About));
+    public static readonly RoutedUICommand ReportBug = Make("_Report a Bug…", nameof(ReportBug));
+    public static readonly RoutedUICommand CheckSystem = Make("Check _System…", nameof(CheckSystem));
+    public static readonly RoutedUICommand About = Make($"_About {AppInfo.Name}", nameof(About));
 }

@@ -18,7 +18,7 @@ public partial class App : Application
         // Something unexpected in an event handler is reported, not a silent crash.
         DispatcherUnhandledException += (_, args) =>
         {
-            MessageBox.Show(MainWindow, $"Something went wrong: {args.Exception.Message}", "Photo Finder",
+            MessageBox.Show(MainWindow, $"Something went wrong: {args.Exception.Message}", AppInfo.Name,
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             args.Handled = true;
         };

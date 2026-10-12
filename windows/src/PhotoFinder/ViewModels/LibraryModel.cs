@@ -70,7 +70,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         private set { _currentSource = value; OnPropertyChanged(); OnPropertyChanged(nameof(Title)); }
     }
 
-    public string Title => CurrentSource?.Title ?? "Photo Finder";
+    public string Title => CurrentSource?.Title ?? AppInfo.Name;
 
     public string SearchText
     {
@@ -667,8 +667,8 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         if (inside) Navigate(SidebarIds.AllPhotos, announce: false);
         await RescanAsync();
         Announcer.Announce(inside
-            ? $"Removed {Path.GetFileName(root)} from Photo Finder. Showing All Photos, {CountText(Rows.Count)}"
-            : $"Removed {Path.GetFileName(root)} from Photo Finder");
+            ? $"Removed {Path.GetFileName(root)} from {AppInfo.Name}. Showing All Photos, {CountText(Rows.Count)}"
+            : $"Removed {Path.GetFileName(root)} from {AppInfo.Name}");
     }
 
     /// <summary>The library folder the current place is in, if it's a folder.</summary>

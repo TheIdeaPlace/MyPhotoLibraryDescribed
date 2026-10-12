@@ -113,5 +113,5 @@ public sealed class MetadataCache
 public static class AppPaths
 {
     public static string DataFolder { get; set; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PhotoFinder");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppInfo.DataFolderName);
 }

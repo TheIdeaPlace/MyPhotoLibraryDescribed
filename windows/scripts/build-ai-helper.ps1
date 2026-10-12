@@ -64,10 +64,15 @@ if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force
 dotnet publish $project -c $Configuration -r "win-$Arch" -o $out --nologo "-p:Version=$assemblyVersion"
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed for $Arch." }
 
+# The display name, from the one place the app keeps it (AppInfo.Name, #34).
+$appInfo = Get-Content -LiteralPath (Join-Path $windows 'src\PhotoFinder\AppInfo.cs') -Raw -Encoding UTF8
+if ($appInfo -notmatch 'const string Name = "([^"]+)"') { throw "AppInfo.cs has no Name constant." }
+$displayName = [Security.SecurityElement]::Escape($Matches[1])
 $manifest = (Get-Content -LiteralPath (Join-Path $helper 'AppxManifest.xml') -Raw).
     Replace('$ARCH$', $Arch).
     Replace('$VERSION$', $packageVersion).
-    Replace('$PUBLISHER$', [Security.SecurityElement]::Escape($Publisher))
+    Replace('$PUBLISHER$', [Security.SecurityElement]::Escape($Publisher)).
+    Replace('$DISPLAYNAME$', $displayName)
 Set-Content -LiteralPath (Join-Path $out 'AppxManifest.xml') -Value $manifest -Encoding UTF8
 Copy-Item -LiteralPath (Join-Path $helper 'Assets') -Destination (Join-Path $out 'Assets') -Recurse -Force
 # Debug symbols are for development, not for every installed copy.

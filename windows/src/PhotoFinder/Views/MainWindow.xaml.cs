@@ -79,7 +79,7 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                ShowError($"Photo Finder couldn't read your library: {ex.Message}");
+                ShowError($"{AppInfo.Name} couldn't read your library: {ex.Message}");
             }
             UpdateEmptyText();
             FocusContent();
@@ -88,7 +88,7 @@ public partial class MainWindow : Window
         Closing += (_, e) =>
         {
             if (model.IsWriting && MessageBox.Show(this,
-                    "Photo Finder is still saving changes to your photos. If you quit now, the rest won't be changed. Quit anyway?",
+                    $"{AppInfo.Name} is still saving changes to your photos. If you quit now, the rest won't be changed. Quit anyway?",
                     "Still Saving", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
             {
                 e.Cancel = true;
@@ -139,6 +139,8 @@ public partial class MainWindow : Window
         Bind(AppCommands.EditCaption, EditCaption, HasFiles);
         Bind(AppCommands.About, ShowAbout);
         Bind(AppCommands.CheckForUpdates, CheckForUpdates);
+        Bind(AppCommands.CheckSystem, ShowCheckSystem);
+        Bind(AppCommands.ReportBug, () => ReportBug(null));
         Bind(AppCommands.ChooseColumns, ChooseColumns);
         Bind(AppCommands.AutoDescribe, () =>
         {
@@ -324,7 +326,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void UpdateTitle() => Title = _model.CurrentSource is null ? "Photo Finder" : $"{_model.Title} - Photo Finder";
+    private void UpdateTitle() => Title = _model.CurrentSource is null ? AppInfo.Name : $"{_model.Title} - {AppInfo.Name}";
 
     private void UpdateEmptyText()
     {
@@ -820,7 +822,7 @@ public partial class MainWindow : Window
 
     private void AddFolder()
     {
-        var dialog = new OpenFolderDialog { Title = "Choose a folder to add to Photo Finder's library" };
+        var dialog = new OpenFolderDialog { Title = $"Choose a folder to add to {AppInfo.Name}'s library" };
         if (dialog.ShowDialog(this) == true) _model.Fire(_model.AddFolderAsync(dialog.FolderName));
     }
 
@@ -828,17 +830,16 @@ public partial class MainWindow : Window
     {
         if (_model.CurrentRoot is not { } root) return;
         var answer = MessageBox.Show(this,
-            $"Remove “{Path.GetFileName(root)}” from Photo Finder? The folder and its photos stay on your PC; Photo Finder just stops listing them.\n\n{root}",
+            $"Remove “{Path.GetFileName(root)}” from {AppInfo.Name}? The folder and its photos stay on your PC; {AppInfo.Name} just stops listing them.\n\n{root}",
             "Remove Folder from Library", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
         if (answer == MessageBoxResult.OK) _model.Fire(_model.RemoveFolderAsync(root));
     }
 
     private void ShowAbout()
     {
-        var version = Services.Updates.PackageVersion ?? typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "";
         MessageBox.Show(this,
-            $"Photo Finder {version}\n\nBrowse your Pictures library like folders in File Explorer, built to work well with screen readers.\n\nFolders in the library:\n{string.Join("\n", _model.Roots)}",
-            "About Photo Finder", MessageBoxButton.OK, MessageBoxImage.Information);
+            $"{AppInfo.Name} {Services.Updates.AppVersion}\n\nBrowse your Pictures library like folders in File Explorer, built to work well with screen readers.\n\nFolders in the library:\n{string.Join("\n", _model.Roots)}",
+            $"About {AppInfo.Name}", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private bool _updating;
@@ -858,17 +859,17 @@ public partial class MainWindow : Window
             switch (result.State)
             {
                 case Services.Updates.State.NoIdentity:
-                    Inform("This copy of Photo Finder isn't installed, so it can't update itself.");
+                    Inform($"This copy of {AppInfo.Name} isn't installed, so it can't update itself.");
                     break;
                 case Services.Updates.State.NotFromAppInstaller:
-                    Inform("Photo Finder was installed without PhotoFinder.appinstaller, so Windows doesn't know where its updates are. " +
+                    Inform($"{AppInfo.Name} was installed without PhotoFinder.appinstaller, so Windows doesn't know where its updates are. " +
                            "Open PhotoFinder.appinstaller to install it again; your settings are kept.");
                     break;
                 case Services.Updates.State.UpToDate:
-                    Inform($"Photo Finder is up to date (version {Services.Updates.PackageVersion}).");
+                    Inform($"{AppInfo.Name} is up to date (version {Services.Updates.PackageVersion}).");
                     break;
                 case Services.Updates.State.Failed:
-                    ShowError($"Photo Finder couldn't check for updates. {result.Message}");
+                    ShowError($"{AppInfo.Name} couldn't check for updates. {result.Message}");
                     break;
                 case Services.Updates.State.Available:
                     await InstallUpdateAsync(result.Source!);
@@ -885,20 +886,118 @@ public partial class MainWindow : Window
 
     private async Task InstallUpdateAsync(Uri source)
     {
-        if (MessageBox.Show(this, "A new version of Photo Finder is available. Install it now? Photo Finder closes, updates, and opens again.",
+        if (MessageBox.Show(this, $"A new version of {AppInfo.Name} is available. Install it now? {AppInfo.Name} closes, updates, and opens again.",
                 "Check for Updates", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes) != MessageBoxResult.Yes)
             return;
         // Windows closes Photo Finder itself to install, without the usual closing steps, so nothing may be half written.
         if (_model.IsWriting)
         {
-            MessageBox.Show(this, "Photo Finder is still saving changes to your photos. Check for updates again when it's finished.",
+            MessageBox.Show(this, $"{AppInfo.Name} is still saving changes to your photos. Check for updates again when it's finished.",
                 "Check for Updates", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         _model.SaveCaches();
-        Services.Announcer.Announce("Downloading the update. Photo Finder will close and open again when it's ready.");
+        Services.Announcer.Announce($"Downloading the update. {AppInfo.Name} will close and open again when it's ready.");
         if (await Services.Updates.InstallAsync(source) is { } error) ShowError($"The update couldn't be installed. {error}");
     }
+
+    // MARK: Check System and Report a Bug
+
+    /// <summary>The facts for Help > Check System and bug reports. Asked at once rather than one after another;
+    /// Windows AI isn't asked at all on a Windows too old for it, since starting the helper can take a while.</summary>
+    internal async Task<Services.SystemCheck> RunSystemCheckAsync(CancellationToken cancel = default)
+    {
+        var os = Environment.OSVersion.Version;
+        var folders = _model.Roots.ToList();
+        var readiness = os.Build >= Services.SystemCheck.MinimumBuild
+            ? Services.WindowsAI.CheckAsync(cancel) : Task.FromResult<Services.AIReadiness>(null!);
+        var npu = Services.SystemCheck.FindNpuAsync();
+        // A disconnected network folder can take many seconds to answer.
+        var missing = Task.Run(() => folders.Where(f => !Directory.Exists(f)).ToList(), cancel);
+        await Task.WhenAll(readiness, npu, missing);
+        cancel.ThrowIfCancellationRequested();
+        return new Services.SystemCheck(new Services.SystemCheck.Facts
+        {
+            AppVersion = Services.Updates.AppVersion,
+            UpdatesItself = Services.Updates.UpdatesItself,
+            OsVersion = os,
+            Npu = npu.Result,
+            Readiness = readiness.Result,
+            LibraryFolders = folders,
+            MissingFolders = missing.Result,
+            SavedDescriptions = _model.Descriptions?.PhotoCount ?? 0,
+            DescribeAutomatically = AutoDescriber?.Enabled ?? false,
+            DescribeInBackground = BackgroundDescriber?.Enabled ?? false,
+        });
+    }
+
+    private void ShowCheckSystem()
+    {
+        new CheckSystemWindow(RunSystemCheckAsync, ReportBug) { Owner = this }.ShowDialog();
+        FocusContent();
+    }
+
+    private bool _reporting;
+
+    /// <summary>Help > Report a Bug…: a new GitHub issue in the browser, prefilled with the questions and the system
+    /// check, and the same text on the clipboard, as on the Mac. Until the app kit's relay is set up (#33). The report
+    /// leaves out folder paths, since an issue is public.</summary>
+    private async void ReportBug(Services.SystemCheck? check)
+    {
+        if (_reporting)
+        {
+            Services.Announcer.Announce("Still preparing the bug report");
+            return;
+        }
+        _reporting = true;
+        try
+        {
+            if (check is null)
+            {
+                Services.Announcer.Announce("Preparing a bug report");
+                check = await RunSystemCheckAsync();
+            }
+            var body = Services.BugReport.Body(check.ReportText);
+            var copied = false;
+            try
+            {
+                Clipboard.SetText(body);
+                copied = true;
+            }
+            catch (System.Runtime.InteropServices.ExternalException)
+            {
+                // Another app holding the clipboard.
+            }
+            var uri = Services.BugReport.NewIssueUri(body, out var includesBody);
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+                Services.Announcer.Announce(
+                    includesBody && copied ? "Opening a new bug report in your browser. The details are also on the clipboard."
+                    : includesBody ? "Opening a new bug report in your browser."
+                    : copied ? "Opening a new bug report in your browser. Paste the details from the clipboard into it."
+                    : "Opening a new bug report in your browser.");
+                if (!includesBody && !copied) ShowReport(body);
+            }
+            catch (Exception)
+            {
+                if (copied)
+                    ShowError($"The browser couldn't be opened. The bug report is on the clipboard: paste it into a new issue at {AppInfo.IssuesUrl}.");
+                else
+                    ShowReport(body);
+            }
+        }
+        finally
+        {
+            _reporting = false;
+        }
+    }
+
+    /// <summary>When neither the browser nor the clipboard could take the report: shown, so it can still be copied.</summary>
+    private void ShowReport(string body) =>
+        MessageBox.Show(this,
+            $"Press Ctrl+C to copy this report, then paste it into a new issue at {AppInfo.IssuesUrl}.\n\n{body}",
+            "Report a Bug", MessageBoxButton.OK, MessageBoxImage.Information);
 
     private void ShowError(string message) =>
         MessageBox.Show(this, message, "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Warning);
