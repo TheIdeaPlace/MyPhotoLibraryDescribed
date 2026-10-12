@@ -21,8 +21,18 @@ enum AppInfo {
         return "\(short) (\(build))"
     }
 
+    /// The GitHub repo, in one place: moving it to TheIdeaPlace for release (The-Idea-Place-Projects'
+    /// MOVING-TO-THEIDEAPLACE.md), or renaming it, changes only this. Copies already installed keep working through
+    /// GitHub's redirect from the old address.
+    static let repository = "kellylford/PhotoFinder"
+
     /// Where Report a Bug files issues, until the app kit's relay is set up for this app (#33).
-    static let issuesURL = URL(string: "https://github.com/kellylford/PhotoFinder/issues/new")!
+    static let issuesURL = URL(string: "https://github.com/\(repository)/issues/new")!
+
+    /// The release notes of a Mac version, for "See What's New".
+    static func releaseNotesURL(_ version: String) -> URL {
+        URL(string: "https://github.com/\(repository)/releases/tag/\(Updates.tagPrefix)\(version)")!
+    }
 
     /// The folder in Application Support. Not the display name: renaming the app mustn't lose saved descriptions.
     static let dataFolderName = "PhotoFinder"

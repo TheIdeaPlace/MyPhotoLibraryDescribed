@@ -21,4 +21,22 @@ final class UpdatesTests: XCTestCase {
         XCTAssertEqual(Updates.newer(than: "0.1.0", in: list)?.version, "0.2.5")
         XCTAssertNil(Updates.newer(than: "0.2.5", in: list), "up to date")
     }
+
+    func testTheMenuAlwaysSaysWhatsRunning() {
+        XCTAssertEqual(Updates.menuTitle(running: "0.1.1", available: nil), "Check for Updates (running 0.1.1)…")
+        XCTAssertEqual(Updates.menuTitle(running: "0.1.1", available: "0.2.0"), "Update to 0.2.0 available…")
+    }
+
+    func testUpdatedIsSaidOnlyAfterAnUpdate() {
+        XCTAssertFalse(Updates.justUpdated(last: nil, current: "0.1.1"), "first run")
+        XCTAssertFalse(Updates.justUpdated(last: "0.1.1", current: "0.1.1"), "same version")
+        XCTAssertFalse(Updates.justUpdated(last: "0.2.0", current: "0.1.1"), "went back")
+        XCTAssertTrue(Updates.justUpdated(last: "0.1.0", current: "0.1.1"))
+    }
+
+    func testTheRepositoryIsNamedOnce() {
+        XCTAssertTrue(Updates.releasesAPI.absoluteString.contains(AppInfo.repository))
+        XCTAssertTrue(AppInfo.issuesURL.absoluteString.contains(AppInfo.repository))
+        XCTAssertEqual(AppInfo.releaseNotesURL("0.1.1").lastPathComponent, "mac-v0.1.1")
+    }
 }

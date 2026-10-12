@@ -7,7 +7,20 @@ import Foundation
 /// release to download. No updater framework: a person drags the new app into Applications, as with most Mac apps.
 enum Updates {
     static let tagPrefix = "mac-v"
-    static let releasesAPI = URL(string: "https://api.github.com/repos/kellylford/PhotoFinder/releases?per_page=30")!
+    static var releasesAPI: URL { URL(string: "https://api.github.com/repos/\(AppInfo.repository)/releases?per_page=30")! }
+
+    /// The Help menu's item, which always says what's running, as the apps' shared update experience asks
+    /// (The-Idea-Place-Projects#12).
+    static func menuTitle(running: String, available: String?) -> String {
+        available.map { "Update to \($0) available…" } ?? "Check for Updates (running \(running))…"
+    }
+
+    /// Whether to say "updated" on this launch: only when a version ran here before and this one is newer. Never on
+    /// the first run or after going back to an older version.
+    static func justUpdated(last: String?, current: String) -> Bool {
+        guard let last else { return false }
+        return isNewer(current, than: last)
+    }
 
     struct Release: Equatable {
         let version: String
