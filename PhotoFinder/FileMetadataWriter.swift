@@ -81,6 +81,7 @@ enum FileMetadataWriter {
     static let altTextPath = "Iptc4xmpCore:AltTextAccessibility"
     static let extendedDescriptionPath = "Iptc4xmpCore:ExtDescrAccessibility"
     static let captionPath = "dc:description"
+    static let titlePath = "dc:title"
 
     static func canWrite(name: String) -> Bool {
         writableExtensions.contains((name as NSString).pathExtension.lowercased())
@@ -116,6 +117,14 @@ enum FileMetadataWriter {
         var expected: [String: String?] = [:]
         if let caption = changes.caption?.trimmingCharacters(in: .whitespacesAndNewlines) {
             expected[captionPath] = caption.isEmpty ? nil : caption
+            // dc:title is what Windows' File Explorer shows as the title, and what Photo Finder on Windows used as the
+            // caption. It's kept in step when it's empty or still the caption being replaced, never over a real title.
+            let current = CGImageSourceCopyMetadataAtIndex(source, 0, nil)
+            let title = current.flatMap { FileMetadata.xmpString($0, titlePath) }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let oldCaption = current.flatMap { FileMetadata.xmpString($0, captionPath) }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if CaptionTitle.keepsInStep(title: title, oldCaption: oldCaption) {
+                expected[titlePath] = caption.isEmpty ? nil : caption
+            }
         }
         if let description = changes.accessibilityDescription {
             let alt = AccessibilityText.altText(from: description)
@@ -262,14 +271,17 @@ enum FileFields {
         return fields
     }
 
-    /// Save descriptions as captions writes alt text that's empty or already this description's; alt text another app
-    /// wrote only under Always.
+    /// Save Descriptions in Photos writes alt text only where there's none: never over what a person or another app
+    /// wrote.
     static func mayWriteAltText(_ description: String, over existing: String, policy: CaptionPolicy) -> Bool {
-        switch policy {
-        case .never: false
-        case .always: existing != AccessibilityText.altText(from: description)
-        // Already this description's alt text: nothing to write.
-        case .whenEmpty: existing.isEmpty
-        }
+        policy == .whenEmpty && existing.isEmpty && !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+/// Whether a file's dc:title follows its caption (#62): when it's empty, or the same as the caption being replaced, so
+/// it was the caption all along. A title someone wrote is left alone.
+enum CaptionTitle {
+    static func keepsInStep(title: String, oldCaption: String) -> Bool {
+        title.isEmpty || title == oldCaption
     }
 }

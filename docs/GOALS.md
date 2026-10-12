@@ -2,6 +2,8 @@
 
 Kelly's goals for the app, from 11 October 2026 (status updated after the Mac PRs and the Windows PRs #52 to #55 merged). More will be added. Each goal links to the issues that track it, and the "Today" column says where things stand. Update it in the same PR as the work.
 
+**Two rules (Kelly, 12 October 2026):** never change a person's photos without their permission at least once, and keep it automatic with as few choices as possible (IDT is the tool for people who want options).
+
 **What this is for:** an app people can use today, and a proof of concept for Apple and Microsoft of how an image gallery can be more accessible. The main point of the app is **describing photos automatically**. "Photo Finder" is a working name, not the final one (and "Photo Describer" is out).
 
 | # | Goal | Today | Issues |
@@ -16,7 +18,7 @@ Kelly's goals for the app, from 11 October 2026 (status updated after the Mac PR
 | — | Sighted people get the descriptions too. | Done on both: View > Show Description, a Description panel beside the list and gallery (corrections are saved and protected), and a Description column (Mac #51, Windows #55). | #50 |
 | — | Keep what the app already does well: export, search, the library concept and the rest. | Kept. | |
 | 7 | The user can put a description into a field of the photo (the caption). | Done on both: Photo > Use Description as Caption (Mac in #43). On the Mac, files in added folders get it in the file's XMP description (#31). | #30, #31 |
-| 8 | A setting to use the generated description automatically. | Done on both: Save descriptions as captions (Mac Settings, #43; Windows Photo menu). | #30 |
+| 8 | A setting to use the generated description automatically. | Mac: one switch, Photo > Save Descriptions in Photos, off until you agree once; it fills empty captions and alt text and never replaces anyone's words. Windows: being changed to match (#62). | #30, #62 |
 | 9 | The Help menu, or somewhere else, checks the computer meets the requirements and everything is installed. | Done on both: Help > Check System (Mac in #42). | #32 |
 | 10 | Some image formats have more fields worth offering, such as IPTC's accessibility Alt Text and Extended Description. IDT already writes descriptions into files. | Mac: files in added folders (JPEG, PNG, TIFF, HEIC) get IPTC Alt Text and Extended Description (Accessibility) with Photo > Save Accessibility Description to File, and with the caption commands; Get Info and the Description panel show them. Photos-library photos have a caption only. Windows: caption (Title) only. | #31 |
 | 11 | Follow the emerging standards for all of Kelly's apps: automatic updates, bug reporting and the rest (The Idea Place app kit). | Help > Report a Bug on both (Mac in #42). Updates: Windows through MSIX, the Mac not yet. The app kit relay needs Kelly. | #33, #22 |

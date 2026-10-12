@@ -20,6 +20,7 @@ struct PhotoFinderApp: App {
 
         Settings {
             SettingsView()
+                .environment(model)
         }
 
         Window("Check System", id: "systemCheck") {
@@ -122,7 +123,10 @@ struct PhotoCommands: Commands {
             Button("Edit Caption…") { model.editCaption() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             Button("Use Description as Caption") { model.useDescriptionAsCaption() }
-            Button("Save Accessibility Description to File") { model.saveAccessibilityDescriptionToFile() }
+            Toggle("Save Descriptions in Photos", isOn: Binding(
+                get: { model.saveInPhotos },
+                set: { model.setSaveInPhotos($0) }
+            ))
             Divider()
             Button("Describe Photo") { model.describeFocusedPhoto() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])

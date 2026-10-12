@@ -1244,8 +1244,24 @@ final class LibraryModel {
 
     // MARK: - Descriptions as captions (#30)
 
-    /// Settings > Save descriptions as captions.
-    var captionPolicy: CaptionPolicy { CaptionPolicy.current }
+    /// Photo > Save Descriptions in Photos: off until the person agrees once (Kelly, 12 Oct).
+    private(set) var saveInPhotos: Bool = CaptionPolicy.isOn(in: .standard)
+    var captionPolicy: CaptionPolicy { saveInPhotos ? .whenEmpty : .never }
+
+    /// Turns Save Descriptions in Photos on, after asking, or off. Asking is the permission to change people's photos.
+    func setSaveInPhotos(_ on: Bool) {
+        if on {
+            let alert = NSAlert()
+            alert.messageText = "Save descriptions in your photos?"
+            alert.informativeText = "From now on, each new description is also saved in the photo: as its caption when it has none, and in the file's accessibility fields for photos in added folders. Captions and alt text that you or other apps wrote are never replaced. You can turn this off at any time."
+            alert.addButton(withTitle: "Save in Photos")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        saveInPhotos = on
+        UserDefaults.standard.set(on, forKey: CaptionPolicy.key)
+        announce(on ? "New descriptions are saved in your photos" : "Descriptions aren't saved in your photos")
+    }
 
     /// Photo > Use Description as Caption: each selected photo's saved description becomes its caption. Asks before
     /// replacing captions people wrote.
@@ -1358,47 +1374,6 @@ final class LibraryModel {
             writeFilesAndSay(described.map { ($0.0, FileMetadataChanges(caption: $0.1, accessibilityDescription: $0.1)) },
                              label: "Saving caption…", notDescribed: notDescribed) { count in
                 count == 1 ? "Caption saved" : "Captions saved for \(count) photos"
-            }
-        }
-    }
-
-    /// Photo > Save Accessibility Description to File (#31): each selected file's saved description goes into its
-    /// IPTC Alt Text (Accessibility), shortened to whole sentences when it's over 250 characters, with the whole
-    /// description in Extended Description (Accessibility) then. The caption is left alone.
-    func saveAccessibilityDescriptionToFile(_ ids: Set<String>? = nil) {
-        let ids = ids ?? selection
-        let files = files(for: ids)
-        guard !files.isEmpty else {
-            announce(assets(for: ids).isEmpty ? "Select a photo"
-                     : "Photos in the Photos library can only have a caption. Use Description as Caption instead.")
-            return
-        }
-        let photos = files.filter { !$0.isVideo }
-        guard !photos.isEmpty else { announce("Descriptions can't be saved in video files"); return }
-        let described = photos.compactMap { file -> (MediaFile, String)? in
-            guard let text = descriptions.description(forKey: file.descriptionKey)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty else { return nil }
-            return (file, text)
-        }
-        guard !described.isEmpty else {
-            announce(photos.count == 1 ? "\(photos[0].name) hasn't been described yet. Describe it first."
-                     : "None of these photos have been described yet.")
-            return
-        }
-        let notDescribed = photos.count - described.count
-        Task {
-            // Alt text another app wrote (Lightroom, say) is the person's: ask before replacing it.
-            let urls = described.map(\.0.url)
-            let existing = await Task.detached(priority: .userInitiated) { urls.map { FileMetadata.read($0).altText } }.value
-            let replacing = zip(described, existing).flatMap { pair, alt -> [(name: String, field: String, current: String)] in
-                let (file, text) = pair
-                guard FileMetadataWriter.canWrite(name: file.name) else { return [] }
-                return FileFields.replaced(caption: nil, altText: alt, with: text).map { (file.name, $0.field, $0.current) }
-            }
-            guard confirmReplacingInFiles(replacing) else { return }
-            writeFilesAndSay(described.map { ($0.0, FileMetadataChanges(accessibilityDescription: $0.1)) },
-                             label: "Saving to file…", notDescribed: notDescribed) { count in
-                count == 1 ? "Saved to the file" : "Saved to \(count) files"
             }
         }
     }

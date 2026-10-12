@@ -3,7 +3,7 @@ import SwiftUI
 /// Photo Finder > Settings (Command-,): the prompt Apple Intelligence describes photos with.
 struct SettingsView: View {
     @AppStorage(DescriptionPrompt.key) private var prompt = ""
-    @AppStorage(CaptionPolicy.key) private var captionPolicy = CaptionPolicy.never
+    @Environment(LibraryModel.self) private var model
 
     var body: some View {
         Form {
@@ -29,11 +29,13 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section {
-                Picker("Save descriptions as captions", selection: $captionPolicy) {
-                    ForEach(CaptionPolicy.allCases) { Text($0.title).tag($0) }
-                }
+                // The same switch as the Photo menu's, asking the same question before it turns on.
+                Toggle("Save descriptions in photos", isOn: Binding(
+                    get: { model.saveInPhotos },
+                    set: { model.setSaveInPhotos($0) }
+                ))
             } footer: {
-                Text("When a photo is described, its description can also become its caption in Photos, which syncs with iCloud Photos and shows in other apps. For files in added folders, the description goes into the file itself, as its caption and its alt text. Photo > Use Description as Caption does it for the photos you choose.")
+                Text("Off until you turn it on. Then each new description is also saved in the photo, as its caption when it has none (in Photos, which syncs with iCloud Photos, or in the file itself for added folders), and in a file's alt text when it has none. Nothing you or other apps wrote is replaced. Photo > Use Description as Caption does it for the photos you choose, and asks before replacing anything.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
