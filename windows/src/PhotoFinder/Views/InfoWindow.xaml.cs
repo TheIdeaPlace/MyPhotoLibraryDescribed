@@ -33,8 +33,12 @@ public partial class InfoWindow : Window
     private readonly DescriptionStore? _store;
     private readonly FileRow _row;
 
-    public InfoWindow(FileRow row, Settings settings, Action saveSettings, bool describeNow, DescriptionStore? store = null)
+    private readonly Func<FileRow, Window, Task>? _useAsCaption;
+
+    public InfoWindow(FileRow row, Settings settings, Action saveSettings, bool describeNow, DescriptionStore? store = null,
+        Func<FileRow, Window, Task>? useAsCaption = null)
     {
+        _useAsCaption = useAsCaption;
         _item = row.Item ?? throw new ArgumentException("Get Info needs a photo or video.", nameof(row));
         _settings = settings;
         _saveSettings = saveSettings;
@@ -55,6 +59,7 @@ public partial class InfoWindow : Window
             {
                 DescriptionLabel.Visibility = Visibility.Collapsed;
                 DescriptionBox.Visibility = Visibility.Collapsed;
+                UseAsCaptionButton.Visibility = Visibility.Collapsed;
                 DescriptionBox.Text = "";
             }
             UpdateDescribeButton();
@@ -237,6 +242,7 @@ public partial class InfoWindow : Window
             DescriptionBox.Text = text.Length > 0 ? text : "Windows returned an empty description.";
             if (text.Length > 0)
             {
+                UseAsCaptionButton.Visibility = _useAsCaption is null ? Visibility.Collapsed : Visibility.Visible;
                 _store?.Put(_item, kind, text);
                 _row.Description = text;
                 UpdateDescribeButtonLater();
@@ -270,6 +276,20 @@ public partial class InfoWindow : Window
         DescriptionLabel.Visibility = Visibility.Visible;
         DescriptionBox.Visibility = Visibility.Visible;
         DescriptionBox.Text = text;
+        UseAsCaptionButton.Visibility = _useAsCaption is null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>Use as Caption: the saved description of the chosen type becomes the photo's caption, the same as
+    /// Photo > Use Description as Caption, which uses the type chosen here.</summary>
+    private async void UseAsCaption_Click(object sender, RoutedEventArgs e)
+    {
+        if (_useAsCaption is null) return;
+        if (KindBox.SelectedValue is string kind && kind != _settings.DescriptionKind)
+        {
+            _settings.DescriptionKind = kind;
+            _saveSettings();
+        }
+        await _useAsCaption(_row, this);
     }
 
     // MARK: Read text

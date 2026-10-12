@@ -75,6 +75,8 @@
                            Padding="0,8,0,2" Visibility="Collapsed" />
                     <TextBox x:Name="DescriptionBox" IsReadOnly="True" TextWrapping="Wrap" MinHeight="80" MaxHeight="260"
                              VerticalScrollBarVisibility="Auto" Visibility="Collapsed" IsReadOnlyCaretVisible="True" />
+                    <Button x:Name="UseAsCaptionButton" Content="_Use as Caption" HorizontalAlignment="Left" Margin="0,6,0,0"
+                            Padding="10,3" Visibility="Collapsed" Click="UseAsCaption_Click" />
                     <TextBlock Style="{StaticResource Note}"
                                Text="Describes the photo with Windows' AI on this PC's NPU. The photo isn't sent anywhere." />
 

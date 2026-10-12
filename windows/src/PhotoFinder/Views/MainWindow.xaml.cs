@@ -60,6 +60,7 @@ public partial class MainWindow : Window
         BuildColumns();
         BuildSortMenu();
         BuildKindMenu();
+        BuildCaptionPolicyMenu();
 
         model.PropertyChanged += Model_PropertyChanged;
         model.SelectionRequested += Model_SelectionRequested;
@@ -137,6 +138,7 @@ public partial class MainWindow : Window
         Bind(AppCommands.PreviousPane, () => MovePane(-1));
         Bind(AppCommands.ToggleFavorite, () => { if (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite")) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, EditCaption, HasFiles);
+        Bind(AppCommands.UseDescriptionAsCaption, () => _model.Fire(UseDescriptionAsCaptionAsync(_model.SelectedRows)), HasFiles);
         Bind(AppCommands.About, ShowAbout);
         Bind(AppCommands.CheckForUpdates, CheckForUpdates);
         Bind(AppCommands.CheckSystem, ShowCheckSystem);
@@ -278,6 +280,95 @@ public partial class MainWindow : Window
         {
             foreach (MenuItem item in KindMenu.Items) item.IsChecked = (string)item.Tag == _model.Settings.DescriptionKind;
         };
+    }
+
+    /// <summary>Photo > Save Descriptions as Captions: Never, Only When There's No Caption, or Always.</summary>
+    private void BuildCaptionPolicyMenu()
+    {
+        foreach (var (policy, _, header) in CaptionPolicies.All)
+        {
+            var item = new AppMenuItem { Header = header, IsCheckable = true, Tag = policy };
+            item.Click += (_, _) => SetCaptionPolicy(policy);
+            CaptionPolicyMenu.Items.Add(item);
+        }
+        CaptionPolicyMenu.SubmenuOpened += (_, _) =>
+        {
+            foreach (MenuItem item in CaptionPolicyMenu.Items) item.IsChecked = (CaptionPolicy)item.Tag == _model.Settings.CaptionPolicy;
+        };
+    }
+
+    internal void SetCaptionPolicy(CaptionPolicy policy)
+    {
+        _model.Settings.CaptionPolicy = policy;
+        _model.SaveSettings();
+        Services.Announcer.Announce(policy switch
+        {
+            CaptionPolicy.WhenEmpty => "New descriptions are saved as captions when a photo has no caption",
+            CaptionPolicy.Always => "New descriptions are saved as captions",
+            _ => "Descriptions aren't saved as captions",
+        });
+    }
+
+    /// <summary>Photo > Use Description as Caption: each chosen photo's saved description becomes its caption, the
+    /// file's Title. Captions are read from the files first, never the list's copy (empty until details load), so one
+    /// someone wrote is never replaced without asking.</summary>
+    /// <param name="owner">The window asking: Get Info, or this one.</param>
+    internal async Task UseDescriptionAsCaptionAsync(IReadOnlyList<FileRow> rows, Window? owner = null)
+    {
+        owner ??= this;
+        var photos = rows.Where(r => r.Item is { IsVideo: false }).ToList();
+        if (photos.Count == 0)
+        {
+            Services.Announcer.Announce("Select a photo");
+            return;
+        }
+        var kind = _model.Settings.DescriptionKind;
+        var described = photos
+            .Select(r => (Row: r, Text: _model.Descriptions?.Get(r.Item!, kind)))
+            .Where(d => !string.IsNullOrWhiteSpace(d.Text))
+            .Select(d => (d.Row, Text: d.Text!.Trim()))
+            .ToList();
+        if (described.Count == 0)
+        {
+            Services.Announcer.Announce(photos.Count == 1 ? $"{photos[0].Name} hasn't been described yet. Describe it first."
+                : "None of these photos have been described yet.");
+            return;
+        }
+        if (!ConfirmBulkWrite("Use Description as Caption", described.Select(d => d.Row.Item!).ToList(), owner)) return;
+        List<(FileRow Row, string Text, string Caption)> current;
+        try
+        {
+            current = await Task.Run(async () =>
+            {
+                var list = new List<(FileRow, string, string)>();
+                foreach (var (row, text) in described)
+                    list.Add((row, text, (await MetadataReader.ReadAsync(row.Item!.Path)).Caption));
+                return list;
+            });
+        }
+        catch (Exception ex)
+        {
+            ShowError($"The captions couldn't be read, so they weren't changed: {ex.Message}");
+            return;
+        }
+        var replacing = current.Where(c => c.Caption.Length > 0 && c.Caption != c.Text).ToList();
+        if (replacing.Count > 0)
+        {
+            var question = replacing.Count == 1
+                ? $"Replace the caption of {replacing[0].Row.Name}?\n\nIts caption is: {replacing[0].Caption}"
+                : $"Replace the captions of {replacing.Count} photos?\n\nTheir captions will be replaced with their descriptions.";
+            if (MessageBox.Show(owner, question, "Use Description as Caption", MessageBoxButton.YesNo, MessageBoxImage.Question,
+                    MessageBoxResult.No) != MessageBoxResult.Yes)
+                return;
+        }
+        // Already the caption: nothing to write, but it still counts as saved.
+        var toWrite = current.Where(c => c.Caption != c.Text).Select(c => (c.Row.Item!, c.Text)).ToList();
+        if (toWrite.Count == 0)
+        {
+            Services.Announcer.Announce(described.Count == 1 ? "Caption saved" : $"Captions saved for {described.Count} photos");
+            return;
+        }
+        await _model.SaveCaptionsAsync(toWrite, photos.Count - described.Count);
     }
 
     internal void SetDescriptionKind(string id, string title)
@@ -756,7 +847,8 @@ public partial class MainWindow : Window
     {
         var row = _model.SelectedRows.FirstOrDefault(r => r.Item is not null);
         if (row?.Item is null) { System.Media.SystemSounds.Beep.Play(); return; }
-        new InfoWindow(row, _model.Settings, _model.SaveSettings, describeNow: false, _model.Descriptions) { Owner = this }.ShowDialog();
+        new InfoWindow(row, _model.Settings, _model.SaveSettings, describeNow: false, _model.Descriptions,
+            useAsCaption: (r, info) => UseDescriptionAsCaptionAsync([r], info)) { Owner = this }.ShowDialog();
         // The rows may have been rebuilt while it was open, so the element WPF would return to can be gone.
         FocusContent();
     }
@@ -798,14 +890,14 @@ public partial class MainWindow : Window
 
     /// <summary>Changing many files, or files that are only in the cloud (each is downloaded to change it),
     /// is checked with the person first.</summary>
-    private bool ConfirmBulkWrite(string action)
+    private bool ConfirmBulkWrite(string action, IReadOnlyList<MediaItem>? chosen = null, Window? owner = null)
     {
-        var files = _model.SelectedRows.Select(r => r.Item).OfType<MediaItem>().ToList();
+        var files = chosen ?? _model.SelectedRows.Select(r => r.Item).OfType<MediaItem>().ToList();
         var online = files.Count(f => f.IsOnlineOnly);
         if (files.Count <= 50 && online == 0) return true;
         var message = $"{action} changes {files.Count:N0} files on your PC.";
         if (online > 0) message += $" {online:N0} of them are online-only, and each will be downloaded to change it.";
-        return MessageBox.Show(this, message + " Continue?", action, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No)
+        return MessageBox.Show(owner ?? this, message + " Continue?", action, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No)
             == MessageBoxResult.Yes;
     }
 

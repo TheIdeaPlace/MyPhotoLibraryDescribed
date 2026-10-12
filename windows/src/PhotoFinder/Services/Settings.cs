@@ -26,6 +26,8 @@ public sealed class Settings
     public bool AutoDescribe { get; set; } = true;
     /// <summary>Describe the photos in a folder, behind the scenes, when it's added to the library.</summary>
     public bool DescribeInBackground { get; set; }
+    /// <summary>Photo > Save Descriptions as Captions: also write each new description into the photo's caption.</summary>
+    public CaptionPolicy CaptionPolicy { get; set; } = CaptionPolicy.Never;
 
     /// <summary>The columns shown, in order, always including Name.</summary>
     public List<string> ShownColumnIds()

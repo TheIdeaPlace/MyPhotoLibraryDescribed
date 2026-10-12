@@ -43,6 +43,8 @@ public static class AppCommands
     /// <summary>Describes the photo you're on and speaks it, in the list, gallery or Preview.</summary>
     public static readonly RoutedUICommand DescribePhoto = Make("_Describe Photo", nameof(DescribePhoto),
         new KeyGesture(Key.D, ModifierKeys.Control | ModifierKeys.Shift));
+    /// <summary>The selected photos' saved descriptions become their captions, asking before replacing one.</summary>
+    public static readonly RoutedUICommand UseDescriptionAsCaption = Make("_Use Description as Caption", nameof(UseDescriptionAsCaption));
     /// <summary>Describes the photo you're on afresh, replacing its saved description, and speaks it. The Mac's is
     /// Shift-Option-Command-D.</summary>
     public static readonly RoutedUICommand DescribeAgain = Make("Describe A_gain", nameof(DescribeAgain),
