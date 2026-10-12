@@ -21,6 +21,8 @@ struct BrowserView: View {
     @Environment(LibraryModel.self) private var model
     @FocusState private var searchFocused: Bool
     @FocusState private var pane: Pane?
+    /// Where F6 is taking you in the status bar, while its sections become focusable.
+    @State private var pendingStatusFocus: Pane?
 
     var body: some View {
         @Bindable var model = model
@@ -52,10 +54,24 @@ struct BrowserView: View {
                                    showingDescription: model.showDescriptionPanel)
             if target == .search {
                 searchFocused = true
+            } else if case .status = target {
+                searchFocused = false
+                if model.statusBarReachable {
+                    pane = target
+                } else {
+                    // Focusable first; focus moves once SwiftUI has made the sections focus targets (onChange below).
+                    pendingStatusFocus = target
+                    model.statusBarReachable = true
+                }
             } else {
                 searchFocused = false
                 pane = target
             }
+        }
+        .onChange(of: model.statusBarReachable) {
+            guard model.statusBarReachable, let target = pendingStatusFocus else { return }
+            pendingStatusFocus = nil
+            pane = target
         }
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .sheet(item: $model.infoTarget) { InfoView(target: $0) }
@@ -436,7 +452,7 @@ private struct StatusBar: View {
             }
             ForEach(shown, id: \.self) { section in
                 Text(text(section) ?? "")
-                    .focusable()
+                    .focusable(model.statusBarReachable)
                     .focused(pane, equals: .status(section))
             }
             Spacer()
@@ -460,6 +476,11 @@ private struct StatusBar: View {
         }
         .onChange(of: pane.wrappedValue) { old, new in
             if new == nil, case let .status(section)? = old, !shown.contains(section) { pane.wrappedValue = .status(.status) }
+            // Left the status bar (F6, Escape, a click, focus lost): out of the Tab order again. Not when the section
+            // you were on just went away, which keeps you in the status bar (above).
+            if case .status? = new {} else if case let .status(section)? = old, new != nil || shown.contains(section) {
+                model.statusBarReachable = false
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status bar")
