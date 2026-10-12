@@ -143,6 +143,8 @@ enum FileMetadataWriter {
             try copy(source, type: type, to: temp, merging: false, expected)
             guard readsBack(temp, expected) else { throw FileMetadataWriteError.notWritten("The new metadata didn't read back.") }
         }
+        // The same pictures, the same size, before the original is touched: a guard against ImageIO ever dropping one.
+        guard samePictures(source, temp) else { throw FileMetadataWriteError.notWritten("The pictures in the new file didn't match.") }
 
         do {
             _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
@@ -154,6 +156,18 @@ enum FileMetadataWriter {
         var times = [info.st_atimespec, info.st_mtimespec]
         _ = utimensat(AT_FDCWD, url.path, &times, 0)
         return FileMetadata.read(url)
+    }
+
+    /// Whether the new file holds as many pictures as the original, the first one the same size.
+    private static func samePictures(_ source: CGImageSource, _ temp: URL) -> Bool {
+        guard let copy = CGImageSourceCreateWithURL(temp as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(copy) == CGImageSourceGetCount(source) else { return false }
+        func size(_ s: CGImageSource) -> (Int, Int)? {
+            guard let p = CGImageSourceCopyPropertiesAtIndex(s, 0, nil) as? [CFString: Any] else { return nil }
+            return (p[kCGImagePropertyPixelWidth] as? Int ?? -1, p[kCGImagePropertyPixelHeight] as? Int ?? -1)
+        }
+        guard let a = size(source), let b = size(copy) else { return false }
+        return a == b
     }
 
     /// Copies the picture as it is, its bytes untouched, with the fields in `values` set (or removed, for nil).
@@ -234,5 +248,27 @@ enum FileWriteSummary {
             parts.append(notDescribed == 1 ? "1 photo hasn't been described yet" : "\(notDescribed) photos haven't been described yet")
         }
         return parts.joined(separator: ". ")
+    }
+}
+
+/// What a description would replace in a file, and whether automatic captions may write its alt text (#31).
+enum FileFields {
+    /// The fields holding something else now: a caption (when `caption` is given) and alt text, each with what it
+    /// holds. Empty fields and fields already holding what would be written aren't counted.
+    static func replaced(caption: String?, altText: String, with description: String) -> [(field: String, current: String)] {
+        var fields: [(field: String, current: String)] = []
+        if let caption, !caption.isEmpty, caption != description { fields.append(("caption", caption)) }
+        if !altText.isEmpty, altText != AccessibilityText.altText(from: description) { fields.append(("alt text", altText)) }
+        return fields
+    }
+
+    /// Save descriptions as captions writes alt text that's empty or already this description's; alt text another app
+    /// wrote only under Always.
+    static func mayWriteAltText(_ description: String, over existing: String, policy: CaptionPolicy) -> Bool {
+        switch policy {
+        case .never: false
+        case .always: true
+        case .whenEmpty: existing.isEmpty || existing == AccessibilityText.altText(from: description)
+        }
     }
 }
