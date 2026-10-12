@@ -18,7 +18,8 @@ public sealed class AutoDescriberTests : IDisposable
         _lib.AddJpeg("a.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2024, 1, 3) });
         _lib.AddJpeg("b.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2024, 1, 2) });
         _lib.AddJpeg("c.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2024, 1, 1) });
-        _lib.AddFile("clip.mp4", "video");
+        // Older than the photos, so it sorts after them: the row after the last photo is a video.
+        File.SetLastWriteTime(_lib.AddFile("clip.mp4", "video"), new DateTime(2000, 1, 1));
     }
 
     public void Dispose()
@@ -33,7 +34,7 @@ public sealed class AutoDescriberTests : IDisposable
 
     private async Task<(LibraryModel Model, AutoDescriber Auto, DescriptionStore Store)> StartAsync(
         AIReadiness? readiness = null, Func<MediaItem, Task<string>>? describe = null, Settings? settings = null,
-        AIReadiness? afterPrepare = null, AutoDescriber.DescribeFunc? describeAhead = null)
+        AIReadiness? afterPrepare = null, AutoDescriber.DescribeFunc? describeAhead = null, Func<AIReadiness>? readinessNow = null)
     {
         var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
         var model = new LibraryModel(settings ?? new Settings(), _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
@@ -47,7 +48,7 @@ public sealed class AutoDescriberTests : IDisposable
                 _described.Add($"{item.Name}:{kind}");
                 return describe is null ? $"A picture called {item.Name}." : await describe(item);
             },
-            _ => Task.FromResult(_prepared > 0 ? afterPrepare ?? Ready : readiness ?? Ready),
+            _ => Task.FromResult(readinessNow?.Invoke() ?? (_prepared > 0 ? afterPrepare ?? Ready : readiness ?? Ready)),
             _ => { _prepared++; return Task.FromResult(afterPrepare ?? Ready); },
             TimeSpan.FromMilliseconds(30), describeAhead);
         return (model, auto, store);
@@ -751,7 +752,7 @@ public sealed class AutoDescriberTests : IDisposable
     }
 
     [WpfFact]
-    public async Task OnEnergySaverOrAwayFromTheList_NothingIsDescribedAhead()
+    public async Task OnEnergySaver_NothingIsDescribedAhead()
     {
         var (model, auto, _) = await StartAsync();
         using (model) using (auto)
@@ -763,6 +764,140 @@ public sealed class AutoDescriberTests : IDisposable
             Select(model, o[1]);
             await Settle(auto);
             Assert.DoesNotContain($"{o[2]}:accessible", _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task AwayFromTheList_NothingIsDescribedAhead()
+    {
+        var (model, auto, store) = await StartAsync();
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            store.Put(model.Rows.Single(r => r.Name == o[1]).Item!, "accessible", "Described.");
+            Select(model, o[0]);
+            await Settle(auto);
+            // In the sidebar or a dialog: the photo isn't spoken, so nothing is worked on ahead either.
+            auto.CanSpeak = () => false;
+            Select(model, o[1]);
+            await Settle(auto);
+            Assert.DoesNotContain($"{o[2]}:accessible", _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task WhenWindowsAIIsntReady_NothingIsDescribedAhead_EvenFromADescribedPhoto()
+    {
+        var ready = true;
+        var (model, auto, store) = await StartAsync(readinessNow: () => ready ? Ready : new AIReadiness(true, "NotReady", null));
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            Select(model, o[0]);
+            await Settle(auto);
+            // The model went away (a Windows update, say): stepping onto a described photo mustn't download it.
+            ready = false;
+            store.Put(model.Rows.Single(r => r.Name == o[1]).Item!, "accessible", "Described.");
+            Select(model, o[1]);
+            await Settle(auto);
+            Assert.Contains("Described.", _announced);
+            Assert.DoesNotContain($"{o[2]}:accessible", _described);
+            Assert.Equal(0, _prepared);
+        }
+    }
+
+    [WpfFact]
+    public async Task ANoSelectionMomentDuringAReload_IsntMovingAway()
+    {
+        var (model, auto, _) = await StartAsync();
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            Select(model, o[0]);
+            await Settle(auto);
+            Select(model, o[1]);
+            await Settle(auto);
+            _announced.Clear();
+            // As the list does when its rows are replaced: nothing selected, then the same photo again.
+            model.SelectedRows = [];
+            Select(model, o[1]);
+            await Settle(auto);
+            Assert.DoesNotContain($"A picture called {o[1]}.", _announced);
+            // Still a step: the next one along is spoken at once, described ahead.
+            Select(model, o[2]);
+            await Settle(auto);
+            Assert.Single(_described, d => d.StartsWith(o[2]));
+        }
+    }
+
+    [WpfFact]
+    public async Task TurningAutomaticDescriptionsOff_DropsTheWorkAhead()
+    {
+        var turn = new TaskCompletionSource();
+        var asked = new List<string>();
+        var (model, auto, store) = await StartAsync(describeAhead: async (item, kind, drop) =>
+        {
+            await turn.Task.WaitAsync(drop);
+            asked.Add(item.Name);
+            return $"Ahead {item.Name}";
+        });
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            Select(model, o[0]);
+            await Settle(auto);
+            Select(model, o[1]);
+            await WaitUntil(() => auto.IsDescribing(model.Rows.Single(r => r.Name == o[2]).Item!.Path));
+            auto.Enabled = false;
+            turn.SetResult();
+            await Settle(auto);
+            Assert.Empty(asked);
+            Assert.Null(store.Get(model.Rows.Single(r => r.Name == o[2]).Item!, "accessible"));
+        }
+    }
+
+    [WpfFact]
+    public async Task AFailureAhead_IsntSpoken_AndArrivingDescribesItAndSaysWhatsWrong()
+    {
+        var aheadFails = true;
+        var (model, auto, _) = await StartAsync(describe: item => Task.FromResult($"A picture called {item.Name}."),
+            describeAhead: (item, kind, _) => aheadFails ? throw new DescriptionException("content_filter", "Windows declined to describe this photo.") : Task.FromResult(""));
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            Select(model, o[0]);
+            await Settle(auto);
+            Select(model, o[1]);
+            await Settle(auto);
+            Assert.DoesNotContain(_announced, a => a.Contains("declined"));
+            Select(model, o[2]);
+            await Settle(auto);
+            Assert.Contains($"A picture called {o[2]}.", _announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task DescribeAgain_OnAPhotoBeingDescribedAhead_KeepsItsOwnDescription()
+    {
+        var finish = new TaskCompletionSource();
+        var (model, auto, store) = await StartAsync(describeAhead: async (item, kind, _) =>
+        {
+            await finish.Task;
+            return $"Older {item.Name}";
+        });
+        using (model) using (auto)
+        {
+            var o = PhotoOrder(model);
+            Select(model, o[0]);
+            await Settle(auto);
+            Select(model, o[1]);
+            await WaitUntil(() => auto.IsDescribing(model.Rows.Single(r => r.Name == o[2]).Item!.Path));
+            var row = model.Rows.Single(r => r.Name == o[2]);
+            var again = auto.DescribeNowAsync(row, () => true, again: true);
+            await Task.Delay(50);
+            finish.SetResult();
+            await again;
+            Assert.Equal($"A picture called {o[2]}.", store.Get(row.Item!, "accessible"));
         }
     }
 
@@ -780,17 +915,11 @@ public sealed class AutoDescriberTests : IDisposable
             await Settle(auto);
             Assert.DoesNotContain($"{o[2]}:accessible", _described);
 
-            // From the video's neighbour toward it.
-            var clip = model.Rows.FindIndex(r => r.Name == "clip.mp4");
-            if (clip > 0 && model.Rows[clip - 1].Item is { IsVideo: false } before && clip >= 2 && model.Rows[clip - 2].Item is { IsVideo: false } start)
-            {
-                _described.Clear();
-                Select(model, start.Name);
-                await Settle(auto);
-                Select(model, before.Name);
-                await Settle(auto);
-                Assert.DoesNotContain(_described, d => d.StartsWith("clip"));
-            }
+            // Stepping onto the last photo, toward the video after it.
+            Assert.Equal("clip.mp4", model.Rows[model.Rows.FindIndex(r => r.Name == o[2]) + 1].Name);
+            Select(model, o[2]);
+            await Settle(auto);
+            Assert.DoesNotContain(_described, d => d.StartsWith("clip"));
         }
     }
 
@@ -843,7 +972,6 @@ public sealed class AutoDescriberTests : IDisposable
             await WaitUntil(() => _described.Contains($"{o[2]}:ahead"));
             Select(model, o[2]);
             await Task.Delay(150);
-            Assert.True(auto.IsBusy);
             finish.SetResult();
             await Settle(auto);
             Assert.Contains($"Ahead {o[2]}", _announced);

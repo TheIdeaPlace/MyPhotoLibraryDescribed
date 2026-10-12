@@ -66,6 +66,8 @@ public sealed class AutoDescriber : IDisposable
     private string? _aheadPath;
     private Task? _aheadTask;
     private CancellationTokenSource? _aheadDrop;
+    /// <summary>A look again is posted for after a moment with nothing selected.</summary>
+    private bool _settlePending;
 
     /// <param name="check">Whether Windows AI can describe now. Never downloads anything.</param>
     /// <param name="prepare">Gets the model ready, downloading it if needed. Only used when the person turns the feature on.</param>
@@ -275,6 +277,25 @@ public sealed class AutoDescriber : IDisposable
 
     private void FocusChanged(bool force = false)
     {
+        // A reload (a caption written, a rescan) passes through no selection for a moment before the same photo is
+        // selected again. Look once it settles, so that isn't taken for moving away and back, which would speak the
+        // description again and break stepping.
+        if (!force && _lastPath is not null && CurrentPath() is null)
+        {
+            if (_settlePending) return;
+            _settlePending = true;
+            Task.Factory.StartNew(() =>
+            {
+                _settlePending = false;
+                Moved(force: false);
+            }, CancellationToken.None, TaskCreationOptions.None, _ui);
+            return;
+        }
+        Moved(force);
+    }
+
+    private void Moved(bool force)
+    {
         var path = CurrentPath();
         var index = _model.FocusedIndex;
         if (!force && path == _lastPath)
@@ -360,7 +381,8 @@ public sealed class AutoDescriber : IDisposable
                     {
                         // Described ahead, or being: wait for that rather than ask again. If it was dropped before Windows
                         // was asked, or failed, it's described here after all, if you're still on it.
-                        ahead = await DescribedAheadAsync(item, kind);
+                        // The store again too: work ahead may have finished while readiness was being checked.
+                        ahead = await DescribedAheadAsync(item, kind) ?? _store.Get(item, kind);
                         text = ahead ?? (_target == path && CanSpeak() ? await _describe(item, kind, _closing.Token) : "");
                     }
                     finally
@@ -457,11 +479,11 @@ public sealed class AutoDescriber : IDisposable
         try
         {
             using var cancel = CancellationTokenSource.CreateLinkedTokenSource(drop.Token, _closing.Token);
+            // Never what gets the model downloaded or starts the helper for nothing: only when Windows AI is ready.
+            if ((await _check(cancel.Token)).State != "Ready") return;
             var text = await _describeAhead(item, kind, cancel.Token);
-            // Saved, not spoken; a correction or Describe Again meanwhile is newer.
-            if (text.Length > 0 && !_againPaths.ContainsKey(item.Path) && _store.PutUnlessEdited(item, kind, text)
-                && _model.Rows.FirstOrDefault(r => string.Equals(r.Item?.Path, item.Path, StringComparison.OrdinalIgnoreCase)) is { } row)
-                row.Description = text;
+            // Saved, not spoken (the store puts it on its row); a correction or Describe Again meanwhile is newer.
+            if (text.Length > 0 && !_againPaths.ContainsKey(item.Path)) _store.PutUnlessEdited(item, kind, text);
         }
         catch (Exception)
         {

@@ -37,22 +37,21 @@ public partial class App : Application
     }
 
     private static Task<string> DescribeAsync(Models.MediaItem item, string kind, CancellationToken cancel) =>
-        WindowsAI.DescribeAsync(async size =>
-        {
-            using var bitmap = await ImageDecoding.DecodeAsync(item.Path, size);
-            return await ImageDecoding.ToJpegAsync(bitmap);
-        }, kind, cancel);
+        WindowsAI.DescribeAsync(JpegOf(item, default), kind, cancel);
 
     /// <summary>Describes a photo ahead (#64): <paramref name="drop"/> gives it up while it's being decoded or waiting its
     /// turn, but not once Windows has it.</summary>
     private static Task<string> DescribeAheadAsync(Models.MediaItem item, string kind, CancellationToken drop) =>
-        WindowsAI.DescribeAsync(async size =>
-        {
-            drop.ThrowIfCancellationRequested();
-            using var bitmap = await ImageDecoding.DecodeAsync(item.Path, size);
-            drop.ThrowIfCancellationRequested();
-            return await ImageDecoding.ToJpegAsync(bitmap);
-        }, kind, drop: drop);
+        WindowsAI.DescribeAsync(JpegOf(item, drop), kind, drop: drop);
+
+    /// <summary>The photo as a JPEG at a given size, for Windows AI; <paramref name="drop"/> stops it before and after decoding.</summary>
+    private static Func<uint, Task<byte[]>> JpegOf(Models.MediaItem item, CancellationToken drop) => async size =>
+    {
+        drop.ThrowIfCancellationRequested();
+        using var bitmap = await ImageDecoding.DecodeAsync(item.Path, size);
+        drop.ThrowIfCancellationRequested();
+        return await ImageDecoding.ToJpegAsync(bitmap);
+    };
 
     /// <summary>Windows' energy saver (battery saver) is on: work ahead waits.</summary>
     private static bool EnergySaverOn()
