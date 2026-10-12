@@ -14,6 +14,7 @@ struct PhotoFinderApp: App {
                     // Unit tests run inside the app; they don't need (and can't answer) the Photos permission prompt.
                     guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
                     await model.start()
+                    model.checkForUpdatesQuietly()
                 }
         }
         .commands { PhotoCommands(model: model) }
@@ -95,7 +96,11 @@ struct PhotoCommands: Commands {
         // Help: the same items as on Windows (#32, #33), plus macOS's own Help search. About stays in the app menu,
         // where Mac apps keep it. Check for Updates comes with a signed release (#22).
         CommandGroup(replacing: .help) {
-            // The order agreed with Windows in #13: Report a Bug…, then Check System….
+            // The order agreed with Windows in #13: Check for Updates…, Report a Bug…, then Check System…. The first
+            // names the new version once one is found, as the app kit asks.
+            Button(model.availableUpdate.map { "Update to \($0.version)…" } ?? "Check for Updates…") {
+                model.checkForUpdates()
+            }
             Button("Report a Bug…") { model.reportBug() }
             Button("Check System…") {
                 model.systemCheckRequest += 1

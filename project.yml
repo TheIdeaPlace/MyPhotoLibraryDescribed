@@ -41,6 +41,10 @@ targets:
         DEVELOPMENT_TEAM: P887QF74N8
         ENABLE_HARDENED_RUNTIME: NO
         GENERATE_INFOPLIST_FILE: NO
+      configs:
+        # Notarization needs the hardened runtime; releases are built in Release (scripts/release-mac.sh, #22).
+        Release:
+          ENABLE_HARDENED_RUNTIME: YES
   PhotoFinderTests:
     type: bundle.unit-test
     platform: macOS
