@@ -41,7 +41,7 @@ There's also a separate native Windows version, built for JAWS, NVDA and Narrato
 
 Mac CI builds the app and runs its unit tests on every pull request. GitHub's Mac runners don't have Xcode 27 yet, so until they do, CI compiles everything except the macOS 27 calls, which are inside `#if !PF_SDK26` (CI defines that flag only when its SDK is older than macOS 27).
 
-Requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+Requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`). `PhotoFinder.xcodeproj` isn't in the repo: it's generated from `project.yml`, so run `xcodegen generate` after cloning, and again after switching branches or pulling when files were added or removed. (To make that automatic, add a `post-checkout` and `post-merge` git hook that runs `xcodegen generate`.)
 
 ```bash
 xcodegen generate
