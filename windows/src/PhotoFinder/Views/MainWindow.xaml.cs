@@ -176,6 +176,18 @@ public partial class MainWindow : Window
         Bind(AppCommands.ToggleFavorite, () => { if (CanChangePhotos() && (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite"))) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, () => EditCaption(), HasFiles);
         Bind(AppCommands.ReadStatusBar, ReadStatusBar);
+        Bind(AppCommands.OpenLogFolder, () =>
+        {
+            try
+            {
+                Directory.CreateDirectory(Services.Log.Folder);
+                OpenUrl(Services.Log.Folder);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                ShowError($"File Explorer couldn't open the log folder. It's at {Services.Log.Folder}.");
+            }
+        });
         Bind(AppCommands.GoToStatusBar, FocusStatusBar);
         Bind(AppCommands.UseDescriptionAsCaption, () => _model.Fire(UseDescriptionAsCaptionAsync(_model.SelectedRows)), HasFiles);
         Bind(AppCommands.About, ShowAbout);

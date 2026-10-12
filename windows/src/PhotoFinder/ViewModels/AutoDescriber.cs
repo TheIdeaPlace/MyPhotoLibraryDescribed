@@ -263,6 +263,7 @@ public sealed class AutoDescriber : IDisposable
         }
         catch (Exception ex)
         {
+            Log.Write("describe", $"Describe Photo on {item.Name} failed: {ex.GetType().Name}: {ex.Message}");
             if (stillOn()) Announcer.Announce(ex is DescriptionException ? ex.Message : $"Windows couldn't describe this photo: {ex.Message}");
         }
         finally
@@ -419,6 +420,7 @@ public sealed class AutoDescriber : IDisposable
                 }
                 catch (Exception ex)
                 {
+                    Log.Write("describe", $"Automatic description of {item.Name} failed: {ex.GetType().Name}: {ex.Message}");
                     // A content filter, an unreadable file, the helper not starting: said for the photo you're on.
                     if (_target == path && CanSpeak())
                         Announcer.Announce(ex is DescriptionException ? ex.Message : $"Windows couldn't describe this photo: {ex.Message}");

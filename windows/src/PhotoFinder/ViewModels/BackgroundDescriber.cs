@@ -143,6 +143,7 @@ public sealed class BackgroundDescriber : IDisposable
         _perFolder[LibraryKey] = _perFolder.GetValueOrDefault(LibraryKey) + todo.Count;
         _total += todo.Count;
         _announceLibrary |= announce;
+        Log.Write("background", $"Queued {todo.Count} photos from the library ({(announce ? "turned on" : "at start")})");
         if (announce) Announcer.AnnounceAfter($"Describing {Plural(todo.Count)} in the background", "PhotoFinderBackground");
         ShowProgress();
         if (!IsRunning) _running = RunAsync();
@@ -285,9 +286,11 @@ public sealed class BackgroundDescriber : IDisposable
                     // One photo that can't be described (filtered, unreadable, timed out) doesn't stop the rest, but many
                     // in a row means something's wrong with every photo: stop and say what, once.
                     _failed.Add(FailureKey(item));
+                    Log.Write("background", $"Couldn't describe {item.Name}: {(ex is DescriptionException d ? $"{d.Code}: " : ex.GetType().Name + ": ")}{ex.Message}");
                     if (run == _run && ++failedInARow >= FailuresInARow)
                     {
                         var left = StopQueue();
+                        Log.Write("background", $"Stopped after {FailuresInARow} failures in a row; {left} not tried");
                         Announcer.AnnounceAfter(
                             $"Background describing stopped: {Plural(FailuresInARow)} in a row couldn't be described, so {Plural(left)} weren't tried. " +
                             (ex is DescriptionException ? ex.Message : $"Windows couldn't describe them: {ex.Message}"), "PhotoFinderBackground");
@@ -326,6 +329,7 @@ public sealed class BackgroundDescriber : IDisposable
 
     private void Finish()
     {
+        if (_total > 0) Log.Write("background", $"Run ended: {_done} of {_total} done");
         _total = 0;
         _done = 0;
         _model.BackgroundProgress = null;

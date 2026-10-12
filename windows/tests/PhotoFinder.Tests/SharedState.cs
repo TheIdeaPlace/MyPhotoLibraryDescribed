@@ -12,5 +12,10 @@ public sealed class SharedState
 internal static class AllowPhotoChangesInTests
 {
     [System.Runtime.CompilerServices.ModuleInitializer]
-    internal static void Allow() => Services.PhotoChanges.Allowed = true;
+    internal static void Allow()
+    {
+        Services.PhotoChanges.Allowed = true;
+        // Nothing a test does may land in the real data folder (the log, especially).
+        Services.AppPaths.DataFolder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "PhotoFinderTests", $"data-{Environment.ProcessId}");
+    }
 }
