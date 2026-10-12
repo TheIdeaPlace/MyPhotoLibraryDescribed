@@ -71,6 +71,12 @@ struct PhotoCommands: Commands {
             ))
             .keyboardShortcut("4")
             Button("Columns…") { model.columnsSheetShown = true }
+            // The Description panel (#50); Option-Command-I, as Finder's Show Inspector.
+            Toggle("Show Description", isOn: Binding(
+                get: { model.showDescriptionPanel },
+                set: { model.showDescriptionPanel = $0 }
+            ))
+            .keyboardShortcut("i", modifiers: [.command, .option])
             // As on Windows: sorting without a column header. The checked column is the current sort.
             Menu("Sort By") {
                 ForEach(ColumnOrder.all) { column in

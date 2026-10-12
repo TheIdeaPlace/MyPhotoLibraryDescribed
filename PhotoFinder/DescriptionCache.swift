@@ -12,8 +12,12 @@ final class DescriptionCache: @unchecked Sendable {
     static let keyInfo = "key", textInfo = "text"
 
     private var entries: [String: String] = [:]
+    /// Descriptions the person corrected in the Description panel (#50). In a file of their own next to
+    /// Descriptions.json, so that file keeps the format Windows' store shares.
+    private var edited: Set<String> = []
     private let lock = NSLock()
     private let fileURL: URL
+    private var editedURL: URL { fileURL.deletingLastPathComponent().appendingPathComponent("EditedDescriptions.json") }
     private var saveScheduled = false
 
     init(fileURL: URL = DescriptionCache.defaultURL) {
@@ -22,6 +26,16 @@ final class DescriptionCache: @unchecked Sendable {
            let saved = try? JSONDecoder().decode([String: String].self, from: data) {
             entries = saved
         }
+        if let data = try? Data(contentsOf: editedURL), let saved = try? JSONDecoder().decode([String].self, from: data) {
+            edited = Set(saved)
+        }
+    }
+
+    /// Whether the person corrected this description, so Describe Again asks before replacing it.
+    func isEdited(forKey key: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return edited.contains(key)
     }
 
     static var defaultURL: URL {
@@ -36,11 +50,14 @@ final class DescriptionCache: @unchecked Sendable {
         return entries[key]
     }
 
-    func remember(_ text: String, forKey key: String) {
+    /// Saves a description. `edited` marks one the person wrote or corrected; a new description made by Apple
+    /// Intelligence clears the mark.
+    func remember(_ text: String, forKey key: String, edited isEdited: Bool = false) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         lock.lock()
         entries[key] = trimmed
+        if isEdited { edited.insert(key) } else { edited.remove(key) }
         let schedule = !saveScheduled
         saveScheduled = true
         lock.unlock()
@@ -68,9 +85,11 @@ final class DescriptionCache: @unchecked Sendable {
         lock.lock()
         saveScheduled = false
         let snapshot = entries
+        let editedSnapshot = edited.sorted()
         lock.unlock()
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: fileURL, options: .atomic)
+        if let editedData = try? JSONEncoder().encode(editedSnapshot) { try? editedData.write(to: editedURL, options: .atomic) }
     }
 }

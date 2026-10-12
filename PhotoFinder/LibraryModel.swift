@@ -56,7 +56,16 @@ final class LibraryModel {
         }
     }
 
-    private(set) var rows: [FileRow] = []
+    private(set) var rows: [FileRow] = [] {
+        didSet { if !fillingDescriptions, showsDescriptionColumn { fillDescriptions() } }
+    }
+    @ObservationIgnored private var fillingDescriptions = false
+    /// View > Show Description: the Description panel beside the list or gallery (#50). On unless turned off.
+    var showDescriptionPanel: Bool = UserDefaults.standard.object(forKey: "showDescriptionPanel") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showDescriptionPanel, forKey: "showDescriptionPanel") }
+    }
+    /// Photos being described right now, by row id, so the Description panel can say "Describing…".
+    private(set) var describingIDs: Set<String> = []
     var sortOrder: [KeyPathComparator<FileRow>] = [KeyPathComparator(\FileRow.sortDate, order: .reverse)] {
         didSet { rows.sort(using: sortOrder) }
     }
@@ -89,7 +98,10 @@ final class LibraryModel {
     }
     /// The columns shown, in the order they're shown and read. Always includes Name.
     var columnOrder: [String] = ColumnOrder.defaultOrder {
-        didSet { UserDefaults.standard.set(columnOrder, forKey: "columnOrder") }
+        didSet {
+            UserDefaults.standard.set(columnOrder, forKey: "columnOrder")
+            if showsDescriptionColumn, !oldValue.contains("description") { fillDescriptions() }
+        }
     }
     var columnsSheetShown = false {
         didSet { if !columnsSheetShown, oldValue { autoDescriber.refocused(currentID: autoDescribeCandidate) } }
@@ -190,6 +202,7 @@ final class LibraryModel {
             let text = note.userInfo?[DescriptionCache.textInfo] as? String
             MainActor.assumeIsolated {
                 self?.descriptionRevision += 1
+                if self?.showsDescriptionColumn == true { self?.fillDescriptions() }
                 if let key, let text { self?.captionFromNewDescription(text, key: key) }
             }
         }
@@ -1379,9 +1392,18 @@ final class LibraryModel {
     /// description, and speaks the new one. For a saved description that's poor, or from before the photo was edited
     /// or the prompt changed.
     func describeFocusedPhotoAgain() {
-        guard let row = focusedRow, !row.isContainer, descriptionKey(for: row.id) != nil else {
+        guard let row = focusedRow, !row.isContainer, let key = descriptionKey(for: row.id) else {
             announce("Select a photo to describe")
             return
+        }
+        // A description the person corrected is theirs: ask before Apple Intelligence replaces it.
+        if descriptions.isEdited(forKey: key) {
+            let alert = NSAlert()
+            alert.messageText = "Replace the description you edited?"
+            alert.informativeText = "\(row.name) will be described again, and the new description replaces yours."
+            alert.addButton(withTitle: "Describe Again")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
         guard isPhoto(row.id) else {
             announce("Videos can't be described")
@@ -1402,6 +1424,52 @@ final class LibraryModel {
             guard let text else { return }
             self?.say(text, ifStillOn: id)
         }
+    }
+
+    // MARK: - Description panel and column (#50)
+
+    /// Whether a row is a photo that can have a description: from Photos or a folder, not a video.
+    func isDescribable(_ id: String) -> Bool { isPhoto(id) }
+
+    /// What the Description panel says about a photo's description.
+    func descriptionStatus(for id: String) -> String {
+        _ = descriptionRevision
+        if describingIDs.contains(id) { return "Describing…" }
+        guard let key = descriptionKey(for: id), descriptions.description(forKey: key) != nil else { return "Not described yet" }
+        return descriptions.isEdited(forKey: key) ? "Edited by you" : "Saved description"
+    }
+
+    /// The Description panel's text box: the person's own description or correction replaces the saved one, marked
+    /// as edited so it isn't replaced without asking.
+    func saveEditedDescription(_ text: String, for id: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let key = descriptionKey(for: id) else { return }
+        guard !trimmed.isEmpty else {
+            announce("A description can't be empty. The saved one is kept.")
+            return
+        }
+        guard trimmed != descriptions.description(forKey: key) else { return }
+        descriptions.remember(trimmed, forKey: key, edited: true)
+        announce("Description saved")
+    }
+
+    /// The Description panel's Copy.
+    func copyDescription(for id: String) {
+        guard let text = savedDescription(for: id) else { NSSound.beep(); return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        announce("Description copied")
+    }
+
+    private var showsDescriptionColumn: Bool { columnOrder.contains("description") }
+
+    /// Copies saved descriptions into the rows for the Description column, and re-sorts if that's the sort.
+    private func fillDescriptions() {
+        fillingDescriptions = true
+        defer { fillingDescriptions = false }
+        var filled = rows.map { row in row.withDescription(descriptionKey(for: row.id).flatMap(descriptions.description(forKey:)) ?? "") }
+        if sortColumnID == "description" { filled.sort(using: sortOrder) }
+        if filled.map(\.descriptionText) != rows.map(\.descriptionText) { rows = filled }
     }
 
     // MARK: - Help
@@ -1453,6 +1521,8 @@ final class LibraryModel {
     /// read from disk and saved under its file key (#36).
     private func describeAndRemember(_ id: String, allowNetwork: Bool,
                                      keep: @MainActor () -> Bool = { true }) async -> String? {
+        describingIDs.insert(id)
+        defer { describingIDs.remove(id) }
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
             let key: String
