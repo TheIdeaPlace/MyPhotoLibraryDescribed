@@ -3,7 +3,7 @@ namespace PhotoFinder.Services;
 /// <summary>
 /// Read-only (#83): whether Photo Finder may change photo files at all. Every writer checks it (MetadataWriter for
 /// captions and ratings, XmpFields for the caption and accessibility fields), so nothing touches a photo while it's
-/// false, whatever asks. Off until the app has read the person's choice, which is read-only until they agree otherwise.
+/// false, whatever asks. Off at every launch; only File > Read-Only, after asking, turns it on until the app quits.
 /// Photo Finder's own files (settings, saved descriptions, its cache) aren't photos and aren't covered.
 /// </summary>
 public static class PhotoChanges

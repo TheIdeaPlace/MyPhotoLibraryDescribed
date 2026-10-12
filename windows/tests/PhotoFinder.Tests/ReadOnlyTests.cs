@@ -39,7 +39,7 @@ public sealed class ReadOnlyTests : IDisposable
     }
 
     [Fact]
-    public void ReadOnly_IsOnForNewAndUpdatingSettings_AndRemembersBeingTurnedOff()
+    public void ReadOnly_IsOnAtEveryLaunch_EvenAfterBeingTurnedOff()
     {
         Assert.True(new Settings().ReadOnly);
         var path = _lib.PathOf(@"data\old.json");
@@ -47,8 +47,11 @@ public sealed class ReadOnlyTests : IDisposable
         // Settings from before read-only existed, even with Save Descriptions in Photos on.
         File.WriteAllText(path, """{ "SaveDescriptionsInPhotos": true }""");
         Assert.True(Settings.Load(path).ReadOnly);
+        // Allowing changes lasts until the app quits: never saved, and a file saying otherwise is ignored.
         new Settings { ReadOnly = false }.Save(path);
-        Assert.False(Settings.Load(path).ReadOnly);
+        Assert.True(Settings.Load(path).ReadOnly);
+        File.WriteAllText(path, """{ "ReadOnly": false }""");
+        Assert.True(Settings.Load(path).ReadOnly);
     }
 
     [Fact]
@@ -113,7 +116,8 @@ public sealed class ReadOnlyTests : IDisposable
             Assert.False(model.IsReadOnly);
             Assert.True(PhotoChanges.Allowed);
             Assert.EndsWith("Photo Finder - Editing", window.Title);
-            Assert.False(Settings.Load(_lib.PathOf(@"data\Settings.json")).ReadOnly);
+            // Not remembered: the next launch is read-only again.
+            Assert.True(Settings.Load(_lib.PathOf(@"data\Settings.json")).ReadOnly);
             Assert.Contains("Editing. Photo Finder can change your photos", _announced);
 
             // Going back to read-only doesn't ask.

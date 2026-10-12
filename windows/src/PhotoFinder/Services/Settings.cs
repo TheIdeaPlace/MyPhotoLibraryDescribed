@@ -29,8 +29,9 @@ public sealed class Settings
     /// <summary>Photo > Save Descriptions in Photos (#62): each new description is also saved in the photo, filling its
     /// caption and alt text when they're empty. Off until the person agrees once.</summary>
     public bool SaveDescriptionsInPhotos { get; set; }
-    /// <summary>File > Read-Only (#83): nothing changes a photo file while it's on. On for everyone, including anyone
-    /// updating from before it existed, until they turn it off and accept the risk.</summary>
+    /// <summary>File > Read-Only (#83): nothing changes a photo file while it's on. Every launch starts read-only (Kelly,
+    /// 12 Oct): allowing changes lasts until Photo Finder quits, so it's never saved.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
     public bool ReadOnly { get; set; } = true;
 
     /// <summary>The three-way setting this replaced, read once to carry the choice over: Never becomes off, Only When
