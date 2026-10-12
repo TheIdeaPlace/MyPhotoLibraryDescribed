@@ -55,12 +55,16 @@ struct FileMetadataChanges: Equatable, Sendable {
 enum FileMetadataWriteError: LocalizedError, Equatable {
     /// GIF, WebP, RAW and other formats ImageIO can't change without re-encoding, or at all. The format's name.
     case unsupportedFormat(String)
+    /// A JPEG holding more than one picture (Ultra HDR's gain map, some cameras' multi-picture files), found by its
+    /// MPF segment: not changed until a writer is proven to keep them (#79).
+    case multiPicture
     case unreadable
     case notWritten(String)
 
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat(let format): "\(format) files can't hold captions or descriptions."
+        case .multiPicture: "This JPEG holds more than one picture (HDR photos and some cameras' files do), which can't be changed safely yet."
         case .unreadable: "The file couldn't be read as a photo."
         case .notWritten(let reason): "The file couldn't be changed. \(reason)"
         }
@@ -148,6 +152,18 @@ enum FileMetadataWriter {
         let temp = url.deletingLastPathComponent()
             .appendingPathComponent(".\(url.deletingPathExtension().lastPathComponent).\(UUID().uuidString).\(url.pathExtension)")
         defer { try? FileManager.default.removeItem(at: temp) }
+        // A JPEG's data after its picture, a motion photo's video for one, must come through exactly (#79); a JPEG with
+        // a second picture (Ultra HDR) isn't touched at all.
+        var jpegTail: Data?
+        if type as String == UTType.jpeg.identifier {
+            let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
+            if JPEGLayout.hasMultiPicture(bytes) { throw FileMetadataWriteError.multiPicture }
+            // Its layout couldn't be followed (cut short, say): refused rather than written unchecked.
+            guard let tail = JPEGLayout.trailingData(bytes) else {
+                throw FileMetadataWriteError.notWritten("Its JPEG layout couldn't be read.")
+            }
+            jpegTail = tail
+        }
         if type as String == UTType.png.identifier {
             // A PNG's chunks are edited directly (#61), every byte but its XMP and EXIF description copied as it was.
             try writePNG(from: url, to: temp, expected)
@@ -165,6 +181,12 @@ enum FileMetadataWriter {
         }
         // The same pictures, the same size, before the original is touched: a guard against ImageIO ever dropping one.
         guard samePictures(source, temp) else { throw FileMetadataWriteError.notWritten("The pictures in the new file didn't match.") }
+        if let jpegTail, !jpegTail.isEmpty {
+            let written = try Data(contentsOf: temp, options: .mappedIfSafe)
+            guard written.count >= jpegTail.count, written.suffix(jpegTail.count) == jpegTail else {
+                throw FileMetadataWriteError.notWritten("The data after the picture, a motion photo's video say, wasn't kept.")
+            }
+        }
 
         do {
             _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
@@ -290,19 +312,26 @@ enum FileWriteSummary {
 
 /// What a description would replace in a file, and whether automatic captions may write its alt text (#31).
 enum FileFields {
-    /// The fields holding something else now: a caption (when `caption` is given) and alt text, each with what it
-    /// holds. Empty fields and fields already holding what would be written aren't counted.
-    static func replaced(caption: String?, altText: String, with description: String) -> [(field: String, current: String)] {
+    /// The fields holding something else now: a caption (when `caption` is given), alt text and an extended
+    /// description, each with what it holds. Empty fields and fields already holding what would be written aren't
+    /// counted; an extended description the new one would clear (a short description has none) is.
+    static func replaced(caption: String?, altText: String, extendedDescription: String = "",
+                         with description: String) -> [(field: String, current: String)] {
         var fields: [(field: String, current: String)] = []
         if let caption, !caption.isEmpty, caption != description { fields.append(("caption", caption)) }
         if !altText.isEmpty, altText != AccessibilityText.altText(from: description) { fields.append(("alt text", altText)) }
+        if !extendedDescription.isEmpty, extendedDescription != AccessibilityText.extendedDescription(from: description) {
+            fields.append(("extended description", extendedDescription))
+        }
         return fields
     }
 
-    /// Save Descriptions in Photos writes alt text only where there's none: never over what a person or another app
-    /// wrote.
-    static func mayWriteAltText(_ description: String, over existing: String, policy: CaptionPolicy) -> Bool {
-        policy == .whenEmpty && existing.isEmpty && !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    /// Save Descriptions in Photos writes the accessibility fields only where both are empty: never over alt text or an
+    /// extended description a person or another app (IDT, say) wrote (#79).
+    static func mayWriteAccessibility(_ description: String, altText: String, extendedDescription: String,
+                                      policy: CaptionPolicy) -> Bool {
+        policy == .whenEmpty && altText.isEmpty && extendedDescription.isEmpty
+            && !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -311,5 +340,61 @@ enum FileFields {
 enum CaptionTitle {
     static func keepsInStep(title: String, oldCaption: String) -> Bool {
         title.isEmpty || title == oldCaption
+    }
+}
+
+/// The parts of a JPEG that metadata writes must respect (#79): whether it holds a second picture, and the bytes after
+/// its picture (where motion photos keep their video).
+enum JPEGLayout {
+    /// Whether an APP2 segment is a Multi-Picture Format directory ("MPF\0"), as Ultra HDR and some cameras write.
+    static func hasMultiPicture(_ bytes: Data) -> Bool {
+        segments(bytes).contains { marker, body in marker == 0xE2 && body.starts(with: [0x4D, 0x50, 0x46, 0x00]) }
+    }
+
+    /// The bytes after the picture's end-of-image marker, or nil when the file doesn't parse as a JPEG.
+    static func trailingData(_ bytes: Data) -> Data? {
+        guard let end = endOfPicture(bytes) else { return nil }
+        return bytes.subdata(in: (bytes.startIndex + end)..<bytes.endIndex)
+    }
+
+    /// The markers and bodies before the picture data, in order.
+    static func segments(_ bytes: Data) -> [(marker: UInt8, body: Data)] {
+        let b = [UInt8](bytes)
+        guard b.count >= 4, b[0] == 0xFF, b[1] == 0xD8 else { return [] }
+        var result: [(UInt8, Data)] = []
+        var i = 2
+        while i + 4 <= b.count, b[i] == 0xFF {
+            let marker = b[i + 1]
+            if marker == 0xD8 || marker == 0x01 || (0xD0...0xD7).contains(marker) { i += 2; continue }
+            if marker == 0xFF { i += 1; continue }
+            let length = Int(b[i + 2]) << 8 | Int(b[i + 3])
+            guard length >= 2, i + 2 + length <= b.count else { break }
+            result.append((marker, Data(b[(i + 4)..<(i + 2 + length)])))
+            if marker == 0xDA { break }  // start of scan: the picture data follows
+            i += 2 + length
+        }
+        return result
+    }
+
+    /// Where the picture ends: just past the first end-of-image marker after its first scan. In the picture data an
+    /// 0xFF is always followed by 0x00 or a restart marker, so the first FF D9 there is the end.
+    static func endOfPicture(_ bytes: Data) -> Int? {
+        let b = [UInt8](bytes)
+        guard b.count >= 4, b[0] == 0xFF, b[1] == 0xD8 else { return nil }
+        var i = 2
+        while i + 4 <= b.count, b[i] == 0xFF {
+            let marker = b[i + 1]
+            if marker == 0xD8 || marker == 0x01 || (0xD0...0xD7).contains(marker) { i += 2; continue }
+            if marker == 0xFF { i += 1; continue }
+            let length = Int(b[i + 2]) << 8 | Int(b[i + 3])
+            guard length >= 2, i + 2 + length <= b.count else { return nil }
+            i += 2 + length
+            if marker == 0xDA { break }
+        }
+        while i + 1 < b.count {
+            if b[i] == 0xFF, b[i + 1] == 0xD9 { return i + 2 }
+            i += 1
+        }
+        return nil
     }
 }
