@@ -19,13 +19,13 @@ public partial class App : Application
         Log.Write("start", $"{AppInfo.Name} {Updates.AppVersion} on Windows {Environment.OSVersion.Version}, {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}");
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
         {
-            if (args.ExceptionObject is Exception ex) Log.Error("crash", "Unhandled", ex);
+            if (args.ExceptionObject is Exception ex) Log.Crash("crash", "Unhandled", ex);
         };
-        TaskScheduler.UnobservedTaskException += (_, args) => Log.Error("error", "A background task failed unseen", args.Exception);
+        TaskScheduler.UnobservedTaskException += (_, args) => Log.Crash("error", "A background task failed unseen", args.Exception);
         // Something unexpected in an event handler is reported, not a silent crash.
         DispatcherUnhandledException += (_, args) =>
         {
-            Log.Error("error", "Unhandled in the window", args.Exception);
+            Log.Crash("error", "Unhandled in the window", args.Exception);
             // Over the window in front (Get Info, say), so focus returns there.
             var owner = Windows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? MainWindow;
             MessageBox.Show(owner, $"Something went wrong: {args.Exception.Message}", AppInfo.Name,

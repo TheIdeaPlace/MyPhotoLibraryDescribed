@@ -18,6 +18,18 @@ public sealed class LogTests
     }
 
     [Fact]
+    public void TheUserFolder_IsWrittenAsUserProfile_AndCrashesKeepTheInnerException()
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Log.Write("test", $@"Couldn't read {profile}\Pictures\a.jpg");
+        Log.Crash("test", "Crashed", new AggregateException(new InvalidOperationException("The inner one")));
+        var text = File.ReadAllText(Log.TodaysFile);
+        Assert.Contains(@"Couldn't read %USERPROFILE%\Pictures\a.jpg", text);
+        Assert.DoesNotContain(profile + @"\Pictures", text);
+        Assert.Contains("The inner one", text);
+    }
+
+    [Fact]
     public void FilesOlderThanTwoWeeks_AreRemoved()
     {
         Directory.CreateDirectory(Log.Folder);
