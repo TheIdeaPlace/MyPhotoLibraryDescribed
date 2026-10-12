@@ -101,7 +101,7 @@ public sealed partial class SystemCheck
         items.Add(new("Saved descriptions", Status.Info,
             saved == 0 ? "None yet." : saved == 1 ? "1 photo described." : $"{saved.ToString("N0", CultureInfo.CurrentCulture)} photos described."));
         items.Add(new("Describe Photos Automatically", Status.Info, facts.DescribeAutomatically ? "On." : "Off. Turn it on in the Photo menu."));
-        items.Add(new("Describe Added Folders in the Background", Status.Info, facts.DescribeInBackground ? "On." : "Off."));
+        items.Add(new("Describe Photos in the Background", Status.Info, facts.DescribeInBackground ? "On." : "Off."));
         Items = items;
 
         static string Folders(int n) => n == 1 ? "1 folder" : $"{n} folders";

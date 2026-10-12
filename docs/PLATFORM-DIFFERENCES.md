@@ -51,7 +51,7 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 
 ## Describing in the background
 
-- **Windows:** Photo > Describe Added Folders in the Background. Adding a folder describes its photos behind the scenes.
+- **Windows:** Photo > Describe Photos in the Background. The library's photos not described yet (added folders, network shares and the Pictures library) are described behind the scenes, newest first: when it's turned on, at each start, and for a folder as it's added, with "X of Y" in the status bar (#96).
 - **Mac:** Photo > Describe New Photos in the Background (macOS 27). Photos added to the Photos library are described behind the scenes, and Get Info shows saved descriptions at once. Added folders are covered too (#47): adding a folder describes its photos, as on Windows, and photos that appear in an added folder later are described when Photo Finder next scans it (when the folder showing changes, or on View > Refresh). Only descriptions are saved; nothing is written into the files unless Save Descriptions in Photos is on, and then only for files in the folder showing. Differences: the Mac's menu name is different, it also covers the Photos library, and it doesn't announce each folder's start and finish (it says once when a run starts and ends, only while Photo Finder is in front).
 
 ## Now the same on both

@@ -4,10 +4,11 @@ using PhotoFinder.Services;
 namespace PhotoFinder.ViewModels;
 
 /// <summary>
-/// Describes the photos in a folder behind the scenes when the folder is added to the library (a setting, off
-/// until turned on), so their descriptions are ready when you arrow to them, spoken after the usual short pause
-/// without waiting for Windows AI.
+/// Describes the library's photos behind the scenes (a setting, off until turned on), so their descriptions are ready
+/// when you arrow to them, spoken after the usual short pause without waiting for Windows AI (#96).
 ///
+/// - It works through every photo in the library not described yet, newest first: when it's turned on, each time
+///   Photo Finder starts (so a big library carries on across restarts), and for a folder as it's added.
 /// - One photo at a time, into the same store automatic descriptions and Get Info use.
 /// - Photos are queued by path and looked up again when their turn comes, so a folder removed meanwhile is
 ///   skipped and a photo Photo Finder edited is described under its current details.
@@ -73,11 +74,11 @@ public sealed class BackgroundDescriber : IDisposable
                 var stopped = StopQueue();
                 Announcer.Announce(stopped > 0
                     ? $"Background describing off. Stopped with {Plural(stopped)} not described."
-                    : "Added folders won't be described in the background");
+                    : "Photos won't be described in the background");
                 return;
             }
-            Announcer.Announce("Folders you add will be described in the background");
-            Busy(CheckWhenTurnedOnAsync());
+            Announcer.Announce("Photos in the library will be described in the background");
+            Busy(TurnedOnAsync());
         }
     }
 
@@ -95,12 +96,52 @@ public sealed class BackgroundDescriber : IDisposable
         _queue.Clear();
         _queued.Clear();
         _perFolder.Clear();
+        _announceLibrary = false;
         if (!IsRunning) Finish();
         return left;
     }
 
-    /// <summary>Turned on by the person: say now if it can't work, or get the model ready if that's all it needs.</summary>
-    private async Task CheckWhenTurnedOnAsync()
+    private async Task TurnedOnAsync()
+    {
+        if (await CheckWhenTurnedOnAsync()) await DescribeLibraryAsync(announce: true);
+    }
+
+    /// <summary>The library's photos not described yet, newest first, queued: when it's turned on, and when Photo Finder
+    /// starts. Said aloud only when the person turned it on; at a start the status bar shows it.</summary>
+    public async Task DescribeLibraryAsync(bool announce = false)
+    {
+        if (!Enabled) return;
+        AIReadiness readiness;
+        try { readiness = await _check(_closing.Token); }
+        catch (Exception) { return; }
+        if (readiness.State != "Ready" || !Enabled) return;
+        var kind = _model.Settings.DescriptionKind;
+        var todo = _model.AllItems
+            .Where(i => !i.IsVideo && !i.IsOnlineOnly && MediaTypes.KindOf(i.Path) == MediaKind.Image && !_queued.Contains(i.Path) && _store.Get(i, kind) is null)
+            .OrderByDescending(i => i.Metadata?.DateTaken ?? i.Modified)
+            .Select(i => i.Path)
+            .ToList();
+        if (todo.Count == 0) return;
+        foreach (var path in todo)
+        {
+            _queue.Enqueue((path, LibraryKey));
+            _queued.Add(path);
+        }
+        _perFolder[LibraryKey] = _perFolder.GetValueOrDefault(LibraryKey) + todo.Count;
+        _total += todo.Count;
+        _announceLibrary |= announce;
+        if (announce) Announcer.AnnounceAfter($"Describing {Plural(todo.Count)} in the background", "PhotoFinderBackground");
+        ShowProgress();
+        if (!IsRunning) _running = RunAsync();
+    }
+
+    /// <summary>The queue's name for the library as a whole, rather than a folder that was added.</summary>
+    private const string LibraryKey = "";
+    private bool _announceLibrary;
+
+    /// <summary>Turned on by the person: say now if it can't work, or get the model ready if that's all it needs. True
+    /// when Windows AI is ready.</summary>
+    private async Task<bool> CheckWhenTurnedOnAsync()
     {
         try
         {
@@ -111,15 +152,21 @@ public sealed class BackgroundDescriber : IDisposable
                 readiness = await _prepare(_closing.Token);
             }
             if (readiness.State != "Ready")
+            {
                 Announcer.Announce($"Photos can't be described in the background. {readiness.Message}");
+                return false;
+            }
+            return true;
         }
         catch (OperationCanceledException) when (_closing.IsCancellationRequested)
         {
             // Closing.
+            return false;
         }
         catch (Exception ex)
         {
             Announcer.Announce($"Photos can't be described in the background. {ex.Message}");
+            return false;
         }
     }
 
@@ -188,7 +235,13 @@ public sealed class BackgroundDescriber : IDisposable
             if (_perFolder.ContainsKey(folder) && --_perFolder[folder] == 0)
             {
                 _perFolder.Remove(folder);
-                if (_model.Roots.Any(r => r.Equals(folder, StringComparison.OrdinalIgnoreCase) || LibraryScanner.IsInside(folder, r)))
+                if (folder == LibraryKey)
+                {
+                    // The whole library: said when the person started it, otherwise the status bar just clears.
+                    if (_announceLibrary) Announcer.AnnounceAfter("Finished describing the library's photos", "PhotoFinderBackground");
+                    _announceLibrary = false;
+                }
+                else if (_model.Roots.Any(r => r.Equals(folder, StringComparison.OrdinalIgnoreCase) || LibraryScanner.IsInside(folder, r)))
                     Announcer.AnnounceAfter($"Finished describing the photos in {DisplayName(folder)}", "PhotoFinderBackground");
             }
         }

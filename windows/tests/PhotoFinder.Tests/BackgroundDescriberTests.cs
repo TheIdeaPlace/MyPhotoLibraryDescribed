@@ -268,7 +268,89 @@ public sealed class BackgroundDescriberTests : IDisposable
         {
             background.Enabled = true;
             Assert.True(Settings.Load(_lib.PathOf(@"data\Settings.json")).DescribeInBackground);
-            Assert.Contains("Folders you add will be described in the background", _announced);
+            Assert.Contains("Photos in the library will be described in the background", _announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task TurningItOn_DescribesTheLibrarysPhotosNotDescribedYet_AndSaysWhenItsDone()
+    {
+        var (model, background, store) = await StartAsync(enabled: false);
+        using (model) using (background)
+        {
+            await model.AddFolderAsync(_added.Root);
+            await background.WhenIdleAsync();
+            Assert.Empty(_described);
+            // One already described is skipped.
+            store.Put(model.AllItems.Single(i => i.Name == "a.jpg"), "accessible", "Already.");
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Equal(["b.jpg", "home.jpg"], _described.Order());
+            Assert.Contains("Describing 2 photos in the background", _announced);
+            Assert.Contains("Finished describing the library's photos", _announced);
+            Assert.Null(model.BackgroundProgress);
+        }
+    }
+
+    [WpfFact]
+    public async Task AtAStart_ItCarriesOnWithWhatsLeft_Quietly()
+    {
+        var (model, background, store) = await StartAsync(enabled: true);
+        using (model) using (background)
+        {
+            store.Put(model.AllItems.Single(i => i.Name == "home.jpg"), "accessible", "Done last time.");
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Empty(_described);
+            await model.AddFolderAsync(_added.Root);
+            await background.WhenIdleAsync();
+            _described.Clear();
+            _announced.Clear();
+            // A new start: nothing left, so nothing described and nothing said.
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Empty(_described);
+            Assert.Empty(_announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task AtAStart_TheStatusBarShowsXOfY_AndNothingIsSaid()
+    {
+        var release = new TaskCompletionSource();
+        var (model, background, _) = await StartAsync(enabled: true, describe: async item => { await release.Task; return $"About {item.Name}"; });
+        using (model) using (background)
+        {
+            await model.AddFolderAsync(_added.Root);
+            await WaitUntil(() => model.BackgroundProgress is not null);
+            release.SetResult();
+            await background.WhenIdleAsync();
+            _announced.Clear();
+            var second = new TaskCompletionSource();
+            var (model2, background2, _) = await StartAsync(enabled: true, describe: async item => { await second.Task; return "x"; });
+            using (model2) using (background2)
+            {
+                var start = background2.DescribeLibraryAsync();
+                await WaitUntil(() => model2.BackgroundProgress is not null);
+                Assert.StartsWith("Describing photos in the background, 1 of ", model2.BackgroundProgress);
+                Assert.Empty(_announced);
+                second.SetResult();
+                await start;
+                await background2.WhenIdleAsync();
+            }
+        }
+    }
+
+    [WpfFact]
+    public async Task WithoutWindowsAI_AStartDescribesNothing()
+    {
+        var (model, background, _) = await StartAsync(enabled: true, new AIReadiness(false, "NotSupportedOnCurrentSystem", "Needs a Copilot+ PC."));
+        using (model) using (background)
+        {
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Empty(_described);
+            Assert.Empty(_announced);
         }
     }
 }
