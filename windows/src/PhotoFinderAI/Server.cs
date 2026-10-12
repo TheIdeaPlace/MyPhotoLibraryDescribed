@@ -28,7 +28,7 @@ public static class Server
                 response = Protocol.Failure(0, Codes.TooLarge,
                     $"The request is too large; a picture can be at most {Protocol.MaxImageBytes / (1024 * 1024)} MB.");
             }
-            else if (line!.Trim().Length == 0)
+            else if (line!.TrimStart('﻿').Trim().Length == 0)
             {
                 continue;
             }
@@ -38,7 +38,8 @@ public static class Server
                 var id = 0;
                 try
                 {
-                    switch (Protocol.ParseAnyRequest(line))
+                    // A byte-order mark some shells put at the start of what they pipe in is not part of the request.
+                    switch (Protocol.ParseAnyRequest(line.TrimStart('﻿')))
                     {
                         case Protocol.AskRequest question:
                             id = question.Id;

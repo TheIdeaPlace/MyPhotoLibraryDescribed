@@ -42,6 +42,8 @@
     <TrimmerRootAssembly Include="WinRT.Runtime" />
     <TrimmerRootAssembly Include="Microsoft.Windows.AI.Projection" />
     <TrimmerRootAssembly Include="Microsoft.Windows.AI.Imaging.Projection" />
+    <!-- Phi Silica, for follow-up questions (#24): trimmed, it fails to load at all (found on a Copilot+ PC, 12 Oct). -->
+    <TrimmerRootAssembly Include="Microsoft.Windows.AI.Text.Projection" />
     <TrimmerRootAssembly Include="Microsoft.Windows.AI.ContentSafety.Projection" />
     <TrimmerRootAssembly Include="Microsoft.Windows.AI.Foundation.Projection" />
     <TrimmerRootAssembly Include="Microsoft.Graphics.Imaging.Projection" />
