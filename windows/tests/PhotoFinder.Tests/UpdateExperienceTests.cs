@@ -98,7 +98,8 @@ public sealed class UpdateExperienceTests : IDisposable
     public async Task TheQuietCheck_IsRememberedWhenItFindsOut_AndTriedAgainWhenItCouldnt()
     {
         Updates.InstalledVersion = () => "0.2.0.310";
-        Updates.SelfUpdating = () => true;
+        // Not self-updating while the window opens, so its own quiet check (five seconds later) stays out of the count.
+        Updates.SelfUpdating = () => false;
         var answer = (Updates.State.Failed, (string?)null);
         var checks = 0;
         Updates.QuietCheck = () => { checks++; return Task.FromResult(answer); };
@@ -107,6 +108,7 @@ public sealed class UpdateExperienceTests : IDisposable
         try
         {
             window.Show();
+            Updates.SelfUpdating = () => true;
             // Offline: nothing recorded, so the next launch tries again.
             await window.LookForUpdatesQuietlyAsync(TimeSpan.Zero);
             Assert.Null(model.Settings.LastUpdateCheck);

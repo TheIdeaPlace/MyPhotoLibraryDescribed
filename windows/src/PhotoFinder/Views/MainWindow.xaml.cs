@@ -1178,6 +1178,8 @@ public partial class MainWindow : Window
         var running = Services.Updates.InstalledVersion() ?? Services.Updates.AppVersion;
         // An offered version that isn't newer (a feed that went back) isn't an update to show.
         var available = state == Services.Updates.State.Available && (version is null || Services.Updates.IsNewer(version, running));
+        // An update whose version couldn't be read keeps the one remembered, when there is one.
+        if (available && version is null) version = _model.Settings.AvailableUpdate;
         _update = (available, available ? version : null);
         _model.Settings.LastUpdateCheck = DateTime.UtcNow;
         _model.Settings.AvailableUpdate = available ? version : null;
@@ -1271,9 +1273,12 @@ public partial class MainWindow : Window
                     ShowError($"{AppInfo.Name} couldn't check for updates. {result.Message}");
                     break;
                 case Services.Updates.State.Available:
-                    // Help says so from now on, even if it isn't installed now.
-                    Found(result.State, await Services.Updates.OfferedVersionAsync(result.Source!));
-                    await InstallUpdateAsync(result.Source!);
+                    // Asked at once; meanwhile which version it is is read, so Help says so from now on even if it isn't
+                    // installed now.
+                    var offered = Services.Updates.OfferedVersionAsync(result.Source!);
+                    var install = InstallUpdateAsync(result.Source!);
+                    Found(result.State, await offered);
+                    await install;
                     break;
             }
         }
