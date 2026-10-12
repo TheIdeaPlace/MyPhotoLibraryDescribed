@@ -64,7 +64,7 @@ enum FileMetadataWriteError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat(let format): "\(format) files can't hold captions or descriptions."
-        case .multiPicture: "This JPEG holds more than one picture (an HDR photo, say), which can't be changed safely yet."
+        case .multiPicture: "This JPEG holds more than one picture (HDR photos and some cameras' files do), which can't be changed safely yet."
         case .unreadable: "The file couldn't be read as a photo."
         case .notWritten(let reason): "The file couldn't be changed. \(reason)"
         }
@@ -158,7 +158,11 @@ enum FileMetadataWriter {
         if type as String == UTType.jpeg.identifier {
             let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
             if JPEGLayout.hasMultiPicture(bytes) { throw FileMetadataWriteError.multiPicture }
-            jpegTail = JPEGLayout.trailingData(bytes)
+            // Its layout couldn't be followed (cut short, say): refused rather than written unchecked.
+            guard let tail = JPEGLayout.trailingData(bytes) else {
+                throw FileMetadataWriteError.notWritten("Its JPEG layout couldn't be read.")
+            }
+            jpegTail = tail
         }
         if type as String == UTType.png.identifier {
             // A PNG's chunks are edited directly (#61), every byte but its XMP and EXIF description copied as it was.

@@ -1576,6 +1576,8 @@ final class LibraryModel {
                 outcome.written.append(written.now)
             case .failure(FileMetadataWriteError.unsupportedFormat(let format)):
                 outcome.skipped.append((file.name, format))
+            case .failure(FileMetadataWriteError.multiPicture):
+                outcome.skipped.append((file.name, "Multi-picture JPEG"))
             case .failure(let error):
                 Self.log.error("Couldn't write into \(file.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 outcome.failed.append((file.name, error.localizedDescription))
