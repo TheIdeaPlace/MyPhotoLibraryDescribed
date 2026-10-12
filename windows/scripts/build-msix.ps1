@@ -79,7 +79,7 @@ $certificateSubject = 'CN=kelly ford, O=kelly ford, L=Madison, S=wi, C=US'
 $publisher = if ($Sign) { $certificateSubject } else { 'CN=Photo Finder Development' }
 
 # The display name, from the one place the app keeps it (AppInfo.Name, #34).
-$appInfo = Get-Content -LiteralPath (Join-Path $windows 'src\PhotoFinder\AppInfo.cs') -Raw
+$appInfo = Get-Content -LiteralPath (Join-Path $windows 'src\PhotoFinder\AppInfo.cs') -Raw -Encoding UTF8
 if ($appInfo -notmatch 'const string Name = "([^"]+)"') { throw "AppInfo.cs has no Name constant." }
 $displayName = [Security.SecurityElement]::Escape($Matches[1])
 

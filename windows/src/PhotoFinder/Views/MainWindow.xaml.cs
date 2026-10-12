@@ -903,24 +903,28 @@ public partial class MainWindow : Window
 
     // MARK: Check System and Report a Bug
 
-    /// <summary>The facts for Help > Check System and bug reports. Starting the AI helper to check can take a few
-    /// seconds the first time.</summary>
-    internal async Task<Services.SystemCheck> RunSystemCheckAsync()
+    /// <summary>The facts for Help > Check System and bug reports. Asked at once rather than one after another;
+    /// Windows AI isn't asked at all on a Windows too old for it, since starting the helper can take a while.</summary>
+    internal async Task<Services.SystemCheck> RunSystemCheckAsync(CancellationToken cancel = default)
     {
-        var readiness = await Services.WindowsAI.CheckAsync();
-        var npu = await Services.SystemCheck.FindNpuAsync();
+        var os = Environment.OSVersion.Version;
         var folders = _model.Roots.ToList();
+        var readiness = os.Build >= Services.SystemCheck.MinimumBuild
+            ? Services.WindowsAI.CheckAsync(cancel) : Task.FromResult<Services.AIReadiness>(null!);
+        var npu = Services.SystemCheck.FindNpuAsync();
         // A disconnected network folder can take many seconds to answer.
-        var missing = await Task.Run(() => folders.Where(f => !Directory.Exists(f)).ToList());
+        var missing = Task.Run(() => folders.Where(f => !Directory.Exists(f)).ToList(), cancel);
+        await Task.WhenAll(readiness, npu, missing);
+        cancel.ThrowIfCancellationRequested();
         return new Services.SystemCheck(new Services.SystemCheck.Facts
         {
             AppVersion = Services.Updates.AppVersion,
             UpdatesItself = Services.Updates.UpdatesItself,
-            OsVersion = Environment.OSVersion.Version,
-            Npu = npu,
-            Readiness = readiness,
+            OsVersion = os,
+            Npu = npu.Result,
+            Readiness = readiness.Result,
             LibraryFolders = folders,
-            MissingFolders = missing,
+            MissingFolders = missing.Result,
             SavedDescriptions = _model.Descriptions?.PhotoCount ?? 0,
             DescribeAutomatically = AutoDescriber?.Enabled ?? false,
             DescribeInBackground = BackgroundDescriber?.Enabled ?? false,
@@ -933,34 +937,67 @@ public partial class MainWindow : Window
         FocusContent();
     }
 
+    private bool _reporting;
+
     /// <summary>Help > Report a Bug…: a new GitHub issue in the browser, prefilled with the questions and the system
-    /// check, and the same text on the clipboard, as on the Mac. Until the app kit's relay is set up (#33).</summary>
+    /// check, and the same text on the clipboard, as on the Mac. Until the app kit's relay is set up (#33). The report
+    /// leaves out folder paths, since an issue is public.</summary>
     private async void ReportBug(Services.SystemCheck? check)
     {
-        if (check is null)
+        if (_reporting)
         {
-            Services.Announcer.Announce("Preparing a bug report");
-            check = await RunSystemCheckAsync();
+            Services.Announcer.Announce("Still preparing the bug report");
+            return;
         }
-        var body = Services.BugReport.Body(check.Text);
+        _reporting = true;
         try
         {
-            Clipboard.SetText(body);
+            if (check is null)
+            {
+                Services.Announcer.Announce("Preparing a bug report");
+                check = await RunSystemCheckAsync();
+            }
+            var body = Services.BugReport.Body(check.ReportText);
+            var copied = false;
+            try
+            {
+                Clipboard.SetText(body);
+                copied = true;
+            }
+            catch (System.Runtime.InteropServices.ExternalException)
+            {
+                // Another app holding the clipboard.
+            }
+            var uri = Services.BugReport.NewIssueUri(body, out var includesBody);
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+                Services.Announcer.Announce(
+                    includesBody && copied ? "Opening a new bug report in your browser. The details are also on the clipboard."
+                    : includesBody ? "Opening a new bug report in your browser."
+                    : copied ? "Opening a new bug report in your browser. Paste the details from the clipboard into it."
+                    : "Opening a new bug report in your browser.");
+                if (!includesBody && !copied) ShowReport(body);
+            }
+            catch (Exception)
+            {
+                if (copied)
+                    ShowError($"The browser couldn't be opened. The bug report is on the clipboard: paste it into a new issue at {AppInfo.IssuesUrl}.");
+                else
+                    ShowReport(body);
+            }
         }
-        catch (Exception)
+        finally
         {
-            // Another app holding the clipboard: the browser still gets the report.
-        }
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Services.BugReport.NewIssueUri(body).AbsoluteUri) { UseShellExecute = true });
-            Services.Announcer.Announce("Opening a new bug report in your browser. The details are also on the clipboard.");
-        }
-        catch (Exception ex)
-        {
-            ShowError($"The browser couldn't be opened. The bug report is on the clipboard: paste it into a new issue at {AppInfo.IssuesUrl}. {ex.Message}");
+            _reporting = false;
         }
     }
+
+    /// <summary>When neither the browser nor the clipboard could take the report: shown, so it can still be copied.</summary>
+    private void ShowReport(string body) =>
+        MessageBox.Show(this,
+            $"Press Ctrl+C to copy this report, then paste it into a new issue at {AppInfo.IssuesUrl}.\n\n{body}",
+            "Report a Bug", MessageBoxButton.OK, MessageBoxImage.Information);
 
     private void ShowError(string message) =>
         MessageBox.Show(this, message, "Something went wrong", MessageBoxButton.OK, MessageBoxImage.Warning);

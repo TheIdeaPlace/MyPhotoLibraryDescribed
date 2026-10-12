@@ -7,6 +7,9 @@ namespace PhotoFinder.Services;
 /// </summary>
 public static class BugReport
 {
+    /// <summary>Longer addresses than this risk GitHub or the browser refusing them, so the body is left to the clipboard.</summary>
+    public const int MaxUriLength = 6000;
+
     public static string Body(string systemText) => $"""
         **What happened**
 
@@ -23,8 +26,13 @@ public static class BugReport
         ```
         """;
 
-    /// <summary>The new-issue page, titled and labelled as from Windows. GitHub applies labels only for people who can
-    /// triage the repo, so the title says it's from Windows too.</summary>
-    public static Uri NewIssueUri(string body) =>
-        new($"{AppInfo.IssuesUrl}?title={Uri.EscapeDataString("[Windows] ")}&body={Uri.EscapeDataString(body)}&labels={Uri.EscapeDataString("bug,user-reported,windows")}");
+    /// <summary>The new-issue page, titled and labelled as from Windows (GitHub applies labels only for people who can
+    /// triage the repo, so the title says it too). Without the body when that would make the address too long.</summary>
+    public static Uri NewIssueUri(string body, out bool includesBody)
+    {
+        var start = $"{AppInfo.IssuesUrl}?title={Uri.EscapeDataString("[Windows] ")}&labels={Uri.EscapeDataString("bug,user-reported,windows")}";
+        var full = $"{start}&body={Uri.EscapeDataString(body)}";
+        includesBody = full.Length <= MaxUriLength;
+        return new Uri(includesBody ? full : start);
+    }
 }

@@ -11,8 +11,16 @@ namespace PhotoFinder.Tests;
 public sealed class SystemCheckTests : IDisposable
 {
     private readonly TestLibrary _lib = new();
+    // Counts are formatted for the person's culture; these tests read English.
+    private readonly System.Globalization.CultureInfo _culture = System.Globalization.CultureInfo.CurrentCulture;
 
-    public void Dispose() => _lib.Dispose();
+    public SystemCheckTests() => System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("en-US");
+
+    public void Dispose()
+    {
+        System.Globalization.CultureInfo.CurrentCulture = _culture;
+        _lib.Dispose();
+    }
 
     private static SystemCheck.Facts Good() => new()
     {
@@ -60,10 +68,38 @@ public sealed class SystemCheckTests : IDisposable
     [Fact]
     public void NoNpu_SaysItNeedsACopilotPc()
     {
-        var check = new SystemCheck(Good() with { Npu = null });
+        var check = new SystemCheck(Good() with { Npu = null, Readiness = new AIReadiness(false, "NotSupportedOnCurrentSystem", "No NPU.") });
         Assert.Equal("1 thing needs attention.", check.Summary);
         Assert.Contains("NPU: Needs attention. None found. Windows describes photos only on a Copilot+ PC, which has an NPU.", check.Items.Select(i => i.Line));
         Assert.Contains("Windows AI: Not checked: it needs an NPU.", check.Items.Select(i => i.Line));
+    }
+
+    [Fact]
+    public void ABugReport_LeavesOutFolderPaths_WhichNamePeopleAndPlaces()
+    {
+        var check = new SystemCheck(Good() with { LibraryFolders = [@"C:\Users\kelly\Pictures", @"\nas\family"], MissingFolders = [@"\nas\family"] });
+        Assert.Contains(@"\nas\family", check.Text);
+        Assert.DoesNotContain(@"\nas\family", check.ReportText);
+        Assert.DoesNotContain("kelly", check.ReportText);
+        Assert.Contains("Library folders: Needs attention. 2 folders, but 1 folder can't be reached.", check.ReportText);
+        Assert.Contains("Library folders: OK. 1 folder.", new SystemCheck(Good()).ReportText);
+    }
+
+    [Fact]
+    public void AnNpuWindowsDoesntList_IsntAProblem_WhenWindowsAiIsReady()
+    {
+        var check = new SystemCheck(Good() with { Npu = null });
+        Assert.Equal("Everything needed to describe photos is ready.", check.Summary);
+        Assert.Contains("NPU: Windows doesn't list one, but Windows AI is ready.", check.Items.Select(i => i.Line));
+        Assert.Contains("Windows AI: OK. Ready to describe photos, on this PC.", check.Items.Select(i => i.Line));
+    }
+
+    [Fact]
+    public void NpuNames_LoseTheirTrademarkMarks()
+    {
+        Assert.Equal("Snapdragon X Elite - X1E80100 - Qualcomm Hexagon NPU",
+            SystemCheck.CleanName("Snapdragon(R) X Elite - X1E80100 - Qualcomm(R) Hexagon(TM) NPU"));
+        Assert.Equal("Intel AI Boost", SystemCheck.CleanName("Intel® AI Boost"));
     }
 
     [Fact]
@@ -111,9 +147,16 @@ public sealed class SystemCheckTests : IDisposable
         Assert.Contains("**What you expected**", body);
         Assert.Contains("**Steps**", body);
         Assert.Contains("```\nEverything needed to describe photos is ready.\nWindows: OK. Build 26100.\n```", body.Replace("\r\n", "\n"));
-        var uri = BugReport.NewIssueUri(body).AbsoluteUri;
-        Assert.StartsWith(AppInfo.IssuesUrl + "?title=%5BWindows%5D%20&body=", uri);
-        Assert.EndsWith("&labels=bug%2Cuser-reported%2Cwindows", uri);
+        var uri = BugReport.NewIssueUri(body, out var includesBody).AbsoluteUri;
+        Assert.True(includesBody);
+        Assert.StartsWith(AppInfo.IssuesUrl + "?title=%5BWindows%5D%20&labels=bug%2Cuser-reported%2Cwindows&body=", uri);
+
+        // Too long for an address: the issue opens without the body, which is on the clipboard.
+        var longBody = BugReport.Body(new string('x', 8000));
+        var shortUri = BugReport.NewIssueUri(longBody, out var fits).AbsoluteUri;
+        Assert.False(fits);
+        Assert.DoesNotContain("body=", shortUri);
+        Assert.True(shortUri.Length <= BugReport.MaxUriLength);
     }
 
     [Fact]
@@ -134,10 +177,40 @@ public sealed class SystemCheckTests : IDisposable
     }
 
     [WpfFact]
+    public async Task ClosingTheWindowWhileChecking_StopsTheCheck_AndSaysNothing()
+    {
+        var announced = new List<string>();
+        Announcer.Observer = announced.Add;
+        var started = new TaskCompletionSource();
+        CancellationToken seen = default;
+        var window = new CheckSystemWindow(async cancel =>
+        {
+            seen = cancel;
+            started.TrySetResult();
+            await Task.Delay(Timeout.Infinite, cancel);
+            return new SystemCheck(Good());
+        }, _ => { }) { ShowActivated = false };
+        try
+        {
+            window.Show();
+            await started.Task;
+            window.Close();
+            await Task.Delay(100);
+            Assert.True(seen.IsCancellationRequested);
+            Assert.Null(window.Result);
+            Assert.DoesNotContain(announced, a => a.Contains("ready") || a.Contains("attention"));
+        }
+        finally
+        {
+            Announcer.Observer = null;
+        }
+    }
+
+    [WpfFact]
     public async Task TheWindow_ListsTheChecks_AndChecksAgain()
     {
         var runs = 0;
-        var window = new CheckSystemWindow(() => { runs++; return Task.FromResult(new SystemCheck(Good() with { Npu = runs > 1 ? null : "NPU" })); }, _ => { })
+        var window = new CheckSystemWindow(_ => { runs++; return Task.FromResult(new SystemCheck(Good() with { Npu = runs > 1 ? null : "NPU", Readiness = new AIReadiness(runs == 1, runs > 1 ? "NotSupportedOnCurrentSystem" : "Ready", null) })); }, _ => { })
             { ShowActivated = false };
         window.Show();
         try
@@ -149,6 +222,7 @@ public sealed class SystemCheckTests : IDisposable
             await window.RefreshAsync();
             Assert.Equal(2, runs);
             Assert.Equal("1 thing needs attention.", window.SummaryText.Text);
+            Assert.Equal("1 thing needs attention.", System.Windows.Automation.AutomationProperties.GetHelpText(window.ChecksList));
         }
         finally
         {

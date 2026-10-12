@@ -1,4 +1,6 @@
+using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using PhotoFinder.Services;
 
@@ -8,16 +10,19 @@ namespace PhotoFinder.Views;
 /// a Bug, as on the Mac (#32).</summary>
 public partial class CheckSystemWindow : Window
 {
-    private readonly Func<Task<SystemCheck>> _check;
+    private readonly Func<CancellationToken, Task<SystemCheck>> _check;
     private readonly Action<SystemCheck?> _reportBug;
+    // Closing stops a check still running (the AI helper can take a while), and nothing is said for it afterwards.
+    private readonly CancellationTokenSource _closing = new();
     private bool _checking;
 
-    public CheckSystemWindow(Func<Task<SystemCheck>> check, Action<SystemCheck?> reportBug)
+    public CheckSystemWindow(Func<CancellationToken, Task<SystemCheck>> check, Action<SystemCheck?> reportBug)
     {
         _check = check;
         _reportBug = reportBug;
         InitializeComponent();
         Loaded += async (_, _) => await RefreshAsync(firstTime: true);
+        Closed += (_, _) => _closing.Cancel();
     }
 
     /// <summary>The latest results, for tests and for Report a Bug.</summary>
@@ -25,25 +30,45 @@ public partial class CheckSystemWindow : Window
 
     internal async Task RefreshAsync(bool firstTime = false)
     {
-        if (_checking) return;
+        if (_checking)
+        {
+            Announcer.Announce("Still checking");
+            return;
+        }
         _checking = true;
+        // Where focus was in the list: the items are replaced, and focus on one of them would be lost with it.
+        var focusedIndex = ChecksList.IsKeyboardFocusWithin ? Math.Max(0, ChecksList.SelectedIndex) : -1;
         try
         {
             SummaryText.Text = "Checking…";
-            Result = await _check();
-            SummaryText.Text = Result.Summary;
-            ChecksList.ItemsSource = Result.Items;
-            if (firstTime)
+            if (!firstTime) Announcer.Announce("Checking");
+            var result = await _check(_closing.Token);
+            if (_closing.IsCancellationRequested) return;
+            Result = result;
+            SummaryText.Text = result.Summary;
+            // Read with the list (JAWS Insert+Tab, NVDA's description), since the heading isn't a Tab stop.
+            AutomationProperties.SetHelpText(ChecksList, result.Summary);
+            ChecksList.ItemsSource = result.Items;
+            if (firstTime || focusedIndex >= 0)
             {
-                // Onto the first check, then the summary queued after what's said for it, so neither cuts the other off.
+                var index = Math.Min(Math.Max(focusedIndex, 0), result.Items.Count - 1);
+                ChecksList.SelectedIndex = index;
                 ChecksList.UpdateLayout();
-                if (ChecksList.ItemContainerGenerator.ContainerFromIndex(0) is ListBoxItem first) first.Focus();
-                Announcer.AnnounceAfter(Result.Summary, "PhotoFinderCheckSystem");
+                if (ChecksList.ItemContainerGenerator.ContainerFromIndex(index) is ListBoxItem item) item.Focus();
             }
-            else
-            {
-                Announcer.Announce(Result.Summary);
-            }
+            // The summary queued after what's said for the check focus lands on, so neither cuts the other off.
+            if (firstTime) Announcer.AnnounceAfter(result.Summary, "PhotoFinderCheckSystem");
+            else Announcer.Announce(result.Summary);
+        }
+        catch (OperationCanceledException)
+        {
+            // Closed while checking.
+        }
+        catch (Exception ex)
+        {
+            if (_closing.IsCancellationRequested) return;
+            SummaryText.Text = $"The check couldn't finish: {ex.Message}";
+            Announcer.Announce(SummaryText.Text);
         }
         finally
         {
@@ -55,16 +80,20 @@ public partial class CheckSystemWindow : Window
 
     private void Copy_Click(object sender, RoutedEventArgs e)
     {
-        if (Result is null) return;
+        if (Result is null)
+        {
+            Announcer.Announce("Still checking");
+            return;
+        }
         try
         {
             Clipboard.SetText(Result.Text);
             Announcer.Announce("Copied");
         }
-        catch (Exception ex)
+        catch (ExternalException)
         {
             // Another app can hold the clipboard open for a moment.
-            Announcer.Announce($"The clipboard is busy. Try again. {ex.Message}");
+            Announcer.Announce("The clipboard is busy. Try again.");
         }
     }
 

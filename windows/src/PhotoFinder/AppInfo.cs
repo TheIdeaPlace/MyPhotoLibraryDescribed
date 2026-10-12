@@ -7,7 +7,7 @@ namespace PhotoFinder;
 /// (<see cref="DataFolderName"/>), the helper's photofinder-ai.exe alias and the announcement activity IDs.
 /// Also compiled into the AI helper.
 /// </summary>
-public static class AppInfo
+internal static class AppInfo
 {
     public const string Name = "Photo Finder";
 
