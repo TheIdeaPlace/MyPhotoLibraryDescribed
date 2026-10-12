@@ -5,6 +5,7 @@ using Microsoft.Graphics.Imaging;
 using Microsoft.Windows.AI;
 using Microsoft.Windows.AI.ContentSafety;
 using Microsoft.Windows.AI.Imaging;
+using Microsoft.Windows.AI.Text;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 
@@ -13,6 +14,31 @@ namespace PhotoFinderAI;
 public sealed class Describer : IDisposable
 {
     private ImageDescriptionGenerator? _generator;
+    private LanguageModel? _language;
+
+    /// <summary>Answers a follow-up question from the photo's description (#24), with Phi Silica. Throws
+    /// <see cref="ProtocolException"/> with the code to answer with.</summary>
+    public async Task<string> AskAsync(Protocol.AskRequest request)
+    {
+        if (_language is null)
+        {
+            var state = LanguageModel.GetReadyState();
+            if (Protocol.ForTextReadyState(state.ToString()) is { } unavailable) throw new ProtocolException(request.Id, unavailable.Code, unavailable.Message);
+            if (state != AIFeatureReadyState.Ready)
+            {
+                var ready = await LanguageModel.EnsureReadyAsync();
+                if (ready.Status != AIFeatureReadyResultState.Success)
+                    throw new ProtocolException(request.Id, Codes.NotReady,
+                        "Windows couldn't get its text model ready" + (ready.ExtendedError is { } e ? $": {e.Message.Trim()}" : ". It may still be downloading; try again in a few minutes."));
+            }
+            _language = await LanguageModel.CreateAsync();
+        }
+        using var context = _language.CreateContext(Protocol.AskSystemPrompt);
+        var result = await _language.GenerateResponseAsync(context, Protocol.AskPrompt(request), new LanguageModelOptions());
+        var status = result.Status.ToString();
+        if (Protocol.CodeForAnswerStatus(status) is { } code) throw new ProtocolException(request.Id, code, Protocol.MessageForAnswerStatus(status));
+        return result.Text.Trim();
+    }
 
     public static string ReadyState() => ImageDescriptionGenerator.GetReadyState().ToString();
 

@@ -87,6 +87,21 @@
                     <TextBox x:Name="OcrBox" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="60" MaxHeight="220"
                              VerticalScrollBarVisibility="Auto" Visibility="Collapsed" IsReadOnlyCaretVisible="True" />
                     <TextBlock Style="{StaticResource Note}" Text="Reads any text in the photo with Windows' built-in text recognition." />
+
+                    <!-- Follow-up questions (#24), once there's a description to answer from. -->
+                    <StackPanel x:Name="AskPanel" Visibility="Collapsed" Margin="0,14,0,0">
+                        <Label Content="Follow-up _question:" Target="{Binding ElementName=QuestionBox}" Padding="0,0,0,2" />
+                        <DockPanel>
+                            <Button x:Name="AskButton" Content="_Ask" DockPanel.Dock="Right" Margin="8,0,0,0" Padding="10,3" Click="Ask_Click" />
+                            <TextBox x:Name="QuestionBox" KeyDown="QuestionBox_KeyDown" />
+                        </DockPanel>
+                        <TextBlock x:Name="AskStatus" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed" />
+                        <Label x:Name="AnswersLabel" Content="Ans_wers:" Target="{Binding ElementName=AnswersBox}" Padding="0,8,0,2" Visibility="Collapsed" />
+                        <TextBox x:Name="AnswersBox" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="60" MaxHeight="260"
+                                 VerticalScrollBarVisibility="Auto" Visibility="Collapsed" IsReadOnlyCaretVisible="True" />
+                        <TextBlock Style="{StaticResource Note}"
+                                   Text="Answers come from the description and any text read from the photo, not from looking at the photo again. Windows' text model answers on this PC." />
+                    </StackPanel>
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>

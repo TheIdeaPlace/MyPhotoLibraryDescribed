@@ -162,7 +162,28 @@ public sealed class WindowsAI : IDisposable
         throw last!;
     }
 
-    private async Task<string> DescribeOnceAsync(byte[] jpeg, string kind, CancellationToken cancel, CancellationToken drop)
+    private Task<string> DescribeOnceAsync(byte[] jpeg, string kind, CancellationToken cancel, CancellationToken drop) =>
+        SendAsync(id => BuildRequest(id, kind, jpeg), "Windows took too long to describe this photo. Try again.", cancel, drop);
+
+    /// <summary>A follow-up question about a photo (#24), answered by Windows' text model (Phi Silica) from its description
+    /// and any text read from it, not by looking at the photo again.</summary>
+    public Task<string> AskAsync(string description, string text, string question,
+        IReadOnlyList<(string Question, string Answer)> history, CancellationToken cancel = default) =>
+        SendAsync(id => BuildAskRequest(id, description, text, question, history), "Windows took too long to answer. Try again.", cancel, default);
+
+    internal static string BuildAskRequest(int id, string description, string text, string question, IReadOnlyList<(string Question, string Answer)> history) =>
+        new JsonObject
+        {
+            ["id"] = id,
+            ["op"] = "ask",
+            ["description"] = description,
+            ["text"] = text,
+            ["question"] = question,
+            ["history"] = new JsonArray(history.Select(h => (JsonNode)new JsonObject { ["question"] = h.Question, ["answer"] = h.Answer }).ToArray()),
+        }.ToJsonString();
+
+    /// <summary>One request to the helper and its answer, in turn with any other.</summary>
+    private async Task<string> SendAsync(Func<int, string> build, string tooLong, CancellationToken cancel, CancellationToken drop)
     {
         using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancel, drop))
             await _gate.WaitAsync(waiting.Token);
@@ -176,7 +197,7 @@ public sealed class WindowsAI : IDisposable
             timeout.CancelAfter(DescribeTimeout);
             try
             {
-                await server.StandardInput.WriteAsync(BuildRequest(id, kind, jpeg) + "\n");
+                await server.StandardInput.WriteAsync(build(id) + "\n");
                 await server.StandardInput.FlushAsync(timeout.Token);
                 line = await server.StandardOutput.ReadLineAsync(timeout.Token);
             }
@@ -186,7 +207,7 @@ public sealed class WindowsAI : IDisposable
                 // then be read as the next one's. A fresh helper keeps answers and requests in step.
                 StopServer();
                 if (ex is OperationCanceledException && !cancel.IsCancellationRequested)
-                    throw new DescriptionException("timeout", "Windows took too long to describe this photo. Try again.");
+                    throw new DescriptionException("timeout", tooLong);
                 if (ex is IOException)
                     throw new DescriptionException("internal_error", $"The {AppInfo.HelperName} stopped unexpectedly.");
                 throw;
