@@ -422,6 +422,34 @@ final class PNGMetadataTests: XCTestCase {
         }
     }
 
+    func testClearingACaptionFromAPNGWithNoXMPWritesNoXMP() throws {
+        // Only an EXIF description, no XMP chunk: clearing it mustn't be refused for having no XMP to write.
+        var ihdr = u32(UInt32(Self.width), true) + u32(UInt32(Self.height), true)
+        ihdr += [8, 2, 0, 0, 0]
+        var bytes = PNGMetadata.signature + chunk("IHDR", ihdr) + chunk("eXIf", exif(big: true))
+        for idat in idats() { bytes += idat }
+        bytes += chunk("IEND", [])
+        let out = try PNGMetadata.rewrite(Data(bytes), setting: [FileMetadataWriter.captionPath: nil],
+                                          removingEXIFDescription: true)
+        let written = try PNGMetadata.chunks(of: out).chunks
+        XCTAssertFalse(written.contains { $0.type == "iTXt" }, "no empty XMP chunk added")
+        let exifChunk = try XCTUnwrap(written.first { $0.type == "eXIf" })
+        XCTAssertNil(try PNGMetadata.removingImageDescription(fromEXIF: Array(exifChunk.body)), "description gone")
+    }
+
+    func testTextAnotherTagStillUsesIsntBlanked() throws {
+        // A writer that points Artist at the same bytes as the description: those bytes stay, only the entry goes.
+        let big = true
+        let text = Array("Shared text".utf8) + [0]
+        let ifd0End = 8 + 2 + 2 * 12 + 4
+        var bytes = Array("MM".utf8) + u16(42, big) + u32(8, big) + u16(2, big)
+        bytes += entry(0x010E, 2, UInt32(text.count), u32(UInt32(ifd0End), big), big)
+        bytes += entry(0x013B, 2, UInt32(text.count), u32(UInt32(ifd0End), big), big)
+        bytes += u32(0, big) + text
+        let out = try XCTUnwrap(try PNGMetadata.removingImageDescription(fromEXIF: bytes))
+        XCTAssertEqual(Array(out[ifd0End..<(ifd0End + text.count)]), text, "Artist's text is kept")
+    }
+
     func testDamagedEXIFIsRefused() {
         let shortEXIF: [UInt8] = Array("MM".utf8) + [0, 42, 0, 0, 0, 8, 0, 9]  // nine entries promised, none there
         XCTAssertThrowsError(try PNGMetadata.removingImageDescription(fromEXIF: shortEXIF))

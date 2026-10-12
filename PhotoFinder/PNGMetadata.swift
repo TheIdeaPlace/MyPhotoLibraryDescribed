@@ -93,17 +93,25 @@ enum PNGMetadata {
             metadata = CGImageMetadataCreateMutable()
         }
         set(values, in: metadata)
-        guard let xmp = CGImageMetadataCreateXMPData(metadata, nil) as Data? else {
-            throw Failure.malformed("Its XMP couldn't be written.")
+        // No XMP left (a caption cleared from a file whose only XMP was that, or nothing to add to a file without XMP):
+        // no XMP chunk, rather than refusing the write (#76's review).
+        let tags = (CGImageMetadataCopyTags(metadata) as? [CGImageMetadataTag]) ?? []
+        let xmpChunk: Chunk?
+        if tags.isEmpty {
+            xmpChunk = nil
+        } else {
+            guard let xmp = CGImageMetadataCreateXMPData(metadata, nil) as Data? else {
+                throw Failure.malformed("Its XMP couldn't be written.")
+            }
+            // Keyword, its terminator, uncompressed, compression method, no language, no translated keyword.
+            xmpChunk = Chunk(type: "iTXt", body: xmpKeyword + [0, 0, 0, 0, 0] + [UInt8](xmp))
         }
-        // Keyword, its terminator, uncompressed, compression method, no language, no translated keyword.
-        let xmpChunk = Chunk(type: "iTXt", body: xmpKeyword + [0, 0, 0, 0, 0] + [UInt8](xmp))
         // Where the old XMP was when it came before the picture, otherwise just before it, where readers look first.
         let insertAt = xmpIndices.first.map { $0 < firstIDAT ? $0 : firstIDAT } ?? firstIDAT
 
         var output = Data(signature)
         for (index, chunk) in chunks.enumerated() {
-            if index == insertAt { output.append(contentsOf: xmpChunk.raw) }
+            if index == insertAt, let xmpChunk { output.append(contentsOf: xmpChunk.raw) }
             if xmpIndices.contains(index) { continue }
             if chunk.type == "eXIf", removingEXIFDescription,
                let exif = try removingImageDescription(fromEXIF: Array(chunk.body)) {
@@ -232,7 +240,11 @@ enum PNGMetadata {
                 guard !past, offset >= 8, end <= exif.count, end <= ifd || offset >= tableEnd else {
                     throw Failure.malformed("Its EXIF description is out of place.")
                 }
-                for i in offset..<end { exif[i] = 0 }
+                // Blanked only when nothing else uses those bytes: another entry's value, or a directory it points
+                // to. An orphaned string is harmless; zeroing bytes still in use isn't (#76's review).
+                if !usedElsewhere(offset..<end, in: exif, ifd: ifd, count: count, except: index, bigEndian: big) {
+                    for i in offset..<end { exif[i] = 0 }
+                }
             }
         }
         // The entries after it, and the next directory's offset, move up one place.
@@ -242,6 +254,31 @@ enum PNGMetadata {
         exif.replaceSubrange(ifd..<(ifd + 2), with: big ? [UInt8(newCount >> 8), UInt8(newCount & 0xFF)]
                                                        : [UInt8(newCount & 0xFF), UInt8(newCount >> 8)])
         return exif
+    }
+
+    /// Whether any other IFD0 entry's out-of-line value, or a directory IFD0 points to (Exif, GPS, Interop, the next
+    /// IFD), overlaps `range`.
+    static func usedElsewhere(_ range: Range<Int>, in exif: [UInt8], ifd: Int, count: Int, except skip: Int,
+                              bigEndian big: Bool) -> Bool {
+        let sizes: [UInt16: Int] = [1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8]
+        let pointerTags: Set<UInt16> = [0x8769, 0x8825, 0xA005]
+        var used: [Range<Int>] = []
+        func directory(at offset: Int) {
+            guard offset >= 8, offset + 2 <= exif.count else { return }
+            let n = Int(readUInt16(exif, offset, bigEndian: big))
+            used.append(offset..<min(exif.count, offset + 2 + n * 12 + 4))
+        }
+        for i in 0..<count where i != skip {
+            let entry = ifd + 2 + i * 12
+            let tag = readUInt16(exif, entry, bigEndian: big)
+            let value = Int(readUInt32(exif, entry + 8, bigEndian: big))
+            if pointerTags.contains(tag) { directory(at: value); continue }
+            guard let size = sizes[readUInt16(exif, entry + 2, bigEndian: big)] else { continue }
+            let (bytes, overflow) = Int(readUInt32(exif, entry + 4, bigEndian: big)).multipliedReportingOverflow(by: size)
+            if !overflow, bytes > 4, value >= 0, value < exif.count { used.append(value..<min(exif.count, value + bytes)) }
+        }
+        directory(at: Int(readUInt32(exif, ifd + 2 + count * 12, bigEndian: big)))
+        return used.contains { $0.overlaps(range) }
     }
 
     // MARK: - Bytes
