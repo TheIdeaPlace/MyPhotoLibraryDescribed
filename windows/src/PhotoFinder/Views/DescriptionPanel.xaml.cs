@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using PhotoFinder.Models;
 using PhotoFinder.Services;
 using PhotoFinder.ViewModels;
@@ -22,19 +24,22 @@ public partial class DescriptionPanel : UserControl
     private FileRow? _row;
     /// <summary>The description the box was filled with, so only what the person typed counts as a change.</summary>
     private string _loaded = "";
+    /// <summary>The Description Type the box was filled with: a correction is saved as that type.</summary>
+    private string _loadedKind = "";
 
     public DescriptionPanel() => InitializeComponent();
 
     /// <summary>Describe Again, Use as Caption and Edit Caption, which the window does.</summary>
     public Action? DescribeAgain { get; set; }
-    public Func<FileRow, Task>? UseAsCaption { get; set; }
-    public Action? EditCaption { get; set; }
+    public Action<FileRow>? UseAsCaption { get; set; }
+    /// <summary>Edit Caption for this photo, with what to focus afterwards.</summary>
+    public Action<FileRow, Action>? EditCaption { get; set; }
 
     public void Attach(LibraryModel model, Func<AutoDescriber?> auto)
     {
         _model = model;
         _auto = auto;
-        model.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(LibraryModel.FocusedRow)) Show(model.FocusedRow); };
+        model.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(LibraryModel.FocusedRow)) FocusedRowChanged(); };
         model.DescriptionsChanged += _ => Refresh();
         IsVisibleChanged += (_, e) =>
         {
@@ -51,13 +56,38 @@ public partial class DescriptionPanel : UserControl
     /// <summary>The row the panel shows, for tests.</summary>
     internal FileRow? Row => _row;
 
-    /// <summary>Whether the box holds a change the person typed.</summary>
-    internal bool IsDirty => DescriptionBox.Text.Trim() != _loaded.Trim();
+    /// <summary>Whether the box holds something the person typed.</summary>
+    internal bool IsDirty => DescriptionBox.Text != _loaded;
+
+    private void FocusedRowChanged()
+    {
+        if (_model is null) return;
+        // A reload passes through no selection for a moment. While you're in the panel, look again once it settles
+        // rather than treating that as moving away (which would save what's half typed).
+        if (_model.FocusedRow is null && IsKeyboardFocusWithin)
+        {
+            Dispatcher.BeginInvoke(() => Show(_model.FocusedRow), DispatcherPriority.Background);
+            return;
+        }
+        Show(_model.FocusedRow);
+    }
 
     private void Show(FileRow? row)
     {
+        // The same photo again (a re-sort, or a reload with new row objects): follow the new row, keep what's typed.
+        if (row is not null && _row is not null && row.Id == _row.Id)
+        {
+            if (row != _row)
+            {
+                _row.PropertyChanged -= Row_PropertyChanged;
+                _row = row;
+                row.PropertyChanged += Row_PropertyChanged;
+            }
+            UpdateStatus();
+            return;
+        }
         // Moving to another photo keeps an unsaved correction rather than dropping it.
-        if (row != _row) SaveIfChanged();
+        SaveIfChanged();
         if (_row is not null) _row.PropertyChanged -= Row_PropertyChanged;
         _row = row;
         if (row is not null) row.PropertyChanged += Row_PropertyChanged;
@@ -67,17 +97,19 @@ public partial class DescriptionPanel : UserControl
         NothingText.Text = row is null ? "Select a photo to see its description." : "Videos and folders aren't described.";
         if (!describable) return;
         NameText.Text = row!.Name;
-        CaptionBox.Text = row.Caption.Length > 0 ? row.Caption : "No caption";
+        ShowCaption(row);
         Load();
     }
 
+    private void ShowCaption(FileRow row) => CaptionBox.Text = row.Caption.Length > 0 ? row.Caption : "No caption";
+
     private void Row_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (sender != _row) return;
+        if (sender != _row || _row is null) return;
         // A description arriving (automatic describing, Describe Again) shows at once, even while you're in the box,
         // unless you've started changing it. The caption after Edit Caption or Use as Caption.
         if (e.PropertyName is nameof(FileRow.Description) or "") Refresh();
-        if (e.PropertyName is nameof(FileRow.Caption) or "" && _row is { } row) CaptionBox.Text = row.Caption.Length > 0 ? row.Caption : "No caption";
+        if (e.PropertyName is nameof(FileRow.Caption) or "") ShowCaption(_row);
     }
 
     private void Refresh()
@@ -90,6 +122,7 @@ public partial class DescriptionPanel : UserControl
     private void Load()
     {
         if (_model is null || _row is null) return;
+        _loadedKind = _model.Settings.DescriptionKind;
         _loaded = _model.SavedDescription(_row) ?? "";
         DescriptionBox.Text = _loaded;
         UpdateStatus();
@@ -99,21 +132,20 @@ public partial class DescriptionPanel : UserControl
     {
         if (_model is null || _row?.Item is not { } item) return;
         StatusText.Text = _model.DescriptionStatus(_row, _auto()?.IsDescribing(item.Path) == true);
-        var saved = _model.SavedDescription(_row) is not null;
-        // Not disabled, so focus never drops off them: pressed without a description, they say why.
-        UseAsCaptionButton.Tag = saved;
-        CopyButton.Tag = saved;
+        // Heard with the box (F6 lands there): which photo, and where its description stands.
+        AutomationProperties.SetHelpText(DescriptionBox, $"{_row.Name}. {StatusText.Text}. Enter saves a correction; Shift+Enter starts a new line; Escape undoes it.");
     }
 
-    /// <summary>Saves what the person typed, if they changed it.</summary>
+    /// <summary>Saves what the person typed, if they changed it, as the Description Type it was loaded as.</summary>
     internal void SaveIfChanged()
     {
         if (_model is null || _row is null || !IsDirty) return;
         var text = DescriptionBox.Text;
-        _model.SaveEditedDescription(_row, text);
+        _model.SaveEditedDescription(_row, text, _loadedKind);
         // Emptied: the saved description is kept, and shown again.
-        _loaded = _model.SavedDescription(_row) ?? "";
-        if (text.Trim().Length == 0) DescriptionBox.Text = _loaded;
+        _loaded = _model.SavedDescription(_row, _loadedKind) ?? "";
+        if (text.Trim().Length == 0 || text.Trim() == _loaded) DescriptionBox.Text = _loaded;
+        else _loaded = text;
         UpdateStatus();
     }
 
@@ -126,24 +158,34 @@ public partial class DescriptionPanel : UserControl
 
     private void DescriptionBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Enter) return;
-        if (Keyboard.Modifiers == ModifierKeys.Shift)
+        // Shift+Enter is left to the box, which starts a new line itself (AcceptsReturn).
+        if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None)
         {
-            // A new line, as Shift+Enter does elsewhere.
-            var box = DescriptionBox;
-            var at = box.CaretIndex;
-            box.Text = box.Text.Insert(at, Environment.NewLine);
-            box.CaretIndex = at + Environment.NewLine.Length;
+            SaveIfChanged();
             e.Handled = true;
         }
-        else if (Keyboard.Modifiers == ModifierKeys.None)
+        else if (e.Key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None && IsDirty)
         {
-            if (IsDirty) SaveIfChanged();
+            DescriptionBox.Text = _loaded;
+            DescriptionBox.CaretIndex = DescriptionBox.Text.Length;
+            Announcer.Announce("Correction undone");
             e.Handled = true;
         }
     }
 
-    private void DescriptionBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) => SaveIfChanged();
+    private void DescriptionBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        // Its own right-click menu (Paste, say) isn't leaving the box.
+        if (e.NewFocus is DependencyObject d && InContextMenu(d)) return;
+        SaveIfChanged();
+    }
+
+    private static bool InContextMenu(DependencyObject d)
+    {
+        for (DependencyObject? p = d; p is not null; p = LogicalTreeHelper.GetParent(p) ?? (p as FrameworkElement)?.TemplatedParent)
+            if (p is ContextMenu) return true;
+        return false;
+    }
 
     private void DescribeAgain_Click(object sender, RoutedEventArgs e)
     {
@@ -151,10 +193,10 @@ public partial class DescriptionPanel : UserControl
         DescribeAgain?.Invoke();
     }
 
-    private async void UseAsCaption_Click(object sender, RoutedEventArgs e)
+    private void UseAsCaption_Click(object sender, RoutedEventArgs e)
     {
         SaveIfChanged();
-        if (_row is { } row && UseAsCaption is { } use) await use(row);
+        if (_row is { } row) UseAsCaption?.Invoke(row);
     }
 
     private void Copy_Click(object sender, RoutedEventArgs e)
@@ -177,5 +219,9 @@ public partial class DescriptionPanel : UserControl
         }
     }
 
-    private void EditCaption_Click(object sender, RoutedEventArgs e) => EditCaption?.Invoke();
+    private void EditCaption_Click(object sender, RoutedEventArgs e)
+    {
+        SaveIfChanged();
+        if (_row is { } row && sender is Button button) EditCaption?.Invoke(row, () => button.Focus());
+    }
 }

@@ -127,6 +127,87 @@ public sealed class DescriptionPanelTests : IDisposable
     }
 
     [WpfFact]
+    public async Task Typing_SurvivesAResort_AndAReload_WithoutBeingSaved()
+    {
+        var (model, window) = await StartAsync();
+        try
+        {
+            var panel = window.DescriptionPanel;
+            model.SelectedRows = [model.Rows.Single(r => r.Name == "a.jpg")];
+            var a = model.FocusedRow!;
+            model.Descriptions!.Put(a.Item!, "accessible", "Made by Windows.");
+            Assert.True(panel.DescriptionBox.Focus());
+            panel.DescriptionBox.Text = "Half typed corr";
+            _announced.Clear();
+
+            model.SortBy("name");
+            Assert.Equal("Half typed corr", panel.DescriptionBox.Text);
+            Assert.Equal("Made by Windows.", model.Descriptions.Get(a.Item!, "accessible"));
+
+            await model.RescanAsync();
+            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+            Assert.Equal("Half typed corr", panel.DescriptionBox.Text);
+            Assert.Equal("Made by Windows.", model.Descriptions.Get(a.Item!, "accessible"));
+            Assert.False(model.Descriptions.IsEdited(a.Item!, "accessible"));
+            Assert.DoesNotContain("Description saved", _announced);
+            Assert.Equal("a.jpg", panel.Row!.Name);
+
+            // The box says which photo and where its description stands.
+            Assert.StartsWith("a.jpg. Saved description.", System.Windows.Automation.AutomationProperties.GetHelpText(panel.DescriptionBox));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [WpfFact]
+    public async Task APlainLetterNothingUsed_IsDropped_SoItCantPressThePanelsButtons()
+    {
+        var (model, window) = await StartAsync();
+        try
+        {
+            model.SelectedRows = [model.Rows.Single(r => r.Name == "a.jpg")];
+            AppCommands.AsGallery.Execute(null, window);
+            // WPF presses a button by its access key on a plain letter that nothing handled ("c" would run Use as Caption
+            // from the gallery). The window marks such a letter handled, so access keys never see it.
+            var composition = new System.Windows.Input.TextComposition(System.Windows.Input.InputManager.Current, window.GalleryImage, "c");
+            var typed = new System.Windows.Input.TextCompositionEventArgs(System.Windows.Input.Keyboard.PrimaryDevice, composition)
+                { RoutedEvent = System.Windows.Input.TextCompositionManager.TextInputEvent };
+            window.GalleryImage.RaiseEvent(typed);
+            Assert.True(typed.Handled);
+
+            // Typing in the description box still types.
+            window.DescriptionPanel.DescriptionBox.Text = "";
+            Assert.True(window.DescriptionPanel.DescriptionBox.Focus());
+            var inBox = new System.Windows.Input.TextComposition(System.Windows.Input.InputManager.Current, window.DescriptionPanel.DescriptionBox, "x");
+            System.Windows.Input.TextCompositionManager.StartComposition(inBox);
+            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+            Assert.Equal("x", window.DescriptionPanel.DescriptionBox.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [WpfFact]
+    public async Task AnAgreedDescribeAgain_KeepsACorrectionTypedAfterAgreeing()
+    {
+        var file = _lib.PathOf(@"data\Descriptions.json");
+        var store = new DescriptionStore(file);
+        var a = ItemFor(_lib.PathOf("a.jpg"));
+        store.Put(a, "accessible", "First correction.", edited: true);
+        // Agreed to replace "First correction.", then corrected again before Windows answered.
+        store.Put(a, "accessible", "Second correction.", edited: true);
+        Assert.False(store.PutIfUnchanged(a, "accessible", "First correction.", "Windows, asked again."));
+        Assert.Equal("Second correction.", store.Get(a, "accessible"));
+        Assert.True(store.PutIfUnchanged(a, "accessible", "Second correction.", "Windows, asked again."));
+        Assert.Equal("Windows, asked again.", store.Get(a, "accessible"));
+        await Task.CompletedTask;
+    }
+
+    [WpfFact]
     public async Task TheDescriptionColumn_ShowsSavedDescriptions_AndIsReadWithTheRow()
     {
         var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));

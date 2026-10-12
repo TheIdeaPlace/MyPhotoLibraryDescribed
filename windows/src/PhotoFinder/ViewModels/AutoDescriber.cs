@@ -134,16 +134,17 @@ public sealed class AutoDescriber : IDisposable
     /// With <paramref name="again"/> (Photo > Describe Again, Ctrl+Alt+Shift+D), a saved description isn't used: the
     /// photo is described afresh and the new description replaces it, for one that's poor or from another prompt.
     /// </summary>
-    /// <param name="replaceEdited">Describe Again on a description the person corrected, after they agreed to replace it.
-    /// Otherwise a correction made meanwhile is kept and the new description dropped.</param>
-    public Task DescribeNowAsync(FileRow row, Func<bool> stillOn, bool again = false, bool replaceEdited = false)
+    /// <param name="replacing">Describe Again on a description the person corrected, after they agreed to replace it: the
+    /// correction they agreed to replace. A newer correction typed meanwhile is still kept. Otherwise any correction made
+    /// meanwhile is kept and the new description dropped.</param>
+    public Task DescribeNowAsync(FileRow row, Func<bool> stillOn, bool again = false, string? replacing = null)
     {
         if (row.Item is { } item && _manualRuns.TryGetValue(item.Path, out var running) && !running.IsCompleted)
         {
             Announcer.Announce($"Still describing {item.Name}");
             return running;
         }
-        var task = DescribeNowCoreAsync(row, stillOn, again, replaceEdited);
+        var task = DescribeNowCoreAsync(row, stillOn, again, replacing);
         if (row.Item is { } described && !task.IsCompleted)
         {
             _manualRuns[described.Path] = task;
@@ -159,7 +160,7 @@ public sealed class AutoDescriber : IDisposable
         return task;
     }
 
-    private async Task DescribeNowCoreAsync(FileRow row, Func<bool> stillOn, bool again, bool replaceEdited)
+    private async Task DescribeNowCoreAsync(FileRow row, Func<bool> stillOn, bool again, string? replacing)
     {
         if (row.Item is not { } item)
         {
@@ -217,8 +218,8 @@ public sealed class AutoDescriber : IDisposable
                 if (stillOn()) Announcer.Announce("Windows returned an empty description.");
                 return;
             }
-            if (replaceEdited) _store.Put(item, kind, text);
-            else if (!_store.PutUnlessEdited(item, kind, text)) return;  // corrected in the Description panel meanwhile: kept
+            var kept = replacing is null ? _store.PutUnlessEdited(item, kind, text) : _store.PutIfUnchanged(item, kind, replacing, text);
+            if (!kept) return;  // corrected in the Description panel meanwhile: kept
             row.Description = text;
             if (!stillOn()) return;
             Announcer.Announce(text);

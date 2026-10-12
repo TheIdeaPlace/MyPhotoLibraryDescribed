@@ -611,7 +611,8 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>The Description panel's box: the person's own description or correction replaces the saved one, marked as
     /// edited so nothing replaces it without asking. An emptied box keeps the saved description.</summary>
-    public void SaveEditedDescription(FileRow row, string text)
+    /// <param name="kind">The Description Type the text was shown as; otherwise the one in use.</param>
+    public void SaveEditedDescription(FileRow row, string text, string? kind = null)
     {
         if (row.Item is not { IsVideo: false } item || Descriptions is not { } store) return;
         var trimmed = text.Trim();
@@ -620,10 +621,10 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             Announcer.Announce("A description can't be empty. The saved one is kept.");
             return;
         }
-        var kind = _settings.DescriptionKind;
+        kind ??= _settings.DescriptionKind;
         if (trimmed == store.Get(item, kind)) return;
         store.Put(item, kind, trimmed, edited: true);
-        row.Description = trimmed;
+        if (kind == _settings.DescriptionKind) row.Description = trimmed;
         Announcer.Announce("Description saved");
     }
 
@@ -636,8 +637,8 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>The photo's saved description of the type being used, or null.</summary>
-    public string? SavedDescription(FileRow row) =>
-        row.Item is { IsVideo: false } item ? Descriptions?.Get(item, _settings.DescriptionKind) : null;
+    public string? SavedDescription(FileRow row, string? kind = null) =>
+        row.Item is { IsVideo: false } item ? Descriptions?.Get(item, kind ?? _settings.DescriptionKind) : null;
 
     // MARK: Descriptions as captions (#30)
 

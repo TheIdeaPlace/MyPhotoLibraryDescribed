@@ -29,9 +29,9 @@
                     <Button Content="Edit Cap_tion…" HorizontalAlignment="Left" Padding="8,2" Click="EditCaption_Click" />
                 </StackPanel>
                 <!-- Enter saves; Shift+Enter starts a new line. -->
-                <TextBox x:Name="DescriptionBox" TextWrapping="Wrap" AcceptsReturn="False" VerticalScrollBarVisibility="Auto"
+                <TextBox x:Name="DescriptionBox" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
                          MinHeight="80" PreviewKeyDown="DescriptionBox_PreviewKeyDown" LostKeyboardFocus="DescriptionBox_LostKeyboardFocus"
-                         AutomationProperties.HelpText="Edit to correct the description. Enter saves it." />
+                         AutomationProperties.HelpText="Enter saves a correction; Shift+Enter starts a new line." />
             </DockPanel>
             <!-- Nothing to describe. Focusable, so F6 can land here and move on rather than skip or stick. -->
             <TextBlock x:Name="NothingText" Focusable="True" TextWrapping="Wrap" Visibility="Collapsed"

@@ -645,7 +645,7 @@ public sealed class AutoDescriberTests : IDisposable
             Assert.Equal("My correction.", store.Get(row.Item!, "accessible"));
             Assert.DoesNotContain("Windows' first try.", _announced);
 
-            await auto.DescribeNowAsync(row, () => true, again: true, replaceEdited: true);
+            await auto.DescribeNowAsync(row, () => true, again: true, replacing: "My correction.");
             Assert.Equal("Windows, asked again.", store.Get(row.Item!, "accessible"));
             Assert.False(store.IsEdited(row.Item!, "accessible"));
         }

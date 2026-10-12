@@ -69,6 +69,15 @@ public sealed class DescriptionStore
         return true;
     }
 
+    /// <summary>Describe Again on a correction, agreed to when the saved description was <paramref name="expected"/>: the
+    /// new description replaces it only if nobody has corrected it again since. Returns whether it was saved.</summary>
+    public bool PutIfUnchanged(MediaItem item, string kind, string expected, string text)
+    {
+        if (Get(item, kind) != expected && IsEdited(item, kind)) return false;
+        Put(item, kind, text);
+        return true;
+    }
+
     public bool IsEdited(MediaItem item, string kind)
     {
         lock (_lock) return Edited.Contains(Key(item, kind));
