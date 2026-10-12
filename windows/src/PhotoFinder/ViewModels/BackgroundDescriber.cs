@@ -104,9 +104,8 @@ public sealed class BackgroundDescriber : IDisposable
         _announceLibrary = false;
         // A new run: the photo still being described belongs to the old one, so it isn't counted again.
         _run++;
-        _total = 0;
-        _done = 0;
-        if (!IsRunning) Finish();
+        // The status bar clears now, even while the photo already being described finishes.
+        Finish();
         return left;
     }
 
@@ -230,7 +229,7 @@ public sealed class BackgroundDescriber : IDisposable
             var fromLibrary = _queue.Count - rest.Count;
             _queue.Clear();
             foreach (var q in rest) _queue.Enqueue(q);
-            if (_perFolder.ContainsKey(LibraryKey)) _perFolder[LibraryKey] -= fromLibrary;
+            if (_perFolder.ContainsKey(LibraryKey) && (_perFolder[LibraryKey] -= fromLibrary) <= 0) _perFolder.Remove(LibraryKey);
             _total -= fromLibrary;
         }
         foreach (var path in todo.Where(p => !_front.Any(f => string.Equals(f.Path, p, StringComparison.OrdinalIgnoreCase))))
@@ -248,10 +247,12 @@ public sealed class BackgroundDescriber : IDisposable
     private async Task RunAsync()
     {
         var failedInARow = 0;
+        var lastRun = _run;
         while (_front.Count + _queue.Count > 0 && !_closing.IsCancellationRequested)
         {
             // Arrowing comes first: wait while automatic descriptions are describing or about to. And not on energy saver.
-            while ((ForegroundBusy() || !MayRun()) && !_closing.IsCancellationRequested)
+            // Stop empties the queues, which ends the wait.
+            while ((ForegroundBusy() || !MayRun()) && _front.Count + _queue.Count > 0 && !_closing.IsCancellationRequested)
             {
                 if (!MayRun()) _model.BackgroundProgress = "Background describing paused on energy saver";
                 try { await Task.Delay(250, _closing.Token); }
@@ -259,6 +260,8 @@ public sealed class BackgroundDescriber : IDisposable
             }
             if (_front.Count + _queue.Count == 0) break;
             var (path, folder, run) = _front.Count > 0 ? _front.Dequeue() : _queue.Dequeue();
+            // A new run (after Stop, or turning it off and on) counts failures afresh.
+            if (run != lastRun) (failedInARow, lastRun) = (0, run);
             _queued.Remove(path);
             ShowProgress();
             // Looked up now, not when queued: the folder may have been removed, or the photo edited.
@@ -282,7 +285,7 @@ public sealed class BackgroundDescriber : IDisposable
                     // One photo that can't be described (filtered, unreadable, timed out) doesn't stop the rest, but many
                     // in a row means something's wrong with every photo: stop and say what, once.
                     _failed.Add(FailureKey(item));
-                    if (++failedInARow >= FailuresInARow && run == _run)
+                    if (run == _run && ++failedInARow >= FailuresInARow)
                     {
                         var left = StopQueue();
                         Announcer.AnnounceAfter(
@@ -302,14 +305,15 @@ public sealed class BackgroundDescriber : IDisposable
             if (_perFolder.ContainsKey(folder) && --_perFolder[folder] == 0)
             {
                 _perFolder.Remove(folder);
-                if (folder == LibraryKey)
-                {
-                    // The whole library: said when the person started it, otherwise the status bar just clears.
-                    if (_announceLibrary) Announcer.AnnounceAfter("Finished describing the library's photos", "PhotoFinderBackground");
-                    _announceLibrary = false;
-                }
-                else if (_model.Roots.Any(r => r.Equals(folder, StringComparison.OrdinalIgnoreCase) || LibraryScanner.IsInside(folder, r)))
+                if (folder != LibraryKey && _model.Roots.Any(r => r.Equals(folder, StringComparison.OrdinalIgnoreCase) || LibraryScanner.IsInside(folder, r)))
                     Announcer.AnnounceAfter($"Finished describing the photos in {DisplayName(folder)}", "PhotoFinderBackground");
+            }
+            // The whole library: said when the person started it, once none of it is left, including photos moved ahead
+            // for a folder added meanwhile. Otherwise the status bar just clears.
+            if (_announceLibrary && !_perFolder.ContainsKey(LibraryKey) && _front.Count == 0)
+            {
+                Announcer.AnnounceAfter("Finished describing the library's photos", "PhotoFinderBackground");
+                _announceLibrary = false;
             }
         }
         Finish();

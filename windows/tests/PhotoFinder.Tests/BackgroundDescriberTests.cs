@@ -420,11 +420,13 @@ public sealed class BackgroundDescriberTests : IDisposable
             Assert.Equal(BackgroundDescriber.FailuresInARow, _described.Count);
             Assert.Single(_announced, s => s.StartsWith("Background describing stopped:") && s.Contains("The picture couldn't be read."));
             Assert.Null(model.BackgroundProgress);
-            // The ones that failed aren't tried again this session.
+            // The ones that failed aren't tried again this session: the next run starts with the photos not tried.
+            var tried = _described.ToList();
             _described.Clear();
             await background.DescribeLibraryAsync();
             await background.WhenIdleAsync();
-            Assert.DoesNotContain(_described, n => _described.Count(m => m == n) > 1);
+            Assert.NotEmpty(_described);
+            Assert.Empty(_described.Intersect(tried));
         }
     }
 
@@ -461,6 +463,45 @@ public sealed class BackgroundDescriberTests : IDisposable
             background.Enabled = true;
             await background.WhenIdleAsync();
             Assert.Equal(["newer.jpg", "home.jpg", "older.jpg"], _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task StopWhilePausedOnEnergySaver_ClearsTheStatusBar_AndEndsTheRun()
+    {
+        var (model, background, _) = await StartAsync(enabled: false);
+        using (model) using (background)
+        {
+            background.MayRun = () => false;
+            background.Enabled = true;
+            await WaitUntil(() => model.BackgroundProgress == "Background describing paused on energy saver");
+            background.Stop();
+            await background.WhenIdleAsync();
+            Assert.Null(model.BackgroundProgress);
+            Assert.False(background.IsRunning);
+            Assert.Empty(_described);
+        }
+    }
+
+    [WpfFact]
+    public async Task AddingAFolderThatsAllInTheLibrarysBacklog_StillSaysTheLibraryIsFinished()
+    {
+        var (model, background, store) = await StartAsync(enabled: false);
+        using (model) using (background)
+        {
+            store.Put(model.AllItems.Single(i => i.Name == "home.jpg"), "accessible", "Done.");
+            var inside = _lib.AddJpeg(@"Trip\x.jpg");
+            _lib.AddJpeg(@"Trip\y.jpg");
+            await model.RescanAsync();
+            background.MayRun = () => false;
+            background.Enabled = true;
+            await WaitUntil(() => model.BackgroundProgress is not null);
+            // The folder is inside the library, so its photos move ahead of the backlog: the whole backlog.
+            await model.AddFolderAsync(Path.GetDirectoryName(inside)!);
+            background.MayRun = () => true;
+            await background.WhenIdleAsync();
+            Assert.Equal(["x.jpg", "y.jpg"], _described.Order());
+            Assert.Single(_announced, s => s == "Finished describing the library's photos");
         }
     }
 }
