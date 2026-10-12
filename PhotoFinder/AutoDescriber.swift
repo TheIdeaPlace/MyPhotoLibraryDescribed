@@ -37,7 +37,10 @@ final class AutoDescriber {
     /// The photo to describe once the current one is done.
     private var target: String?
     private var wait: Task<Void, Never>?
+    private var runTask: Task<Void, Never>?
     private var running = false
+    /// The photo whose description was last spoken, so coming back to the list doesn't say it again.
+    private var spokenID: String?
 
     init(isEnabled: Bool, pause: Duration = .milliseconds(700)) {
         self.isEnabled = isEnabled
@@ -53,6 +56,7 @@ final class AutoDescriber {
         wait = Task { [weak self, pause] in
             try? await Task.sleep(for: pause)
             guard !Task.isCancelled else { return }
+            self?.wait = nil
             self?.settled(on: id)
         }
     }
@@ -64,32 +68,72 @@ final class AutoDescriber {
             speak(reason)
             return
         }
+        speak("Photos are described automatically")
         lastID = nil
         moved(to: currentID)
+    }
+
+    /// Back on the list or gallery after Get Info, a sheet or another app: the photo you're on is described if
+    /// it wasn't spoken already (you may have left during the pause). Windows' Refocused.
+    func refocused(currentID: String?) {
+        guard let currentID, currentID != spokenID else { return }
+        lastID = nil
+        moved(to: currentID)
+    }
+
+    /// Describe Photo is about to describe this photo itself: drop it from the pause and the queue, so it isn't
+    /// described and spoken twice.
+    func describingManually(_ id: String) {
+        if lastID == id { cancelWait() }
+        if target == id { target = nil }
     }
 
     private func settled(on id: String) {
         guard isEnabled, isStillOn(id) else { return }
         if let text = saved(id) {
-            speak(text)
+            say(text, about: id)
             return
         }
         guard unavailableReason() == nil, id != describingID else { return }
         target = id
-        if !running { Task { await run() } }
+        if !running {
+            // Marked before the task starts, so a second photo settling meanwhile can't start a second loop.
+            running = true
+            runTask = Task { await run() }
+        }
     }
 
     private func run() async {
-        running = true
-        defer { running = false }
+        defer { running = false; runTask = nil }
         while let id = target {
             target = nil
             // Moved on while the last one was being described: nothing to do until you settle again.
             guard isEnabled, isStillOn(id) else { continue }
+            // Described meanwhile (by Describe Photo, say): just say it.
+            if let text = saved(id) {
+                say(text, about: id)
+                continue
+            }
             describingID = id
             let text = await describe(id)
             describingID = nil
-            if let text, isEnabled, isStillOn(id) { speak(text) }
+            if let text, isEnabled, isStillOn(id) { say(text, about: id) }
+        }
+    }
+
+    private func say(_ text: String, about id: String) {
+        spokenID = id
+        speak(text)
+    }
+
+    /// For tests: waits until nothing is pausing or being described.
+    func whenIdle() async {
+        for _ in 0..<500 {
+            if wait == nil, runTask == nil, !running { return }
+            await wait?.value
+            await runTask?.value
+            if wait == nil, runTask == nil, !running { return }
+            try? await Task.sleep(for: .milliseconds(5))
         }
     }
 

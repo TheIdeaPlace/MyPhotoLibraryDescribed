@@ -51,8 +51,12 @@ final class LibraryModel {
     private(set) var nameProgress: String?
     var previewURL: URL?
     private(set) var previewURLs: [URL] = []
-    var infoTarget: InfoTarget?
-    var captionTarget: CaptionTarget?
+    var infoTarget: InfoTarget? {
+        didSet { if infoTarget == nil, oldValue != nil { autoDescriber.refocused(currentID: autoDescribeCandidate) } }
+    }
+    var captionTarget: CaptionTarget? {
+        didSet { if captionTarget == nil, oldValue != nil { autoDescriber.refocused(currentID: autoDescribeCandidate) } }
+    }
     var viewMode: ViewMode = .list {
         didSet {
             UserDefaults.standard.set(viewMode.rawValue, forKey: "viewMode")
@@ -63,7 +67,9 @@ final class LibraryModel {
     var columnOrder: [String] = ColumnOrder.defaultOrder {
         didSet { UserDefaults.standard.set(columnOrder, forKey: "columnOrder") }
     }
-    var columnsSheetShown = false
+    var columnsSheetShown = false {
+        didSet { if !columnsSheetShown, oldValue { autoDescriber.refocused(currentID: autoDescribeCandidate) } }
+    }
     /// What describing new photos in the background is doing, shown in the status bar.
     var backgroundProgress: String?
     var errorMessage: String?
@@ -88,6 +94,7 @@ final class LibraryModel {
     /// Describe Photo in progress; a newer one replaces it.
     @ObservationIgnored private var describeTask: Task<Void, Never>?
     @ObservationIgnored private var terminationObserver: NSObjectProtocol?
+    @ObservationIgnored private var activationObserver: NSObjectProtocol?
     /// Photo > Describe Photos Automatically; on unless turned off.
     var describeAutomatically: Bool = UserDefaults.standard.object(forKey: "describeAutomatically") as? Bool ?? true {
         didSet { UserDefaults.standard.set(describeAutomatically, forKey: "describeAutomatically") }
@@ -123,6 +130,14 @@ final class LibraryModel {
         let cache = descriptions
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in cache.save() }
+        // Back from another app: the photo you're on is described if you left during the pause.
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.autoDescriber.refocused(currentID: self.autoDescribeCandidate)
+            }
+        }
     }
 
     // MARK: - Describe Photos Automatically
@@ -138,10 +153,12 @@ final class LibraryModel {
         }
     }
 
-    /// The photo automatic describing is about: the one photo selected. Nothing for folders, videos or several items.
+    /// The photo automatic describing is about: the one photo selected and shown. Nothing for folders, videos,
+    /// several items, or a photo hidden by Search.
     private var autoDescribeCandidate: String? {
-        guard selection.count == 1, let id = selection.first, let row = rows.first(where: { $0.id == id }),
-              !row.isContainer, assetsByID[id]?.mediaType == .image else { return nil }
+        guard selection.count == 1, let id = selection.first, assetsByID[id]?.mediaType == .image,
+              let row = (searchText.isEmpty ? rows : visibleRows).first(where: { $0.id == id }), !row.isContainer
+        else { return nil }
         return id
     }
 
@@ -154,7 +171,8 @@ final class LibraryModel {
         describer.unavailableReason = { [weak self] in self?.describeUnavailableReason }
         describer.describe = { [weak self] id in
             guard let self, let asset = self.assetsByID[id] else { return nil }
-            return await self.describeAndRemember(asset)
+            // Not downloaded from iCloud just because you arrowed past it, as on Windows; Describe Photo does.
+            return await self.describeAndRemember(asset, allowNetwork: false)
         }
         describer.isStillOn = { [weak self] id in
             // Not while another app, Get Info or a sheet is in front: you've moved on from the photo for now.
@@ -831,11 +849,12 @@ final class LibraryModel {
             announce("Describing \(row.name)")
             return
         }
+        autoDescriber.describingManually(row.id)
         describeTask?.cancel()
         announce("Describing \(row.name)")
         let id = row.id
         describeTask = Task { [weak self] in
-            guard let text = await self?.describeAndRemember(asset) else { return }
+            guard let text = await self?.describeAndRemember(asset, allowNetwork: true) else { return }
             self?.say(text, ifStillOn: id)
         }
     }
@@ -849,18 +868,21 @@ final class LibraryModel {
     }
 
     /// Describes the photo with Apple Intelligence and saves the description. Returns what to say: the description,
-    /// or why there isn't one. Downloads the photo from iCloud if need be, since you're on it.
-    private func describeAndRemember(_ asset: PHAsset) async -> String {
+    /// or why there isn't one. Nil, saying nothing, when the photo is only in iCloud and `allowNetwork` is false,
+    /// or when a newer request replaced this one.
+    private func describeAndRemember(_ asset: PHAsset, allowNetwork: Bool) async -> String? {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
             let box = UncheckedBox(value: asset)
-            guard let data = await PhotoData.request(box.value, allowNetwork: true)?.data else {
-                return "This photo couldn't be loaded"
+            guard let data = await PhotoData.request(box.value, allowNetwork: allowNetwork)?.data else {
+                return allowNetwork ? "This photo couldn't be loaded" : nil
             }
             do {
                 guard let text = try await PhotoDescriber.describe(data), !text.isEmpty else {
                     return "Apple Intelligence returned an empty description"
                 }
+                // A newer Describe Photo replaced this one: its description is the one to keep.
+                guard !Task.isCancelled else { return nil }
                 descriptions.remember(text, for: box.value)
                 return text
             } catch {
