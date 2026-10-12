@@ -31,12 +31,11 @@ struct DescriptionPanel: View {
                     .focused(pane, equals: .description)
                     .onSubmit { save(row.id) }
                     .accessibilityHint("Edit to correct the description. Return saves it.")
-                HStack {
-                    Button("Describe Again") { model.describeFocusedPhotoAgain() }
-                    Button("Use as Caption") { model.useDescriptionAsCaption([row.id]) }
-                        .disabled(model.savedDescription(for: row.id) == nil)
-                    Button("Copy") { model.copyDescription(for: row.id) }
-                        .disabled(model.savedDescription(for: row.id) == nil)
+                // In a row when the panel is wide enough for their whole names, otherwise one under another: at the
+                // panel's usual width a row cut them to "Describ…" and "Use as…" (#35).
+                ViewThatFits(in: .horizontal) {
+                    HStack { actions(for: row.id) }
+                    VStack(alignment: .leading) { actions(for: row.id) }
                 }
                 .controlSize(.small)
                 Divider()
@@ -94,6 +93,17 @@ struct DescriptionPanel: View {
         .onDisappear {
             if let draftID { save(draftID) }
         }
+    }
+
+    @ViewBuilder private func actions(for id: String) -> some View {
+        Button("Describe Again") { model.describeFocusedPhotoAgain() }
+            .fixedSize()
+        Button("Use as Caption") { model.useDescriptionAsCaption([id]) }
+            .disabled(model.savedDescription(for: id) == nil)
+            .fixedSize()
+        Button("Copy") { model.copyDescription(for: id) }
+            .disabled(model.savedDescription(for: id) == nil)
+            .fixedSize()
     }
 
     private func load() {
