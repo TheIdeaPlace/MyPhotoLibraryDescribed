@@ -40,11 +40,41 @@ public static class MetadataReader
         "System.ApplicationName", "System.Comment", "System.Subject", "System.Author", "System.Video.FrameRate",
     ];
 
-    public static async Task<MediaMetadata> ReadAsync(string path)
+    /// <param name="forWriting">Throw when the caption and accessibility fields can't be read (the file locked a moment),
+    /// rather than reading them as empty: deciding what to write from that would replace what's there.</param>
+    public static async Task<MediaMetadata> ReadAsync(string path, bool forWriting = false)
     {
         var file = await StorageFile.GetFileFromPathAsync(path);
         var props = await file.Properties.RetrievePropertiesAsync(ListKeys);
-        return FromProperties(props);
+        var metadata = FromProperties(props);
+        if (!XmpFields.CanWrite(path)) return metadata with { Version = MediaMetadata.CurrentVersion };
+        XmpFields.Fields xmp;
+        try
+        {
+            xmp = await XmpFields.ReadAsync(path);
+        }
+        catch (Exception) when (!forWriting)
+        {
+            // Not readable now: the Title is all there is, and it's read again next time (an older Version).
+            return metadata;
+        }
+        // The standard caption field first, then the Title, where older files (and Photo Finder before #62) keep it. A
+        // caption cleared in dc:description stays cleared, even when the Title holds something else.
+        return metadata with
+        {
+            Caption = xmp.HasCaption ? xmp.Caption : metadata.Caption,
+            AltText = xmp.AltText,
+            ExtendedDescription = xmp.ExtendedDescription,
+            Version = MediaMetadata.CurrentVersion,
+        };
+    }
+
+    /// <summary>The file's Title (System.Title) alone, to keep it in step with the caption.</summary>
+    public static async Task<string> ReadTitleAsync(string path)
+    {
+        var file = await StorageFile.GetFileFromPathAsync(path);
+        var props = await file.Properties.RetrievePropertiesAsync([Title]);
+        return (Get(props, Title) as string)?.Trim() ?? "";
     }
 
     /// <summary>Builds metadata from raw property values. Separate from reading so it's tested without files.</summary>

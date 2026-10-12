@@ -1,0 +1,432 @@
+using PhotoFinder.Services;
+
+namespace PhotoFinder.Tests;
+
+/// <summary>Captions and accessibility fields in files (#31, #62), matching the Mac's FileMetadataWriter.</summary>
+[Collection(SharedState.Name)]
+public sealed class FileFieldsTests : IDisposable
+{
+    private readonly TestLibrary _lib = new();
+
+    public void Dispose() => _lib.Dispose();
+
+    [Fact]
+    public void AltText_IsTheDescription_OrTheSentencesThatFitIn250()
+    {
+        Assert.Equal("A dog on a beach.", FileFields.AltText("  A dog on a beach.  "));
+        Assert.Null(FileFields.ExtendedDescription("A dog on a beach."));
+
+        var first = "A golden retriever runs along a sandy beach at sunset with a red ball in its mouth. ";
+        var second = "Waves break behind it and two people walk in the distance near the dunes. ";
+        var third = "The sky is orange and pink, and the low sun makes long shadows across the wet sand near the water's edge.";
+        var long3 = first + second + third;
+        Assert.True(long3.Length > 250);
+        var alt = FileFields.AltText(long3);
+        Assert.Equal((first + second).Trim(), alt);
+        Assert.Equal(long3.Trim(), FileFields.ExtendedDescription(long3));
+
+        // One sentence too long: whole words, then "…", with no comma left before it.
+        var words = string.Join(", ", Enumerable.Repeat("a dog on a beach", 30));
+        var cut = FileFields.AltText(words);
+        Assert.True(cut.Length <= 250);
+        Assert.EndsWith("…", cut);
+        Assert.DoesNotContain(",…", cut);
+
+        // Never half an emoji, and any whitespace is a word break.
+        var emoji = string.Concat(Enumerable.Repeat("🐕", 200));
+        var cutEmoji = FileFields.AltText(emoji);
+        Assert.False(char.IsHighSurrogate(cutEmoji[^2]), "A character was split.");
+        var tabs = string.Join("\t", Enumerable.Repeat("dog", 100));
+        Assert.EndsWith("dog…", FileFields.AltText(tabs));
+
+        // Full-width sentence ends, with no space after them.
+        var cjk = string.Concat(Enumerable.Repeat("海辺を走る犬がいます。", 30));
+        var cjkAlt = FileFields.AltText(cjk);
+        Assert.EndsWith("。", cjkAlt);
+        Assert.True(cjkAlt.Length <= 250);
+    }
+
+    [Fact]
+    public void Replaced_ListsWhatsAlreadyThere_ButNotEmptyOrMatchingFields()
+    {
+        Assert.Empty(FileFields.Replaced("", "", "", "A dog."));
+        Assert.Empty(FileFields.Replaced("A dog.", "A dog.", "", "A dog."));
+        Assert.Equal([("caption", "Mine")], FileFields.Replaced("Mine", "", "", "A dog."));
+        Assert.Equal([("caption", "Mine"), ("alt text", "Other app")], FileFields.Replaced("Mine", "Other app", "", "A dog."));
+        // Another app's extended description would be cleared (or replaced): that's asked about too.
+        Assert.Equal([("extended description", "A long one from IDT.")], FileFields.Replaced("", "", "A long one from IDT.", "A dog."));
+    }
+
+    [Fact]
+    public void ExplorersTitle_FollowsTheCaption_OnlyWhenEmptyOrTheOldCaption()
+    {
+        Assert.True(FileFields.TitleKeepsInStep("", "Old"));
+        Assert.True(FileFields.TitleKeepsInStep("Old", "Old"));
+        Assert.False(FileFields.TitleKeepsInStep("A title someone wrote", "Old"));
+    }
+
+    private static byte[] Scan(byte[] b)
+    {
+        for (var i = 2; i < b.Length - 1; i++) if (b[i] == 0xFF && b[i + 1] == 0xDA) return b[i..];
+        return [];
+    }
+
+    [Fact]
+    public async Task AJpegWithRoom_GetsTheFieldsInPlace_KeepingItsPictureDateTitleAndRating()
+    {
+        var path = _lib.AddJpeg("a.jpg", new TestLibrary.JpegOptions { Title = "My title", Rating = 4, DateTaken = new DateTime(2022, 6, 1, 10, 0, 0) });
+        var before = await MetadataReader.ReadAsync(path);
+        var scan = Scan(File.ReadAllBytes(path));
+        var modified = File.GetLastWriteTimeUtc(path);
+
+        await XmpFields.WriteAsync(path, "A dog on a beach.", "A dog.", "");
+        var fields = await XmpFields.ReadAsync(path);
+        Assert.Equal(new XmpFields.Fields("A dog on a beach.", "A dog.", "", HasCaption: true), fields);
+        Assert.True(scan.AsSpan().SequenceEqual(Scan(File.ReadAllBytes(path))), "The picture changed.");
+        Assert.Equal(modified, File.GetLastWriteTimeUtc(path));
+        var after = await MetadataReader.ReadAsync(path);
+        Assert.Equal(before.DateTaken, after.DateTaken);
+        Assert.Equal(before.Rating, after.Rating);
+        Assert.Equal("My title", await MetadataReader.ReadTitleAsync(path));
+        // The standard caption is read first, ahead of the Title.
+        Assert.Equal("A dog on a beach.", after.Caption);
+        Assert.Equal("A dog.", after.AltText);
+
+        // Cleared: it stays cleared, rather than the Title someone wrote taking its place.
+        await XmpFields.WriteAsync(path, "", null, null);
+        Assert.Equal("", (await XmpFields.ReadAsync(path)).Caption);
+        Assert.Equal("", (await MetadataReader.ReadAsync(path)).Caption);
+        Assert.Equal("My title", await MetadataReader.ReadTitleAsync(path));
+    }
+
+    /// <summary>The JPEG without its APP segments (EXIF, XMP and their padding), so there's no room for the fields.</summary>
+    private static byte[] WithoutRoom(byte[] b)
+    {
+        var output = new List<byte> { 0xFF, 0xD8 };
+        var i = 2;
+        while (b[i] == 0xFF && b[i + 1] is >= 0xE1 and <= 0xEF)
+            i += 2 + ((b[i + 2] << 8) | b[i + 3]);
+        output.AddRange(b[i..]);
+        return output.ToArray();
+    }
+
+    private static async Task<byte[]> PixelsAsync(string path)
+    {
+        var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
+        using var stream = await file.OpenAsync(Windows.Storage.FileAccessMode.Read);
+        var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
+        var pixels = await decoder.GetPixelDataAsync();
+        return pixels.DetachPixelData();
+    }
+
+    [Fact]
+    public async Task AJpegWithoutRoom_IsRewrittenBesideItAndSwappedIn_WithTheSamePixelsAndDate()
+    {
+        var path = _lib.AddJpeg("tight.jpg");
+        File.WriteAllBytes(path, WithoutRoom(File.ReadAllBytes(path)));
+        File.SetLastWriteTimeUtc(path, new DateTime(2021, 3, 4, 5, 6, 7, DateTimeKind.Utc));
+        var size = new FileInfo(path).Length;
+        var pixels = await PixelsAsync(path);
+
+        await XmpFields.WriteAsync(path, "A dog.", "A dog.", "");
+        Assert.True(new FileInfo(path).Length > size, "It wasn't rewritten with room.");
+        Assert.Equal("A dog.", (await XmpFields.ReadAsync(path)).Caption);
+        Assert.Equal(pixels, await PixelsAsync(path));
+        Assert.Equal(new DateTime(2021, 3, 4, 5, 6, 7, DateTimeKind.Utc), File.GetLastWriteTimeUtc(path));
+        // Nothing left beside it.
+        Assert.Equal(["tight.jpg"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public async Task ATiff_GetsTheFields_KeepingItsPixels()
+    {
+        var path = _lib.PathOf("a.tif");
+        TestLibrary.RunSta(() =>
+        {
+            var bitmap = System.Windows.Media.Imaging.BitmapSource.Create(8, 6, 96, 96, System.Windows.Media.PixelFormats.Bgr24, null,
+                Enumerable.Range(0, 8 * 6 * 3).Select(i => (byte)i).ToArray(), 8 * 3);
+            var encoder = new System.Windows.Media.Imaging.TiffBitmapEncoder();
+            encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+            using var stream = File.Create(path);
+            encoder.Save(stream);
+        });
+        var pixels = await PixelsAsync(path);
+        await XmpFields.WriteAsync(path, "A gradient.", "A gradient.", "");
+        Assert.Equal("A gradient.", (await XmpFields.ReadAsync(path)).Caption);
+        Assert.Equal(pixels, await PixelsAsync(path));
+    }
+
+    [Fact]
+    public void AJpegHoldingASecondPicture_IsRecognised()
+    {
+        var plain = File.ReadAllBytes(_lib.AddJpeg("plain.jpg"));
+        Assert.False(XmpFields.HoldsSecondPicture(plain));
+        // Zeros after the end are only padding.
+        Assert.False(XmpFields.HoldsSecondPicture([.. plain, 0, 0, 0, 0]));
+        // A motion photo's video after the end.
+        Assert.True(XmpFields.HoldsSecondPicture([.. plain, .. "ftypmp42 video"u8.ToArray()]));
+        // A Multi-Picture Format index (Ultra HDR, MPO), even before the second picture is reached.
+        byte[] mpf = [0xFF, 0xE2, 0x00, 0x08, (byte)'M', (byte)'P', (byte)'F', 0x00, 0x49, 0x49];
+        Assert.True(XmpFields.HoldsSecondPicture([0xFF, 0xD8, .. mpf, .. plain[2..]]));
+        Assert.False(XmpFields.HoldsSecondPicture("not a jpeg"u8.ToArray()));
+        // Stray bytes where a marker should be are skipped, as decoders do, so a video after them is still found.
+        Assert.True(XmpFields.HoldsSecondPicture([0xFF, 0xD8, 0x12, 0x34, .. plain[2..], .. "ftypmp42"u8.ToArray()]));
+        // A segment whose length runs past the end can't be followed: treated as holding one, never rewritten on a guess.
+        Assert.True(XmpFields.HoldsSecondPicture([0xFF, 0xD8, 0xFF, 0xE1, 0x7F, 0xFF, 0x00]));
+    }
+
+    [Fact]
+    public async Task AMotionPhotoWithRoom_GetsItsCaptionAndRatingInPlace_KeepingItsVideo()
+    {
+        // Saved once by Photo Finder, which leaves room for changes, then the video added after it.
+        var path = _lib.AddJpeg("motion.jpg");
+        File.WriteAllBytes(path, WithoutRoom(File.ReadAllBytes(path)));
+        await XmpFields.WriteAsync(path, "First.", null, null);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        var video = "ftypmp42 the video part"u8.ToArray();
+        File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. video]);
+        var size = new FileInfo(path).Length;
+        var captioned = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
+        Assert.True(captioned.Succeeded == 1, captioned.FailureSummary);
+        var rated = await MetadataWriter.SetRatingAsync([ItemFor(path)], 5);
+        Assert.True(rated.Succeeded == 1, rated.FailureSummary);
+        var after = File.ReadAllBytes(path);
+        Assert.Equal(size, after.Length);
+        Assert.Equal(video, after[^video.Length..]);
+        Assert.Equal("A dog.", (await XmpFields.ReadAsync(path)).Caption);
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public async Task AMotionPhotoWithoutRoom_IsLeftExactlyAsItWas_WithAReason()
+    {
+        var path = _lib.AddJpeg("motion.jpg");
+        File.WriteAllBytes(path, [.. WithoutRoom(File.ReadAllBytes(path)), .. "ftypmp42 the video part"u8.ToArray()]);
+        var before = File.ReadAllBytes(path);
+        var caption = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
+        Assert.Equal(0, caption.Succeeded);
+        Assert.Contains("second picture", caption.FailureSummary);
+        Assert.Equal(before, File.ReadAllBytes(path));
+        // Windows' rating handler may rewrite it too: if it does, the photo is put back as it was.
+        var rating = await MetadataWriter.SetRatingAsync([ItemFor(path)], 5);
+        var after = File.ReadAllBytes(path);
+        Assert.Equal("ftypmp42 the video part"u8.ToArray(), after[^23..]);
+        if (rating.Succeeded == 0) Assert.Equal(before, after);
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    private string MotionPhoto(string name)
+    {
+        var path = _lib.AddJpeg(name);
+        File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. "ftypmp42 the video part"u8.ToArray()]);
+        return path;
+    }
+
+    [Fact]
+    public async Task AWriteThatLosesTheVideo_NeverTouchesThePhoto()
+    {
+        var path = MotionPhoto("motion.jpg");
+        var before = File.ReadAllBytes(path);
+        string? target = null;
+        await Assert.ThrowsAsync<SecondPictureException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, holds) =>
+        {
+            Assert.True(holds);
+            target = copy;
+            using (var f = new FileStream(copy, FileMode.Open))
+                f.SetLength(before.Length - 23);   // what a rewrite does: the video's gone
+            return Task.CompletedTask;
+        }));
+        Assert.NotEqual(path, target);
+        Assert.Equal(before, File.ReadAllBytes(path));
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public async Task AWriteThatDamagesThePictureAndFails_NeverTouchesThePhoto()
+    {
+        var path = MotionPhoto("motion.jpg");
+        var before = File.ReadAllBytes(path);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
+        {
+            using (var f = new FileStream(copy, FileMode.Open))
+            {
+                f.Position = 20;
+                f.Write(new byte[200]);
+            }
+            throw new InvalidOperationException("Failed partway.");
+        }));
+        Assert.Equal(before, File.ReadAllBytes(path));
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public async Task APhotoChangedWhileSaving_IsntReplacedWithTheOldCopy()
+    {
+        var path = MotionPhoto("motion.jpg");
+        await Assert.ThrowsAsync<IOException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
+        {
+            // OneDrive brings a newer version meanwhile.
+            File.AppendAllText(path, " newer");
+            return Task.CompletedTask;
+        }));
+        Assert.EndsWith(" newer", File.ReadAllText(path));
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public async Task AWriteThatDamagesTheCompressedPictureQuietly_IsCaught()
+    {
+        var path = MotionPhoto("motion.jpg");
+        var before = File.ReadAllBytes(path);
+        await Assert.ThrowsAsync<SecondPictureException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
+        {
+            using var f = new FileStream(copy, FileMode.Open);
+            f.Position = f.Length - 40;   // inside the picture's compressed data, same size
+            f.Write(new byte[] { 1, 2, 3, 4 });
+            return Task.CompletedTask;
+        }));
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public async Task APhotoChangedWhileWaitingToSwapIn_IsntReplacedWithTheOldCopy()
+    {
+        var path = MotionPhoto("motion.jpg");
+        Task? oneDrive = null;
+        await Assert.ThrowsAsync<IOException>(() => XmpFields.KeepingSecondPictureAsync(path, (copy, _) =>
+        {
+            // OneDrive has the photo open (so the swap waits), then writes a newer version.
+            var held = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+            oneDrive = Task.Run(async () =>
+            {
+                await Task.Delay(250);
+                held.Write(" newer"u8);
+                held.Dispose();
+            });
+            return Task.CompletedTask;
+        }));
+        await oneDrive!;
+        Assert.EndsWith(" newer", File.ReadAllText(path));
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+    }
+
+    [Fact]
+    public async Task AMotionPhotosCreationTimeAndAttributes_SurviveASave()
+    {
+        var path = _lib.AddJpeg("motion.jpg");
+        File.WriteAllBytes(path, WithoutRoom(File.ReadAllBytes(path)));
+        await XmpFields.WriteAsync(path, "First.", null, null);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        File.WriteAllBytes(path, [.. File.ReadAllBytes(path), .. "ftypmp42 the video part"u8.ToArray()]);
+        var created = new DateTime(2019, 5, 6, 7, 8, 9, DateTimeKind.Utc);
+        File.SetCreationTimeUtc(path, created);
+        Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 4)).Succeeded);
+        Assert.Equal(created, File.GetCreationTimeUtc(path));
+        Assert.False(File.GetAttributes(path).HasFlag(System.IO.FileAttributes.Hidden));
+    }
+
+    [Fact]
+    public void AWorkingCopy_IsntAPhoto()
+    {
+        Assert.False(Models.MediaTypes.IsMedia(@"C:\p\~$pf1a2b3c4d.jpg"));
+        Assert.True(Models.MediaTypes.IsMedia(@"C:\p.jpg"));
+    }
+
+    [Fact]
+    public async Task APngCalledJpg_IsLeftAlone_Saying_Why()
+    {
+        var path = _lib.AddPng("fake.png");
+        var renamed = Path.ChangeExtension(path, ".jpg");
+        File.Move(path, renamed);
+        var before = File.ReadAllBytes(renamed);
+        var result = await MetadataWriter.SetFieldsAsync([MetadataWriter.FieldChanges.Replacing(ItemFor(renamed), "A dog.")]);
+        Assert.Equal(0, result.Succeeded);
+        Assert.Contains("isn't the kind of file", result.FailureSummary);
+        Assert.Equal(before, File.ReadAllBytes(renamed));
+    }
+
+    [Fact]
+    public async Task ACaptionClearedInTheFile_DoesntMakeSomeonesTitleTheOldCaption()
+    {
+        var path = _lib.AddJpeg("titled.jpg", new TestLibrary.JpegOptions { Title = "My title" });
+        await XmpFields.WriteAsync(path, "", null, null);
+        await MetadataWriter.SetCaptionAsync([ItemFor(path)], "New");
+        Assert.Equal("New", (await XmpFields.ReadAsync(path)).Caption);
+        Assert.Equal("My title", await MetadataReader.ReadTitleAsync(path));
+    }
+
+    [Fact]
+    public async Task ALongDescription_GoesInAsShortAltTextAndAnExtendedDescription_ClearedWhenNoLongerNeeded()
+    {
+        var path = _lib.AddJpeg("long.jpg");
+        var first = "A golden retriever runs along a sandy beach at sunset with a red ball in its mouth. ";
+        var rest = "Waves break behind it and two people walk in the distance near the dunes. The sky is orange and pink, and the low sun makes long shadows across the wet sand near the water's edge.";
+        var description = first + rest;
+        Assert.Equal(1, (await MetadataWriter.SetFieldsAsync([MetadataWriter.FieldChanges.Replacing(ItemFor(path), description)])).Succeeded);
+        var fields = await XmpFields.ReadAsync(path);
+        Assert.Equal(FileFields.AltText(description), fields.AltText);
+        Assert.True(fields.AltText.Length <= 250);
+        Assert.Equal(description.Trim(), fields.ExtendedDescription);
+
+        await MetadataWriter.SetFieldsAsync([MetadataWriter.FieldChanges.Replacing(ItemFor(path), "A dog.")]);
+        fields = await XmpFields.ReadAsync(path);
+        Assert.Equal("A dog.", fields.AltText);
+        Assert.Equal("", fields.ExtendedDescription);
+    }
+
+    [Fact]
+    public async Task ACaptionKeptTheOldWay_InTheTitle_IsFollowedByTheTitleWhenReplaced()
+    {
+        // Photo Finder before #62, and Explorer, kept the caption in the Title (EXIF and XP title too).
+        var path = _lib.AddJpeg("old.jpg", new TestLibrary.JpegOptions { Title = "The old caption" });
+        Assert.Equal(1, (await MetadataWriter.SetCaptionAsync([ItemFor(path)], "The new caption")).Succeeded);
+        Assert.Equal("The new caption", (await XmpFields.ReadAsync(path)).Caption);
+        Assert.Equal("The new caption", await MetadataReader.ReadTitleAsync(path));
+    }
+
+    [Fact]
+    public async Task FieldsThatCantBeReadNow_AreAnError_WhenDecidingWhatToWrite()
+    {
+        var path = _lib.AddJpeg("locked.jpg");
+        await XmpFields.WriteAsync(path, null, "Another app's alt text.", null);
+        using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            await Assert.ThrowsAnyAsync<Exception>(() => MetadataReader.ReadAsync(path, forWriting: true));
+        Assert.Equal("Another app's alt text.", (await MetadataReader.ReadAsync(path, forWriting: true)).AltText);
+    }
+
+
+    [Fact]
+    public async Task EditingACaption_KeepsExplorersTitleInStep_UnlessSomeoneWroteADifferentTitle()
+    {
+        var plain = _lib.AddJpeg("plain.jpg");
+        Assert.Equal(1, (await MetadataWriter.SetCaptionAsync([ItemFor(plain)], "First")).Succeeded);
+        Assert.Equal("First", (await XmpFields.ReadAsync(plain)).Caption);
+        Assert.Equal("First", await MetadataReader.ReadTitleAsync(plain));
+        await MetadataWriter.SetCaptionAsync([ItemFor(plain)], "Second");
+        Assert.Equal("Second", await MetadataReader.ReadTitleAsync(plain));
+
+        var titled = _lib.AddJpeg("titled.jpg", new TestLibrary.JpegOptions { Title = "A title of my own" });
+        await XmpFields.WriteAsync(titled, "An old caption", null, null);
+        await MetadataWriter.SetCaptionAsync([ItemFor(titled)], "A new caption");
+        Assert.Equal("A new caption", (await XmpFields.ReadAsync(titled)).Caption);
+        Assert.Equal("A title of my own", await MetadataReader.ReadTitleAsync(titled));
+    }
+
+    [Fact]
+    public void OnlyJpegAndTiff_HoldTheFields()
+    {
+        Assert.True(XmpFields.CanWrite(@"C:\a.JPG"));
+        Assert.True(XmpFields.CanWrite(@"C:\a.tiff"));
+        Assert.False(XmpFields.CanWrite(@"C:\a.png"));
+        Assert.False(XmpFields.CanWrite(@"C:\a.heic"));
+        Assert.False(XmpFields.CanWrite(@"C:\a.mp4"));
+    }
+
+    private static Models.MediaItem ItemFor(string path)
+    {
+        var info = new FileInfo(path);
+        return new Models.MediaItem(info.FullName, info.Length, info.CreationTime, info.LastWriteTime);
+    }
+}

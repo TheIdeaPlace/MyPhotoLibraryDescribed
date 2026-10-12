@@ -1,4 +1,4 @@
-﻿using PhotoFinder.Models;
+using PhotoFinder.Models;
 using Windows.Storage;
 
 namespace PhotoFinder.Services;
@@ -7,20 +7,68 @@ namespace PhotoFinder.Services;
 /// File Explorer uses, so they travel with the file (and sync with OneDrive).</summary>
 public static class MetadataWriter
 {
-    /// <summary>Sets the caption (System.Title). Empty removes it.</summary>
-    public static Task<WriteResult> SetCaptionAsync(IReadOnlyList<MediaItem> items, string caption)
-    {
-        var text = caption.Trim();
-        return WriteAsync(items, "System.Title", text.Length == 0 ? null : text);
-    }
+    /// <summary>Sets the caption on each file. Empty removes it.</summary>
+    public static Task<WriteResult> SetCaptionAsync(IReadOnlyList<MediaItem> items, string caption) =>
+        SetFieldsAsync(items.Select(i => new FieldChanges(i, caption.Trim())).ToList());
 
     /// <summary>Sets a different caption on each file.</summary>
-    public static async Task<WriteResult> SetCaptionsAsync(IReadOnlyList<(MediaItem Item, string Caption)> captions)
+    public static Task<WriteResult> SetCaptionsAsync(IReadOnlyList<(MediaItem Item, string Caption)> captions) =>
+        SetFieldsAsync(captions.Select(c => new FieldChanges(c.Item, c.Caption)).ToList());
+
+    /// <summary>What to change in one file: the caption, IPTC Alt Text (Accessibility) and Extended Description
+    /// (Accessibility). Null leaves a field as it is; empty clears it.</summary>
+    public sealed record FieldChanges(MediaItem Item, string? Caption, string? AltText = null, string? ExtendedDescription = null)
+    {
+        /// <summary>A description in all three, replacing what's there: the alt text from it, and the extended description
+        /// when the alt text is shorter (cleared otherwise, so an older long one doesn't linger).</summary>
+        public static FieldChanges Replacing(MediaItem item, string description) =>
+            XmpFields.CanWrite(item.Path)
+                ? new(item, description, FileFields.AltText(description), FileFields.ExtendedDescription(description) ?? "")
+                : new(item, description);
+    }
+
+    /// <summary>
+    /// The caption goes in the standard field, XMP's dc:description, in JPEG and TIFF files, with Explorer's Title kept in
+    /// step when it's empty or still holds the old caption (so a title someone wrote is left alone). Other formats keep
+    /// the caption in the Title, as before. The accessibility fields are written to JPEG and TIFF only. A photo holding a
+    /// second picture (a motion photo, Ultra HDR) isn't changed at all, since every writer would lose that picture.
+    /// </summary>
+    public static async Task<WriteResult> SetFieldsAsync(IReadOnlyList<FieldChanges> changes)
     {
         var failures = new List<(MediaItem Item, string Reason)>();
-        foreach (var (item, caption) in captions)
-            failures.AddRange((await SetCaptionAsync([item], caption)).Failures);
-        return new WriteResult(captions.Count - failures.Count, failures);
+        foreach (var change in changes)
+        {
+            var item = change.Item;
+            try
+            {
+                if (XmpFields.CanWrite(item.Path))
+                {
+                    string? title = null, oldCaption = null;
+                    if (change.Caption is not null)
+                    {
+                        title = await MetadataReader.ReadTitleAsync(item.Path);
+                        // A caption cleared in the file is the old caption (none), not the Title someone wrote.
+                        var old = await XmpFields.ReadAsync(item.Path);
+                        oldCaption = old.HasCaption ? old.Caption : title;
+                    }
+                    await XmpFields.WriteAsync(item.Path, change.Caption, change.AltText, change.ExtendedDescription);
+                    // The caption is saved; a Title that can't follow isn't a failure, since Explorer also reads the
+                    // caption from dc:description when the file has no Title of its own.
+                    if (change.Caption is { } caption && FileFields.TitleKeepsInStep(title!, oldCaption!) && title!.Trim() != caption.Trim())
+                        await WriteAsync([item], "System.Title", caption.Trim().Length == 0 ? null : caption.Trim());
+                }
+                else if (change.Caption is { } caption)
+                {
+                    failures.AddRange((await WriteAsync([item], "System.Title", caption.Trim().Length == 0 ? null : caption.Trim())).Failures);
+                }
+            }
+            catch (Exception ex)
+            {
+                failures.Add((item, Reason(item, ex)));
+            }
+        }
+        var failed = failures.Select(f => f.Item).Distinct().Count();
+        return new WriteResult(changes.Count - failed, failures.DistinctBy(f => f.Item).ToList());
     }
 
     /// <summary>Sets the rating, 0 to 5 stars. 0 removes it.</summary>
@@ -38,8 +86,12 @@ public static class MetadataWriter
                 // photo without a Date Taken doesn't jump to today in the list.
                 // UTC, so the hour that repeats when daylight saving ends can't shift it.
                 var modified = File.GetLastWriteTimeUtc(item.Path);
-                var file = await StorageFile.GetFileFromPathAsync(item.Path);
-                await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>(key, value)]);
+                // A motion photo is changed in a working copy, checked to still hold its video or HDR map, then swapped in.
+                await XmpFields.KeepingSecondPictureAsync(item.Path, async (target, _) =>
+                {
+                    var file = await StorageFile.GetFileFromPathAsync(target);
+                    await file.Properties.SavePropertiesAsync([new KeyValuePair<string, object?>(key, value)]);
+                });
                 try
                 {
                     File.SetLastWriteTimeUtc(item.Path, modified);
@@ -74,6 +126,8 @@ public static class MetadataWriter
 
     private static string Reason(MediaItem item, Exception ex) => ex switch
     {
+        SecondPictureException => $"{item.Name} holds a second picture, such as a motion photo's video or an HDR map, that changing it would lose, so it was left as it is.",
+        InvalidDataException => $"{item.Name} isn't the kind of file its name says, so it was left as it is.",
         UnauthorizedAccessException => $"{item.Name} is read-only or in use.",
         FileNotFoundException => $"{item.Name} is no longer there.",
         // E_FAIL and "not implemented" are what a format without a writable property handler gives.

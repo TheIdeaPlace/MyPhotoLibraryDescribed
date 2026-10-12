@@ -110,6 +110,7 @@ public partial class InfoWindow : Window
         if (item.IsVideo && m.DurationSeconds > 0) fields.Add(new("Duration", FileRow.FormatDuration(m.DurationSeconds)));
         fields.Add(new("Favorite", item.IsFavorite ? "Yes" : "No"));
         fields.Add(new("Caption", m.Caption.Length > 0 ? m.Caption : "None"));
+        if (m.AltText.Length > 0) fields.Add(new("Alt Text in the File", m.AltText));
         if (m.Keywords.Length > 0) fields.Add(new("Keywords", m.Keywords));
         if (m.Rating > 0) fields.Add(new("Rating", FileRow.StarsText(m.Rating)));
         if (m.Latitude is { } lat && m.Longitude is { } lon)

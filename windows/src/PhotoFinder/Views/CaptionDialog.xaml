@@ -10,7 +10,7 @@
         <TextBlock x:Name="ManyNote" Margin="0,8,0,0" TextWrapping="Wrap" Visibility="Collapsed"
                    Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                   Text="Captions are saved in the file, as its Title in File Explorer, so they go wherever the file goes." />
+                   Text="Captions are saved in the file, in the standard caption field, so they go wherever the file goes. File Explorer shows them as the Title." />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
             <Button Content="_Save" IsDefault="True" MinWidth="80" Padding="10,3" Click="Save_Click" />
             <Button Content="Cancel" IsCancel="True" MinWidth="80" Padding="10,3" Margin="8,0,0,0" />
