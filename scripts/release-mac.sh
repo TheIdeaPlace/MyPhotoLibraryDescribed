@@ -26,9 +26,16 @@ OUT=build/release
 FILE="${NAME// /-}-$VERSION-mac.dmg"
 [ -n "$VERSION" ] && [ -n "$NAME" ] || { echo "Couldn't read the version or name from project.yml"; exit 1; }
 [ -f "$KIT/asc-api-key.p8" ] || { echo "No App Store Connect key at $KIT/asc-api-key.p8"; exit 1; }
-security find-identity -v -p codesigning | grep -q "$IDENTITY" || { echo "No '$IDENTITY' in the keychain"; exit 1; }
-if [ "$PUBLISH" = "--publish" ] && gh release view "$TAG" >/dev/null 2>&1; then
-  echo "$TAG is already released. Raise MARKETING_VERSION in project.yml first."; exit 1
+IDENTITIES=$(security find-identity -v -p codesigning)
+[[ "$IDENTITIES" == *"$IDENTITY"* ]] || { echo "No '$IDENTITY' in the keychain"; exit 1; }
+if [ "$PUBLISH" = "--publish" ]; then
+  # Checked before ten minutes of notarizing, not after.
+  gh auth status >/dev/null 2>&1 || { echo "Sign in to GitHub first: gh auth login"; exit 1; }
+  if gh release view "$TAG" >/dev/null 2>&1; then
+    echo "$TAG is already released. Raise MARKETING_VERSION in project.yml first."; exit 1
+  fi
+  git fetch -q origin
+  git merge-base --is-ancestor HEAD origin/main || { echo "Release from a commit that's on origin/main (pull, or merge first)."; exit 1; }
 fi
 [ -z "$(git status --porcelain -- PhotoFinder project.yml)" ] || { echo "Commit the app's changes first, so the release matches a commit."; exit 1; }
 
@@ -70,7 +77,7 @@ echo "Ready: $OUT/$FILE"
 
 if [ "$PUBLISH" = "--publish" ]; then
   gh release create "$TAG" "$OUT/$FILE" --title "$NAME $VERSION for Mac" --target "$(git rev-parse HEAD)" --notes \
-"$NAME $VERSION for the Mac: signed and notarized by Apple. Needs macOS 27 and Apple silicon to describe photos.
+"$NAME $VERSION for the Mac: signed and notarized by Apple. Runs on macOS 15 or later; describing photos needs macOS 27 and Apple silicon with Apple Intelligence.
 
 Open the disk image and drag $NAME to Applications. Help > Check for Updates finds newer versions."
   echo "Published $TAG"
