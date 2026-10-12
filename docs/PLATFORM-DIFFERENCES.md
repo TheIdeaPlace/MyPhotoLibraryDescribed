@@ -31,6 +31,8 @@ These follow from what each operating system offers apps, and aren't gaps to clo
 
 ## Gaps to close
 
+Each gap below has a GitHub issue with the `parity` label (`gh issue list --label parity`). Claim and coordinate there, as `CLAUDE.md` describes. When a gap is closed, move it to "Now the same on both" in the same PR.
+
 ### On the Mac, from Windows
 
 - **Automatic descriptions.** Windows describes the photo you arrow to and speaks the description, with a setting to turn it off. The Mac describes when you press Describe Photo (Shift-Command-D) or Describe Image in Get Info.
