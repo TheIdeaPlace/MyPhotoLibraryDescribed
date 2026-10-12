@@ -20,7 +20,8 @@ struct InfoTarget: Identifiable {
     /// A photo in the Photos library, or a file in an added folder (#36).
     enum Source {
         case asset(PHAsset)
-        case file(MediaFile, FileRow)
+        /// With its metadata when the list has already read it; Get Info reads it otherwise.
+        case file(MediaFile, FileMetadata?)
     }
 
     let id: String
@@ -127,8 +128,15 @@ final class LibraryModel {
     private(set) var folderRoots: [String] = FolderRoots.load()
     /// The Folders section's tree, from the last scan of the added folders.
     @ObservationIgnored private var folderNodes: [FolderNode] = []
+    /// Photos' own sidebar sections from the last full rebuild, kept so a folder scan rebuilds only Folders (#47).
+    @ObservationIgnored private var photoSections: [SidebarSection] = []
+    /// Every photo and video path in each added folder at its last scan, by lowercased root, so photos added since
+    /// can be described in the background (#47). No entry until a folder's first scan.
+    @ObservationIgnored private var folderMediaPaths: [String: Set<String>] = [:]
+    /// Added folders whose first scan should describe all their photos in the background, by lowercased path.
+    @ObservationIgnored private var justAddedFolders: Set<String> = []
     /// The scan of each added folder in progress, by lowercased path; a newer scan of the same folder cancels it.
-    @ObservationIgnored private var folderScans: [String: Task<FolderNode, Never>] = [:]
+    @ObservationIgnored private var folderScans: [String: Task<FolderScan, Never>] = [:]
     /// Metadata already read from files, so going back to a folder doesn't read it all again. Keyed like
     /// descriptions, so an edited file is read afresh.
     @ObservationIgnored private var fileMetadata: [String: FileMetadata] = [:]
@@ -514,6 +522,20 @@ final class LibraryModel {
         if !dates.isEmpty { newSections.append(SidebarSection(id: "dates", title: "Dates", items: dates)) }
         if !albums.isEmpty { newSections.append(SidebarSection(id: "albums", title: "My Albums", items: albums)) }
         if !shared.isEmpty { newSections.append(SidebarSection(id: "shared", title: "Shared Albums", items: shared)) }
+        photoSections = newSections
+        return applySidebar(previousItem: previousItem)
+    }
+
+    /// Rebuilds only the Folders section, after a scan of the added folders (#47): Photos' sections are kept as they
+    /// were, so their album counts aren't fetched again on the main actor.
+    @discardableResult
+    private func rebuildFolderSection() -> Bool {
+        applySidebar(previousItem: currentItem)
+    }
+
+    /// Puts Photos' sections and the Folders section together and shows them, keeping the place showing in step.
+    private func applySidebar(previousItem: SidebarItem?) -> Bool {
+        var newSections = photoSections
         // Folders added from outside Photos, below Photos' own sections (#36).
         let folders = FolderScanner.sidebarItems(folderNodes)
         if !folders.isEmpty { newSections.append(SidebarSection(id: "folders", title: "Folders", items: folders)) }
@@ -532,7 +554,16 @@ final class LibraryModel {
         itemsByID = index
 
         if let id = selectedSourceID, index[id] == nil {
-            selectedSourceID = SidebarID.allPhotos
+            // A subfolder whose last photo was deleted in Finder drops out: go to the nearest folder above it that's
+            // still listed and say so ("Showing Pictures, 12 items"), rather than to All Photos without a word (#47).
+            if let path = previousItem?.directoryPath,
+               let parent = FolderRoots.nearestListed(above: path, roots: folderRoots,
+                                                      isListed: { index[FolderID.folder($0)] != nil }) {
+                loadAnnouncementPrefix = loadAnnouncementPrefix ?? "Showing "
+                selectedSourceID = FolderID.folder(parent)
+            } else {
+                selectedSourceID = SidebarID.allPhotos
+            }
         } else if let item = currentItem, item.children != nil || item.isDirectory, item != previousItem {
             // A folder's contents changed while it was showing.
             loadSelectedSource(keepSelection: true)
@@ -821,28 +852,41 @@ final class LibraryModel {
     /// Finder's .DS_Store) doesn't pile up scans.
     private func refreshFolders(only root: String? = nil, reloadCurrent: Bool = false) {
         let roots = root.map { [$0] } ?? folderRoots
-        let scans = roots.map { root -> Task<FolderNode, Never> in
+        let scans = roots.map { root -> Task<FolderScan, Never> in
             let key = root.lowercased()
             folderScans[key]?.cancel()
-            let scan = Task.detached(priority: .utility) { FolderScanner.scan(root) }
+            // The photos there at the last scan, so the new ones are worked out off the main actor too (#47).
+            let before = folderMediaPaths[key]
+            let justAdded = justAddedFolders.contains(key)
+            let scan = Task.detached(priority: .utility) {
+                FolderScan.scan(root, before: before, justAdded: justAdded)
+            }
             folderScans[key] = scan
             return scan
         }
         Task {
             var fresh: [String: FolderNode] = [:]
-            var nodes: [(Task<FolderNode, Never>, FolderNode)] = []
-            for scan in scans { nodes.append((scan, await scan.value)) }
+            var results: [(Task<FolderScan, Never>, FolderScan)] = []
+            for scan in scans { results.append((scan, await scan.value)) }
             // Checked once they're all in: a folder scanned again meanwhile has its older result left out.
-            for (scan, node) in nodes where !scan.isCancelled {
-                let key = node.path.lowercased()
-                fresh[key] = node
+            var newPhotos: [String] = []
+            for (scan, result) in results where !scan.isCancelled {
+                let key = result.node.path.lowercased()
+                fresh[key] = result.node
                 if folderScans[key] == scan { folderScans[key] = nil }
+                // A folder that's missing (an unplugged disk) keeps its last list of photos.
+                guard let paths = result.paths, folderRoots.contains(where: { $0.lowercased() == key }) else { continue }
+                folderMediaPaths[key] = paths
+                justAddedFolders.remove(key)
+                newPhotos += result.newPhotos
             }
+            if describeInBackground, !newPhotos.isEmpty { describeFilesLater(newPhotos) }
             guard !fresh.isEmpty else { return }
             // In the order they were added; folders removed meanwhile drop out.
             let old = Dictionary(folderNodes.map { ($0.path.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
             folderNodes = folderRoots.compactMap { fresh[$0.lowercased()] ?? old[$0.lowercased()] }
-            let reloaded = rebuildSidebar()
+            // Only the Folders section: Photos' album counts are left alone (#47).
+            let reloaded = rebuildFolderSection()
             if reloadCurrent, !reloaded, currentItem?.isDirectory == true {
                 loadSelectedSource(keepSelection: true)
             }
@@ -906,7 +950,13 @@ final class LibraryModel {
             let result = FolderRoots.adding(path, to: roots)
             roots = result.roots
             let name = FolderRoots.displayName(FolderRoots.normalize(path))
-            if result.added { added.append(name) } else { already.append(name) }
+            if result.added {
+                added.append(name)
+                // Its photos are described in the background once it's scanned, when that's on (#47).
+                justAddedFolders.insert(FolderRoots.normalize(path).lowercased())
+            } else {
+                already.append(name)
+            }
         }
         folderRoots = roots
         FolderRoots.save(roots)
@@ -941,6 +991,8 @@ final class LibraryModel {
         folderRoots = FolderRoots.removing(root, from: folderRoots)
         FolderRoots.save(folderRoots)
         folderNodes.removeAll { FolderRoots.same($0.path, root) }
+        folderMediaPaths[root.lowercased()] = nil
+        justAddedFolders.remove(root.lowercased())
         // You're always in the folder being removed: go to All Photos first, so its place going away isn't announced
         // as if it happened by itself. Said as on Windows: "Removed Pictures from Photo Finder. Showing All Photos, 12 items".
         loadAnnouncementPrefix = "Removed \(name) from \(AppInfo.name). Showing "
@@ -1198,7 +1250,9 @@ final class LibraryModel {
         if let asset = assetsByID[row.id] {
             infoTarget = InfoTarget(id: row.id, source: .asset(asset), name: row.name)
         } else if let file = filesByID[row.id] {
-            infoTarget = InfoTarget(id: row.id, source: .file(file, row), name: row.name)
+            // The metadata the list read, if it has; opened before then, Get Info reads it itself (#47), so the row's
+            // stand-ins (the file's creation date, no dimensions or caption) aren't shown as the file's.
+            infoTarget = InfoTarget(id: row.id, source: .file(file, fileMetadata[file.descriptionKey]), name: row.name)
         } else {
             NSSound.beep()
         }
@@ -1633,7 +1687,7 @@ final class LibraryModel {
         if let reason = backgroundUnavailableReason {
             announce("Photos can't be described in the background. \(reason)")
         } else {
-            announce("Photos added to your library will be described in the background")
+            announce("Photos added to your library or your folders will be described in the background")
         }
     }
 
@@ -1665,15 +1719,34 @@ final class LibraryModel {
 
     private func describeLater(_ assets: [PHAsset]) {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
-        if #available(macOS 27, *) {
-            let describer = (backgroundDescriber as? BackgroundDescriber) ?? BackgroundDescriber(cache: descriptions) { [weak self] text in
-                self?.backgroundProgress = text
-            }
-            backgroundDescriber = describer
-            describer.enqueue(assets)
-        }
+        if #available(macOS 27, *) { makeBackgroundDescriber().enqueue(assets) }
 #endif
     }
+
+    /// Photos added to an added folder (or in a folder just added), by path (#47). Only their descriptions are saved;
+    /// nothing goes into the files unless Save Descriptions in Photos is on, through the usual path.
+    private func describeFilesLater(_ paths: [String]) {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        if #available(macOS 27, *) { makeBackgroundDescriber().enqueue(filePaths: paths) }
+#endif
+    }
+
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+    @available(macOS 27, *)
+    private func makeBackgroundDescriber() -> BackgroundDescriber {
+        if let describer = backgroundDescriber as? BackgroundDescriber { return describer }
+        let describer = BackgroundDescriber(cache: descriptions) { [weak self] text in
+            self?.backgroundProgress = text
+        }
+        // A photo whose folder was taken out of the library meanwhile isn't described.
+        describer.isWanted = { [weak self] path in
+            guard let self else { return false }
+            return FolderRoots.root(containing: path, in: self.folderRoots) != nil
+        }
+        backgroundDescriber = describer
+        return describer
+    }
+#endif
 
     // MARK: - Describe Photo
 

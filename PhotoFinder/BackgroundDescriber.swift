@@ -24,6 +24,8 @@ final class BackgroundDescriber {
     /// Changes when a run stops, so a run still finishing its last photo knows it's been superseded.
     private var generation = 0
     private var running = false
+    /// Whether a file queued earlier should still be described: false once its folder leaves the library.
+    var isWanted: @MainActor (String) -> Bool = { _ in true }
 
     init(cache: DescriptionCache, progress: @escaping @MainActor (String?) -> Void) {
         self.cache = cache
@@ -36,6 +38,17 @@ final class BackgroundDescriber {
         let ids = assets
             .filter { $0.mediaType == .image && cache.description(for: $0) == nil }
             .map(\.localIdentifier)
+        add(ids)
+    }
+
+    /// Queues photos in added folders (#47), by path. Each is looked up again when its turn comes, so a file deleted
+    /// or already described meanwhile is skipped and an edited one is described under its current key.
+    func enqueue(filePaths paths: [String]) {
+        guard ImageConversation.unavailableReason == nil else { return }
+        add(paths.filter { !MediaFiles.isVideo(($0 as NSString).lastPathComponent) }.map(FolderID.file))
+    }
+
+    private func add(_ ids: [String]) {
         guard queue.add(ids) > 0 else { return }
         progress(queue.progress)
         guard !running else { return }
@@ -58,6 +71,10 @@ final class BackgroundDescriber {
     private func run(_ run: Int) async {
         while run == generation, let id = queue.next() {
             progress(queue.progress)
+            if id.hasPrefix(Self.filePrefix) {
+                await describeFile(String(id.dropFirst(Self.filePrefix.count)), id: id, run: run)
+                continue
+            }
             guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
                   cache.description(for: asset) == nil,
                   ImageConversation.unavailableReason == nil else {
@@ -99,6 +116,50 @@ final class BackgroundDescriber {
         queue.reset()
         running = false
         progress(nil)
+    }
+
+    private static let filePrefix = FolderID.file("")
+
+    /// A photo in an added folder: read from disk off the main actor, described, and saved to the description cache
+    /// under its file key. Nothing is written into the file here; with Save Descriptions in Photos on, the saved
+    /// description goes into a listed file's caption through the usual path.
+    private func describeFile(_ path: String, id: String, run: Int) async {
+        guard isWanted(path) else {
+            queue.finished(described: false)
+            return
+        }
+        let file = await Task.detached(priority: .utility) { FolderScanner.file(at: path) }.value
+        guard let file, !file.isVideo, cache.description(forKey: file.descriptionKey) == nil,
+              ImageConversation.unavailableReason == nil else {
+            queue.finished(described: false)
+            return
+        }
+        let url = file.url
+        let image = await Task.detached(priority: .utility) { () -> CGImage? in
+            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
+            return ImageConversation.makeImage(from: data)
+        }.value
+        guard let image else {
+            queue.finished(described: false)
+            return
+        }
+        let session = LanguageModelSession(instructions: ImageConversation.instructions)
+        let prompt = ImageConversation.describePrompt
+        do {
+            let answer = try await session.respond {
+                prompt
+                Attachment(image)
+            }.content
+            let key = file.descriptionKey
+            if !cache.isEdited(forKey: key) { cache.remember(answer, forKey: key) }
+            guard run == generation else { return }
+            queue.finished(described: true)
+        } catch {
+            guard run == generation else { return }
+            if queue.retryLater(id) {
+                try? await Task.sleep(for: .seconds(15))
+            }
+        }
     }
 
     /// Spoken only when Photo Finder is the app in front: new photos usually arrive while it isn't.

@@ -37,7 +37,6 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 - **Moving between panes.** Both have F6 and Shift+F6 (Go > Next Pane and Previous Pane on the Mac) for the sidebar, the list or gallery, search and the status bar, with Left and Right Arrow between status bar sections. On Windows the status bar is reached only with F6, not Tab, as in QuickMail; on the Mac, SwiftUI's focusable status sections may also be Tab stops.
 - **Tests.** Windows has about 270 tests; the Mac has a handful (columns and the description cache). Mac CI can't compile the macOS 27 code until GitHub's runners have Xcode 27.
 - **Favorites and ratings in files in added folders.** Windows sets favorites (a five-star rating) and ratings in the files themselves. On the Mac, Toggle Favorite says it isn't available for files yet. Captions are written into files on the Mac too (#31).
-- **Describing added folders in the background.** Windows describes a folder's photos behind the scenes when it's added. The Mac's background describing covers photos added to the Photos library only.
 - **Folders without Photos access.** The Mac shows nothing until Photos access is given, so added folders can't be browsed without it. Windows has no such permission.
 
 ### On Windows, from the Mac
@@ -50,7 +49,7 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 ## Describing in the background
 
 - **Windows:** Photo > Describe Added Folders in the Background. Adding a folder describes its photos behind the scenes.
-- **Mac:** Photo > Describe New Photos in the Background (macOS 27). Photos added to the Photos library are described behind the scenes, and Get Info shows saved descriptions at once. Folders added on the Mac (#36) aren't described in the background yet.
+- **Mac:** Photo > Describe New Photos in the Background (macOS 27). Photos added to the Photos library are described behind the scenes, and Get Info shows saved descriptions at once. Added folders are covered too (#47): adding a folder describes its photos, as on Windows, and photos that appear in an added folder later are described when Photo Finder next scans it (when the folder showing changes, or on View > Refresh). Only descriptions are saved; nothing is written into the files unless Save Descriptions in Photos is on, and then only for files in the folder showing. Differences: the Mac's menu name is different, it also covers the Photos library, and it doesn't announce each folder's start and finish (it says once when a run starts and ends, only while Photo Finder is in front).
 
 ## Now the same on both
 

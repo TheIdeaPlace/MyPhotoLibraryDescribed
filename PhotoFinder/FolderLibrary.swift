@@ -115,6 +115,52 @@ enum FolderRoots {
         let name = (path as NSString).lastPathComponent
         return name.isEmpty || name == "/" ? path : name
     }
+
+    /// Where to go when the folder showing drops out of the sidebar (its last photo deleted in Finder): the nearest
+    /// folder above it that's still listed, up to and including its added folder. Nil when none is (the added folder
+    /// itself was removed), so the caller falls back to All Photos.
+    static func nearestListed(above path: String, roots: [String], isListed: (String) -> Bool) -> String? {
+        guard let root = root(containing: path, in: roots) else { return nil }
+        var folder = path
+        while !same(folder, root) {
+            folder = (folder as NSString).deletingLastPathComponent
+            if isListed(folder) { return folder }
+            if folder.isEmpty || folder == "/" { break }
+        }
+        return nil
+    }
+}
+
+/// Which photos in an added folder to describe in the background after it's scanned (#47): every photo in a folder
+/// just added (as Windows does), and afterwards the photos that weren't there at the last scan. The first scan after
+/// launch only sets the baseline, so opening Photo Finder doesn't describe whole folders again. Videos aren't
+/// described.
+enum FolderChanges {
+    static func photosToDescribe(before: Set<String>?, after: [String], justAdded: Bool) -> [String] {
+        let photos = after.filter { !MediaFiles.isVideo(($0 as NSString).lastPathComponent) }
+        if justAdded { return photos }
+        guard let before else { return [] }
+        return photos.filter { !before.contains($0) }
+    }
+}
+
+/// One scan of an added folder: its sidebar tree, every photo and video path in it (nil when the folder isn't
+/// there, an unplugged disk, so plugging it back in doesn't look like every photo was just added), and the photos
+/// to describe in the background.
+struct FolderScan: Sendable {
+    let node: FolderNode
+    let paths: Set<String>?
+    let newPhotos: [String]
+
+    static func scan(_ root: String, before: Set<String>?, justAdded: Bool) -> FolderScan {
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root, isDirectory: &isFolder), isFolder.boolValue else {
+            return FolderScan(node: FolderScanner.tree(root: root, mediaPaths: []), paths: nil, newPhotos: [])
+        }
+        let paths = FolderScanner.mediaPaths(under: root)
+        return FolderScan(node: FolderScanner.tree(root: root, mediaPaths: paths), paths: Set(paths),
+                          newPhotos: FolderChanges.photosToDescribe(before: before, after: paths, justAdded: justAdded))
+    }
 }
 
 /// A photo or video file in an added folder, with what the file system says about it. Its metadata comes later.
@@ -194,7 +240,6 @@ enum FolderScanner {
     }
 
     static func scan(_ root: String) -> FolderNode { tree(root: root, mediaPaths: mediaPaths(under: root)) }
-
     /// The photos and videos directly in a folder (not its subfolders), from the file system alone, which is fast.
     static func files(in folder: String) -> [MediaFile] {
         guard let urls = try? FileManager.default.contentsOfDirectory(
