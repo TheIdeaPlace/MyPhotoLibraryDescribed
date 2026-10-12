@@ -781,7 +781,6 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             if (_settings.ReadOnly == value) return;
             _settings.ReadOnly = value;
             PhotoChanges.Allowed = !value;
-            SaveSettings();
             OnPropertyChanged();
         }
     }

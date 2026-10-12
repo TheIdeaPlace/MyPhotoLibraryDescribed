@@ -497,7 +497,8 @@ public partial class MainWindow : Window
         return false;
     }
 
-    /// <summary>File > Read-Only. Turning it off asks every time, with the risk said plainly; turning it on doesn't.</summary>
+    /// <summary>File > Read-Only. Turning it off asks every time, with the risk said plainly; turning it on doesn't. Every
+    /// launch starts read-only again.</summary>
     private void ReadOnly_Click(object sender, RoutedEventArgs e) => SetReadOnly(!_model.IsReadOnly);
 
     internal void SetReadOnly(bool on)
