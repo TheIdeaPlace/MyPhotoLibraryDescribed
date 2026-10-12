@@ -15,6 +15,7 @@ struct PhotoFinderApp: App {
                     guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
                     await model.start()
                     model.checkForUpdatesQuietly()
+                    model.sayIfJustUpdated()
                 }
         }
         .commands { PhotoCommands(model: model) }
@@ -98,7 +99,7 @@ struct PhotoCommands: Commands {
         CommandGroup(replacing: .help) {
             // The order agreed with Windows in #13: Check for Updates…, Report a Bug…, then Check System…. The first
             // names the new version once one is found, as the app kit asks.
-            Button(model.availableUpdate.map { "Update to \($0.version)…" } ?? "Check for Updates…") {
+            Button(Updates.menuTitle(running: AppInfo.shortVersion, available: model.availableUpdate?.version)) {
                 model.checkForUpdates()
             }
             Button("Report a Bug…") { model.reportBug() }

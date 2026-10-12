@@ -1906,6 +1906,29 @@ final class LibraryModel {
         }
     }
 
+    /// The first launch after an update: says so, with See What's New, as the apps' shared update experience asks
+    /// (The-Idea-Place-Projects#12). Not on a first run or after going back to an older version.
+    func sayIfJustUpdated() {
+        let defaults = UserDefaults.standard
+        let current = AppInfo.shortVersion
+        let last = defaults.string(forKey: "lastRunVersion")
+        defaults.set(current, forKey: "lastRunVersion")
+        guard Updates.justUpdated(last: last, current: current) else { return }
+        let alert = NSAlert()
+        alert.messageText = "\(AppInfo.name) Update Installed"
+        alert.informativeText = "\(AppInfo.name) is now version \(current)."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "See what's new")
+        // Escape closes it too, as the shared pattern asks; an alert only does that by itself for a Cancel button.
+        let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 53 else { return event }
+            NSApp.stopModal(withCode: .alertFirstButtonReturn)
+            return nil
+        }
+        defer { if let escape { NSEvent.removeMonitor(escape) } }
+        if alert.runModal() == .alertSecondButtonReturn { NSWorkspace.shared.open(AppInfo.releaseNotesURL(current)) }
+    }
+
     /// Help > Check for Updates…: says whether there's a newer version, and opens its download page if you want it.
     func checkForUpdates() {
         if let release = availableUpdate {
