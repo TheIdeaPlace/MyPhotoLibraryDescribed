@@ -31,7 +31,16 @@ public sealed class Describer : IDisposable
                     throw new ProtocolException(request.Id, Codes.NotReady,
                         "Windows couldn't get its text model ready" + (ready.ExtendedError is { } e ? $": {e.Message.Trim()}" : ". It may still be downloading; try again in a few minutes."));
             }
-            _language = await LanguageModel.CreateAsync();
+            try
+            {
+                _language = await LanguageModel.CreateAsync();
+            }
+            catch (UnauthorizedAccessException ex) when (ex.Message.Contains("Limited Access Feature", StringComparison.OrdinalIgnoreCase))
+            {
+                // Phi Silica is a Limited Access Feature: an app needs Microsoft's token to use it (#24).
+                throw new ProtocolException(request.Id, Codes.NotSupported,
+                    "Follow-up questions need Microsoft's permission for this app to use Windows' text model, which it doesn't have yet.");
+            }
         }
         using var context = _language.CreateContext(Protocol.AskSystemPrompt);
         var result = await _language.GenerateResponseAsync(context, Protocol.AskPrompt(request), new LanguageModelOptions());

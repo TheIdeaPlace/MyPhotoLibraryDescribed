@@ -149,6 +149,7 @@ public sealed class WindowTests : IDisposable
         store.Put(row.Item!, "brief", "A dog.");
         var asked = new List<(string Description, string Question, int History)>();
         var original = InfoWindow.AskQuestion;
+        InfoWindow.FollowUpQuestionsShown = true;
         InfoWindow.AskQuestion = (description, text, question, history, _) =>
         {
             asked.Add((description, question, history.Count));
@@ -183,6 +184,7 @@ public sealed class WindowTests : IDisposable
         finally
         {
             InfoWindow.AskQuestion = original;
+            InfoWindow.FollowUpQuestionsShown = AppInfo.FollowUpQuestions;
             Announcer.Observer = null;
             window.Close();
         }

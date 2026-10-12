@@ -296,6 +296,9 @@ public partial class InfoWindow : Window
 
     // MARK: Follow-up questions (#24)
 
+    /// <summary>Whether the question box is offered: <see cref="AppInfo.FollowUpQuestions"/>, replaceable in tests.</summary>
+    internal static bool FollowUpQuestionsShown { get; set; } = AppInfo.FollowUpQuestions;
+
     /// <summary>Asks Windows' text model; replaceable in tests.</summary>
     internal static Func<string, string, string, IReadOnlyList<(string Question, string Answer)>, CancellationToken, Task<string>> AskQuestion { get; set; } =
         (description, text, question, history, cancel) => App.WindowsAI.AskAsync(description, text, question, history, cancel);
@@ -314,7 +317,7 @@ public partial class InfoWindow : Window
         AnswersLabel.Visibility = Visibility.Collapsed;
         AnswersBox.Visibility = Visibility.Collapsed;
         AskStatus.Visibility = Visibility.Collapsed;
-        AskPanel.Visibility = description.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        AskPanel.Visibility = description.Length > 0 && FollowUpQuestionsShown ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void Ask_Click(object sender, RoutedEventArgs e) => await AskAsync();
