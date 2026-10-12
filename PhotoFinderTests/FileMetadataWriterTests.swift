@@ -20,7 +20,7 @@ final class FileMetadataWriterTests: XCTestCase {
     private static let formats: [(String, UTType)] = [("jpg", .jpeg), ("png", .png), ("tiff", .tiff), ("heic", .heic)]
 
     /// A small photo with a camera date, a title and keywords, like one a camera or another app wrote.
-    private func makePhoto(_ name: String, type: UTType, caption: String? = nil) throws -> URL {
+    private func makePhoto(_ name: String, type: UTType, caption: String? = nil, title: String? = "Original title") throws -> URL {
         let url = temp.appendingPathComponent(name)
         let width = 64, height = 48
         let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -34,7 +34,7 @@ final class FileMetadataWriterTests: XCTestCase {
         }
         let image = try XCTUnwrap(context.makeImage())
         let xmp = CGImageMetadataCreateMutable()
-        _ = CGImageMetadataSetValueWithPath(xmp, nil, "dc:title[x-default]" as CFString, "Original title" as CFString)
+        if let title { _ = CGImageMetadataSetValueWithPath(xmp, nil, "dc:title[x-default]" as CFString, title as CFString) }
         let keywords = try XCTUnwrap(CGImageMetadataTagCreate("http://purl.org/dc/elements/1.1/" as CFString, "dc" as CFString,
                                                               "subject" as CFString, .arrayUnordered, ["beach", "dog"] as CFArray))
         _ = CGImageMetadataSetTagWithPath(xmp, nil, "dc:subject" as CFString, keywords)
@@ -156,6 +156,28 @@ final class FileMetadataWriterTests: XCTestCase {
             read = try FileMetadataWriter.write(.init(caption: ""), to: url)
             // With no caption left, the title stands in, as when reading any file.
             XCTAssertEqual(read.caption, "Original title", ext)
+        }
+    }
+
+    private func title(_ url: URL) -> String? {
+        CGImageSourceCreateWithURL(url as CFURL, nil).flatMap { CGImageSourceCopyMetadataAtIndex($0, 0, nil) }
+            .flatMap { FileMetadata.xmpString($0, "dc:title") }
+    }
+
+    func testTheTitleFollowsTheCaptionButARealTitleIsKept() throws {
+        for (ext, type) in Self.formats {
+            // A title someone wrote stays as it is.
+            let titled = try makePhoto("titled.\(ext)", type: type)
+            try FileMetadataWriter.write(.init(caption: "Two dogs"), to: titled)
+            XCTAssertEqual(title(titled), "Original title", ext)
+            // No title: it follows the caption, so File Explorer's Title shows it too (#62).
+            let untitled = try makePhoto("untitled.\(ext)", type: type, title: nil)
+            try FileMetadataWriter.write(.init(caption: "Two dogs"), to: untitled)
+            XCTAssertEqual(title(untitled), "Two dogs", ext)
+            // A title that was the caption (as Photo Finder on Windows wrote) keeps following it.
+            let windows = try makePhoto("windows.\(ext)", type: type, caption: "Rex", title: "Rex")
+            try FileMetadataWriter.write(.init(caption: "Rex on the beach"), to: windows)
+            XCTAssertEqual(title(windows), "Rex on the beach", ext)
         }
     }
 
