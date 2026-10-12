@@ -77,6 +77,29 @@ final class DescriptionCache: @unchecked Sendable {
         }
     }
 
+    /// Keeps a file's description when Photo Finder itself writes into the file (a caption or alt text, #31), which
+    /// changes its size but not its picture, as Windows' DescriptionStore.Rekey does. What's on screen is told, but
+    /// not as a new description, so it isn't written into the caption again.
+    func rekey(from old: String, to new: String) {
+        guard old != new else { return }
+        lock.lock()
+        guard let text = entries.removeValue(forKey: old) else {
+            lock.unlock()
+            return
+        }
+        entries[new] = text
+        if edited.remove(old) != nil { edited.insert(new) }
+        let schedule = !saveScheduled
+        saveScheduled = true
+        lock.unlock()
+        if schedule {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [self] in save() }
+        }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.didChange, object: self)
+        }
+    }
+
     var count: Int {
         lock.lock()
         defer { lock.unlock() }

@@ -10,6 +10,9 @@ struct FileMetadata: Hashable, Sendable {
     var height = 0
     var dateTaken: Date?
     var caption = ""
+    /// IPTC's Alt Text (Accessibility) and Extended Description (Accessibility), which Photo Finder writes (#31).
+    var altText = ""
+    var extendedDescription = ""
     var keywords: [String] = []
     var rating = 0
     var latitude: Double?
@@ -75,6 +78,12 @@ struct FileMetadata: Hashable, Sendable {
         metadata.caption = captions.lazy.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty } ?? ""
 
+        let trimmed = { (path: String) in
+            xmp.flatMap { xmpString($0, path) }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
+        metadata.altText = trimmed(FileMetadataWriter.altTextPath)
+        metadata.extendedDescription = trimmed(FileMetadataWriter.extendedDescriptionPath)
+
         var keywords = (iptc[kCGImagePropertyIPTCKeywords] as? [String]) ?? []
         if keywords.isEmpty, let xmp { keywords = xmpStrings(xmp, "dc:subject") }
         metadata.keywords = keywords.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -107,7 +116,7 @@ struct FileMetadata: Hashable, Sendable {
         return formatter.date(from: trimmed)
     }
 
-    private static func xmpString(_ metadata: CGImageMetadata, _ path: String) -> String? {
+    static func xmpString(_ metadata: CGImageMetadata, _ path: String) -> String? {
         guard let tag = CGImageMetadataCopyTagWithPath(metadata, nil, path as CFString) else { return nil }
         let value = CGImageMetadataTagCopyValue(tag)
         if let text = value as? String { return text }

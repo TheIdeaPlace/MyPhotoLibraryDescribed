@@ -122,6 +122,7 @@ struct PhotoCommands: Commands {
             Button("Edit Caption…") { model.editCaption() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             Button("Use Description as Caption") { model.useDescriptionAsCaption() }
+            Button("Save Accessibility Description to File") { model.saveAccessibilityDescriptionToFile() }
             Divider()
             Button("Describe Photo") { model.describeFocusedPhoto() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])

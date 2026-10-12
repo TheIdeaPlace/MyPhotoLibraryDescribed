@@ -207,6 +207,13 @@ enum PhotoMetadata {
             fields.append(InfoField(label: "Duration", value: row.durationText))
         }
         fields.append(InfoField(label: "Caption", value: row.caption.isEmpty ? "None" : row.caption))
+        // IPTC's accessibility fields, which Save Accessibility Description to File writes (#31), or another app did.
+        if !row.altText.isEmpty {
+            fields.append(InfoField(label: "Alt text in the file", value: row.altText))
+        }
+        if !row.extendedDescription.isEmpty {
+            fields.append(InfoField(label: "Extended description in the file", value: row.extendedDescription))
+        }
         if !row.keywords.isEmpty {
             fields.append(InfoField(label: "Keywords", value: row.keywords))
         }

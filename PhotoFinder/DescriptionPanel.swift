@@ -35,6 +35,13 @@ struct DescriptionPanel: View {
                     Button("Describe Again") { model.describeFocusedPhotoAgain() }
                     Button("Use as Caption") { model.useDescriptionAsCaption([row.id]) }
                         .disabled(model.savedDescription(for: row.id) == nil)
+                    // Files can carry IPTC's accessibility fields; the Photos library has only a caption (#31).
+                    if model.isFile(row.id) {
+                        Button("Save to File") { model.saveAccessibilityDescriptionToFile([row.id]) }
+                            .disabled(model.savedDescription(for: row.id) == nil)
+                            .help("Save the description in the file's accessibility fields (alt text)")
+                            .accessibilityHint("Saves the description in the file's accessibility fields.")
+                    }
                     Button("Copy") { model.copyDescription(for: row.id) }
                         .disabled(model.savedDescription(for: row.id) == nil)
                 }
@@ -51,6 +58,17 @@ struct DescriptionPanel: View {
                 .accessibilityElement(children: .combine)
                 Button("Edit Caption…") { model.editCaption([row.id]) }
                     .controlSize(.small)
+                // What the file's own alt text says, read-only: Save to File replaces it.
+                if !row.altText.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Alt text in the file")
+                            .font(.subheadline.bold())
+                        Text(row.altText)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
                 Spacer(minLength: 0)
             } else {
                 // Focusable, so F6 can land here and move on rather than getting stuck on a panel with nothing in it.

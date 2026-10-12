@@ -5,8 +5,11 @@ import SwiftUI
 
 struct CaptionTarget: Identifiable {
     let id = UUID()
+    /// The rows being captioned: photos in the Photos library, or files in an added folder.
     let assetIDs: [String]
     let initialText: String
+    /// Files in an added folder, whose caption is written into the file itself (#31).
+    var inFiles = false
 }
 
 enum ViewMode: String {
@@ -127,6 +130,9 @@ final class LibraryModel {
     /// Metadata already read from files, so going back to a folder doesn't read it all again. Keyed like
     /// descriptions, so an edited file is read afresh.
     @ObservationIgnored private var fileMetadata: [String: FileMetadata] = [:]
+    /// The last write into files (#31), which the next one waits for, so an automatic caption and a command never
+    /// change the same file at once.
+    @ObservationIgnored private var fileWrites: Task<Void, Never>?
     /// Watches the folder showing for files added, removed or renamed.
     @ObservationIgnored private var folderWatcher: DispatchSourceFileSystemObject?
     @ObservationIgnored private var folderChangeTask: Task<Void, Never>?
@@ -1152,9 +1158,11 @@ final class LibraryModel {
 
     func editCaption(_ ids: Set<String>? = nil) {
         let ids = ids ?? selection
-        // Captions are written to Photos; writing them into files in added folders is to come (#36).
-        if !files(for: ids).isEmpty, assets(for: ids).isEmpty {
-            announce("Editing captions isn't available for files yet")
+        // Files in an added folder have their caption written into the file (#31).
+        let files = files(for: ids)
+        if !files.isEmpty {
+            guard assets(for: ids).isEmpty else { announceMixedSelection(); return }
+            editFileCaption(files)
             return
         }
         guard canEditCaptions else {
@@ -1177,12 +1185,44 @@ final class LibraryModel {
         }
     }
 
+    /// Edit Caption for files in an added folder (#31): the caption is the file's XMP description.
+    private func editFileCaption(_ files: [MediaFile]) {
+        let photos = files.filter { !$0.isVideo }
+        guard !photos.isEmpty else { announce("Captions can't be saved in video files"); return }
+        // Every one is a GIF or the like: say so now rather than after typing a caption. Some of them are skipped when
+        // saving, and named then.
+        let unsupported = FileWriteSummary.unsupported(photos)
+        if unsupported.count == photos.count, let text = FileWriteSummary.skippedText(unsupported) {
+            announce(text)
+            return
+        }
+        let ids = photos.map { FolderID.file($0.path) }
+        guard photos.count == 1 else {
+            captionTarget = CaptionTarget(assetIDs: ids, initialText: "", inFiles: true)
+            return
+        }
+        // The caption as the file has it now, not the list's copy: that's empty until the file's details are read,
+        // and saving an empty field would remove the real caption.
+        let url = photos[0].url
+        Task {
+            let caption = await Task.detached(priority: .userInitiated) { FileMetadata.read(url).caption }.value
+            // Pressed twice: the sheet from the first press is already up, with whatever's been typed in it.
+            guard captionTarget == nil else { return }
+            captionTarget = CaptionTarget(assetIDs: ids, initialText: caption, inFiles: true)
+        }
+    }
+
     func saveCaption(_ text: String, for target: CaptionTarget) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let done = trimmed.isEmpty ? "Caption removed" : "Caption saved"
+        let files = target.assetIDs.compactMap { filesByID[$0] }
+        if !files.isEmpty {
+            writeFilesAndSay(files.map { ($0, FileMetadataChanges(caption: trimmed)) }, label: "Saving caption…") { _ in done }
+            return
+        }
         let assets = target.assetIDs.compactMap { assetsByID[$0] }
         guard !assets.isEmpty else { return }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        writeCaptions(assets.map { ($0, trimmed) }, label: "Saving caption…",
-                      done: trimmed.isEmpty ? "Caption removed" : "Caption saved")
+        writeCaptions(assets.map { ($0, trimmed) }, label: "Saving caption…", done: done)
     }
 
     /// Writes each photo's caption (an empty one removes it), then says `done` if given.
@@ -1210,15 +1250,17 @@ final class LibraryModel {
     /// Photo > Use Description as Caption: each selected photo's saved description becomes its caption. Asks before
     /// replacing captions people wrote.
     func useDescriptionAsCaption(_ ids: Set<String>? = nil) {
-        if !files(for: ids ?? selection).isEmpty, assets(for: ids ?? selection).isEmpty {
-            announce("Using a description as the caption isn't available for files yet")
+        let ids = ids ?? selection
+        let files = files(for: ids)
+        if !files.isEmpty {
+            guard assets(for: ids).isEmpty else { announceMixedSelection(); return }
+            useDescriptionAsCaption(files: files)
             return
         }
         guard canEditCaptions else {
             errorMessage = "Editing captions requires macOS 27 or later."
             return
         }
-        let ids = ids ?? selection
         let chosen = rows.filter { ids.contains($0.id) && !$0.isContainer }
         guard !chosen.isEmpty else { announce("Select a photo"); return }
         let described = chosen.compactMap { row -> (FileRow, PHAsset, String)? in
@@ -1236,25 +1278,216 @@ final class LibraryModel {
         Task {
             // The captions as Photos has them now, not the list's copy, which is empty until its details load.
             let existing = await currentCaptions(of: described.map(\.1))
-            let replacing = described.compactMap { row, asset, text -> (String, String)? in
+            let replacing = described.compactMap { row, asset, text -> (name: String, caption: String)? in
                 let caption = (existing[asset.localIdentifier] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 return caption.isEmpty || caption == text ? nil : (row.name, caption)
             }
-            if !replacing.isEmpty {
-                let alert = NSAlert()
-                alert.messageText = replacing.count == 1 ? "Replace the caption of \(replacing[0].0)?"
-                    : "Replace the captions of \(replacing.count) photos?"
-                alert.informativeText = replacing.count == 1 ? "Its caption is: \(replacing[0].1)"
-                    : "Their captions will be replaced with their descriptions."
-                alert.addButton(withTitle: "Replace")
-                alert.addButton(withTitle: "Cancel")
-                guard alert.runModal() == .alertFirstButtonReturn else { return }
-            }
+            guard confirmReplacing(replacing) else { return }
             var done = described.count == 1 ? "Caption saved" : "Captions saved for \(described.count) photos"
             if skipped > 0 { done += ". \(skipped == 1 ? "1 photo hasn't" : "\(skipped) photos haven't") been described yet" }
             writeCaptions(described.map { ($0.1, $0.2) }, label: "Saving caption…", done: done)
         }
     }
+
+    /// Captions go to two different places for library photos (Photos) and files (the file itself), so a selection of
+    /// both is done in two goes rather than half of it quietly left out.
+    private func announceMixedSelection() {
+        announce("Select either photos from the Photos library or files from a folder, not both, to change captions")
+    }
+
+    /// Asks before replacing what's already in files: captions, or alt text another app wrote. Each entry is a
+    /// photo's name, the field ("caption" or "alt text") and what it holds now. True when there are none, or to go on.
+    private func confirmReplacingInFiles(_ replacing: [(name: String, field: String, current: String)]) -> Bool {
+        guard !replacing.isEmpty else { return true }
+        let alert = NSAlert()
+        if Set(replacing.map(\.name)).count == 1 {
+            let fields = replacing.map(\.field)
+            alert.messageText = "Replace the \(fields.joined(separator: " and ")) of \(replacing[0].name)?"
+            alert.informativeText = replacing.map { "Its \($0.field) is: \($0.current)" }.joined(separator: "\n")
+        } else {
+            alert.messageText = "Replace what's already in \(Set(replacing.map(\.name)).count) photos?"
+            alert.informativeText = "Their captions or alt text will be replaced with their descriptions."
+        }
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// Asks before replacing captions people wrote, by photo name and caption. True when there are none, or to go on.
+    private func confirmReplacing(_ replacing: [(name: String, caption: String)]) -> Bool {
+        guard !replacing.isEmpty else { return true }
+        let alert = NSAlert()
+        alert.messageText = replacing.count == 1 ? "Replace the caption of \(replacing[0].name)?"
+            : "Replace the captions of \(replacing.count) photos?"
+        alert.informativeText = replacing.count == 1 ? "Its caption is: \(replacing[0].caption)"
+            : "Their captions will be replaced with their descriptions."
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// Use Description as Caption for files in an added folder (#31). Each description goes into the file's caption
+    /// and its accessibility fields (the alt text, and the extended description when the alt text is shorter), with
+    /// the same question before replacing a caption as for Photos.
+    private func useDescriptionAsCaption(files: [MediaFile]) {
+        let photos = files.filter { !$0.isVideo }
+        guard !photos.isEmpty else { announce("Captions can't be saved in video files"); return }
+        let described = photos.compactMap { file -> (MediaFile, String)? in
+            guard let text = descriptions.description(forKey: file.descriptionKey)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { return nil }
+            return (file, text)
+        }
+        guard !described.isEmpty else {
+            announce(photos.count == 1 ? "\(photos[0].name) hasn't been described yet. Describe it first."
+                     : "None of these photos have been described yet.")
+            return
+        }
+        let notDescribed = photos.count - described.count
+        Task {
+            // The captions as the files have them now, not the list's copy, which is empty until their details are
+            // read. Files that can't hold a caption are skipped, so they aren't asked about.
+            let urls = described.map(\.0.url)
+            let existing = await Task.detached(priority: .userInitiated) { urls.map { FileMetadata.read($0) } }.value
+            let replacing = zip(described, existing).flatMap { pair, metadata -> [(name: String, field: String, current: String)] in
+                let (file, text) = pair
+                guard FileMetadataWriter.canWrite(name: file.name) else { return [] }
+                return FileFields.replaced(caption: metadata.caption, altText: metadata.altText, with: text)
+                    .map { (file.name, $0.field, $0.current) }
+            }
+            guard confirmReplacingInFiles(replacing) else { return }
+            writeFilesAndSay(described.map { ($0.0, FileMetadataChanges(caption: $0.1, accessibilityDescription: $0.1)) },
+                             label: "Saving caption…", notDescribed: notDescribed) { count in
+                count == 1 ? "Caption saved" : "Captions saved for \(count) photos"
+            }
+        }
+    }
+
+    /// Photo > Save Accessibility Description to File (#31): each selected file's saved description goes into its
+    /// IPTC Alt Text (Accessibility), shortened to whole sentences when it's over 250 characters, with the whole
+    /// description in Extended Description (Accessibility) then. The caption is left alone.
+    func saveAccessibilityDescriptionToFile(_ ids: Set<String>? = nil) {
+        let ids = ids ?? selection
+        let files = files(for: ids)
+        guard !files.isEmpty else {
+            announce(assets(for: ids).isEmpty ? "Select a photo"
+                     : "Photos in the Photos library can only have a caption. Use Description as Caption instead.")
+            return
+        }
+        let photos = files.filter { !$0.isVideo }
+        guard !photos.isEmpty else { announce("Descriptions can't be saved in video files"); return }
+        let described = photos.compactMap { file -> (MediaFile, String)? in
+            guard let text = descriptions.description(forKey: file.descriptionKey)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { return nil }
+            return (file, text)
+        }
+        guard !described.isEmpty else {
+            announce(photos.count == 1 ? "\(photos[0].name) hasn't been described yet. Describe it first."
+                     : "None of these photos have been described yet.")
+            return
+        }
+        let notDescribed = photos.count - described.count
+        Task {
+            // Alt text another app wrote (Lightroom, say) is the person's: ask before replacing it.
+            let urls = described.map(\.0.url)
+            let existing = await Task.detached(priority: .userInitiated) { urls.map { FileMetadata.read($0).altText } }.value
+            let replacing = zip(described, existing).flatMap { pair, alt -> [(name: String, field: String, current: String)] in
+                let (file, text) = pair
+                guard FileMetadataWriter.canWrite(name: file.name) else { return [] }
+                return FileFields.replaced(caption: nil, altText: alt, with: text).map { (file.name, $0.field, $0.current) }
+            }
+            guard confirmReplacingInFiles(replacing) else { return }
+            writeFilesAndSay(described.map { ($0.0, FileMetadataChanges(accessibilityDescription: $0.1)) },
+                             label: "Saving to file…", notDescribed: notDescribed) { count in
+                count == 1 ? "Saved to the file" : "Saved to \(count) files"
+            }
+        }
+    }
+
+    // MARK: - Writing into files (#31)
+
+    /// Writes into files in an added folder with the status bar showing `label`, then says what happened: `done` with
+    /// how many were written, the files skipped because their format can't hold the fields, and the photos not yet
+    /// described. Files that couldn't be changed are shown in an error.
+    private func writeFilesAndSay(_ items: [(MediaFile, FileMetadataChanges)], label: String, notDescribed: Int = 0,
+                                  done: @escaping (Int) -> String) {
+        Task {
+            activity = label
+            let outcome = await writeFiles(items)
+            activity = nil
+            let text = FileWriteSummary.text(done: outcome.written.isEmpty ? nil : done(outcome.written.count),
+                                             skipped: outcome.skipped, notDescribed: notDescribed)
+            if !text.isEmpty { announce(text) }
+            if let failure = outcome.failed.first {
+                errorMessage = outcome.failed.count == 1 ? "\(failure.name) couldn't be saved. \(failure.reason)"
+                    : "\(outcome.failed.count) files couldn't be saved. \(failure.name): \(failure.reason)"
+            }
+        }
+    }
+
+    /// What writing into files came to.
+    private struct FileWriteOutcome {
+        var written: [MediaFile] = []
+        var skipped: [(name: String, format: String)] = []
+        var failed: [(name: String, reason: String)] = []
+    }
+
+    /// Writes into files off the main actor, after any write already under way, then shows what each file says now
+    /// and keeps its description: writing changes a file's size, which is part of its description's key. Failures
+    /// are logged.
+    private func writeFiles(_ items: [(MediaFile, FileMetadataChanges)]) async -> FileWriteOutcome {
+        let previous = fileWrites
+        let cache = descriptions
+        typealias Written = (before: MediaFile, now: MediaFile, metadata: FileMetadata)
+        let work = Task.detached(priority: .userInitiated) { () -> [(MediaFile, Result<Written, Error>)] in
+            await previous?.value
+            return items.map { file, changes in
+                (file, Result {
+                    // As the file is now, not when it was listed: a write just before this one changed its size, and
+                    // moved its description to match.
+                    let before = FolderScanner.file(at: file.path) ?? file
+                    let metadata = try FileMetadataWriter.write(changes, to: file.url)
+                    let now = FolderScanner.file(at: file.path) ?? before
+                    // Moved here, straight after the write and before the next one reads the file's size, so a
+                    // description can never be left under a key that no longer matches.
+                    cache.rekey(from: before.descriptionKey, to: now.descriptionKey)
+                    return (before, now, metadata)
+                })
+            }
+        }
+        fileWrites = Task { _ = await work.value }
+        var outcome = FileWriteOutcome()
+        for (file, result) in await work.value {
+            switch result {
+            case .success(let written):
+                fileWritten(written.before, now: written.now, metadata: written.metadata)
+                outcome.written.append(written.now)
+            case .failure(FileMetadataWriteError.unsupportedFormat(let format)):
+                outcome.skipped.append((file.name, format))
+            case .failure(let error):
+                Self.log.error("Couldn't write into \(file.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                outcome.failed.append((file.name, error.localizedDescription))
+            }
+        }
+        return outcome
+    }
+
+    /// A file Photo Finder just wrote into: its description moves to the file's new key, and its row shows the new
+    /// caption and alt text. The folder watcher lists the folder again shortly after, and finds all this in place.
+    private func fileWritten(_ old: MediaFile, now: MediaFile, metadata: FileMetadata) {
+        fileMetadata[now.descriptionKey] = metadata
+        let id = FolderID.file(now.path)
+        // Gone to another place meanwhile: the file is read afresh when its folder is shown again.
+        guard filesByID[id] != nil else { return }
+        filesByID[id] = now
+        if let index = rows.firstIndex(where: { $0.id == id }) {
+            // From the cache under the file's new key: the column may have been refilled while the row still had the old.
+            let description = showsDescriptionColumn ? descriptions.description(forKey: now.descriptionKey) ?? "" : ""
+            rows[index] = FileRow(file: now, metadata: metadata).withDescription(description)
+        }
+    }
+
+    /// Whether a row is a file in an added folder, which can hold accessibility fields (#31).
+    func isFile(_ id: String) -> Bool { filesByID[id] != nil }
 
     /// Each photo's caption as Photos has it right now, by local identifier, read off the main actor.
     private func currentCaptions(of assets: [PHAsset]) async -> [String: String] {
@@ -1274,8 +1507,12 @@ final class LibraryModel {
     /// A description was just saved: with Save descriptions as captions on, it goes into the caption too, quietly.
     private func captionFromNewDescription(_ text: String, key: String) {
         let policy = captionPolicy
-        // Files in added folders keep their captions until writing file metadata comes (#31).
-        guard policy != .never, canEditCaptions, !key.hasPrefix("file:") else { return }
+        guard policy != .never else { return }
+        if key.hasPrefix("file:") {
+            captionFileFromNewDescription(text, key: key, policy: policy)
+            return
+        }
+        guard canEditCaptions else { return }
         let names = self.names
         Task.detached(priority: .utility) {
             // The caption as Photos has it now: never the list's copy, which is empty until its details load, so
@@ -1285,6 +1522,28 @@ final class LibraryModel {
             let existing = AssetDetails.load(for: asset, names: names).caption
             guard policy.shouldWrite(text, over: existing) else { return }
             await Self.writeCaptionQuietly(UncheckedBox(value: asset), text.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
+    /// Save descriptions as captions for a file in an added folder (#31): the description goes into the file's caption
+    /// and accessibility fields, as Use Description as Caption does, quietly. Only for a file still listed: its key
+    /// holds its path in capitals, which can't be turned back into the path itself.
+    private func captionFileFromNewDescription(_ text: String, key: String, policy: CaptionPolicy) {
+        guard let file = filesByID.values.first(where: { $0.descriptionKey == key }), !file.isVideo,
+              FileMetadataWriter.canWrite(name: file.name) else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = file.url
+        Task {
+            // The caption and alt text as the file has them now, never the list's copy, which is empty until its
+            // details are read.
+            let existing = await Task.detached(priority: .utility) { FileMetadata.read(url) }.value
+            var changes = FileMetadataChanges()
+            if policy.shouldWrite(trimmed, over: existing.caption) { changes.caption = trimmed }
+            // Alt text another app wrote is only replaced under Always, as a caption is.
+            if FileFields.mayWriteAltText(trimmed, over: existing.altText, policy: policy) { changes.accessibilityDescription = trimmed }
+            guard changes != FileMetadataChanges() else { return }
+            // Without the status bar or an error dialog, as for Photos; failures are logged.
+            _ = await writeFiles([(file, changes)])
         }
     }
 
