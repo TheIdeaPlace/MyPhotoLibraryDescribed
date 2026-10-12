@@ -321,13 +321,26 @@ public class MetadataWriterTests
 public class MetadataCacheTests
 {
     [Fact]
+    public void DetailsCachedBeforeTheStandardCaptionWasRead_AreReadAgain_ForJpegsOnly()
+    {
+        var cache = new MetadataCache(Path.Combine(Path.GetTempPath(), $"pf-{Guid.NewGuid():N}.json"));
+        var date = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var jpeg = new MediaItem(@"C:\p.jpg", 100, date, date);
+        var png = new MediaItem(@"C:\p.png", 100, date, date);
+        cache.Remember(jpeg, new MediaMetadata { Caption = "Old" });
+        cache.Remember(png, new MediaMetadata { Caption = "Old" });
+        Assert.Null(cache.Lookup(jpeg));
+        Assert.Equal("Old", cache.Lookup(png)!.Caption);
+    }
+
+    [Fact]
     public void Lookup_HitsOnlyWhileSizeAndDateMatch()
     {
         using var lib = new TestLibrary();
         var cache = new MetadataCache(lib.PathOf("cache.json"));
         var date = new DateTime(2020, 1, 1);
         var item = new MediaItem(@"C:\p\a.jpg", 100, date, date);
-        cache.Remember(item, new MediaMetadata { Caption = "Hi" });
+        cache.Remember(item, new MediaMetadata { Caption = "Hi", Version = MediaMetadata.CurrentVersion });
         Assert.Equal("Hi", cache.Lookup(item)!.Caption);
         Assert.Equal("Hi", cache.Lookup(new MediaItem(@"C:\P\A.JPG", 100, date, date))!.Caption);
         Assert.Null(cache.Lookup(new MediaItem(@"C:\p\a.jpg", 101, date, date)));
@@ -342,10 +355,10 @@ public class MetadataCacheTests
         var date = new DateTime(2020, 1, 1);
         var item = new MediaItem(@"C:\p\a.jpg", 100, date, date);
         var cache = new MetadataCache(file);
-        cache.Remember(item, new MediaMetadata { Caption = "Hi", Rating = 3, Latitude = 1.5, DateTaken = date });
+        cache.Remember(item, new MediaMetadata { Caption = "Hi", Rating = 3, Latitude = 1.5, DateTaken = date, Version = MediaMetadata.CurrentVersion });
         cache.Save();
         var loaded = new MetadataCache(file).Lookup(item);
-        Assert.Equal(new MediaMetadata { Caption = "Hi", Rating = 3, Latitude = 1.5, DateTaken = date }, loaded);
+        Assert.Equal(new MediaMetadata { Caption = "Hi", Rating = 3, Latitude = 1.5, DateTaken = date, Version = MediaMetadata.CurrentVersion }, loaded);
     }
 
     [Fact]

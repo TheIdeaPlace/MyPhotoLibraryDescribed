@@ -35,6 +35,8 @@ public sealed class MetadataCache
         lock (_lock)
         {
             return Entries.TryGetValue(item.Path, out var e) && e.Size == item.Size && e.ModifiedTicks == Stamp(item)
+                   // Read by an older version without dc:description: read again, once.
+                   && (e.Metadata.Version >= MediaMetadata.CurrentVersion || !XmpFields.CanWrite(item.Path))
                 ? e.Metadata : null;
         }
     }

@@ -82,7 +82,7 @@
                 <v:AppMenuItem Command="v:AppCommands.UseDescriptionAsCaption" />
                 <v:AppMenuItem x:Name="AutoDescribeItem" Command="v:AppCommands.AutoDescribe" IsCheckable="True" />
                 <v:AppMenuItem Header="Description T_ype" x:Name="KindMenu" />
-                <v:AppMenuItem Header="Save Descriptions as Capt_ions" x:Name="CaptionPolicyMenu" />
+                <v:AppMenuItem Header="Save Descriptions _in Photos" x:Name="SaveInPhotosItem" IsCheckable="True" Click="SaveInPhotos_Click" />
                 <v:AppMenuItem x:Name="BackgroundDescribeItem" Command="v:AppCommands.DescribeInBackground" IsCheckable="True" />
                 <v:AppMenuItem Command="v:AppCommands.StopBackground" />
             </v:AppMenuItem>

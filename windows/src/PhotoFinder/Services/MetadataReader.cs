@@ -44,7 +44,33 @@ public static class MetadataReader
     {
         var file = await StorageFile.GetFileFromPathAsync(path);
         var props = await file.Properties.RetrievePropertiesAsync(ListKeys);
-        return FromProperties(props);
+        var metadata = FromProperties(props);
+        if (!XmpFields.CanWrite(path)) return metadata with { Version = MediaMetadata.CurrentVersion };
+        XmpFields.Fields xmp;
+        try
+        {
+            xmp = await XmpFields.ReadAsync(path);
+        }
+        catch (Exception)
+        {
+            // Not readable as a photo: the Title is all there is.
+            return metadata with { Version = MediaMetadata.CurrentVersion };
+        }
+        // The standard caption field first, then the Title, where older files (and Photo Finder before #62) keep it.
+        return metadata with
+        {
+            Caption = xmp.Caption.Length > 0 ? xmp.Caption : metadata.Caption,
+            AltText = xmp.AltText,
+            Version = MediaMetadata.CurrentVersion,
+        };
+    }
+
+    /// <summary>The file's Title (System.Title) alone, to keep it in step with the caption.</summary>
+    public static async Task<string> ReadTitleAsync(string path)
+    {
+        var file = await StorageFile.GetFileFromPathAsync(path);
+        var props = await file.Properties.RetrievePropertiesAsync([Title]);
+        return (Get(props, Title) as string)?.Trim() ?? "";
     }
 
     /// <summary>Builds metadata from raw property values. Separate from reading so it's tested without files.</summary>

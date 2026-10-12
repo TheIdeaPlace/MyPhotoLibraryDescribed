@@ -61,7 +61,7 @@ public partial class MainWindow : Window
         BuildColumns();
         BuildSortMenu();
         BuildKindMenu();
-        BuildCaptionPolicyMenu();
+        SaveInPhotosItem.IsChecked = model.Settings.SaveDescriptionsInPhotos;
         SetUpDescriptionPanel();
         // WPF presses a button by its access key on a plain letter when focus is somewhere that doesn't take typing (the
         // gallery photo, the sidebar, the status bar): "c" in the gallery would run Use as Caption and change the file.
@@ -301,36 +301,28 @@ public partial class MainWindow : Window
         };
     }
 
-    /// <summary>Photo > Save Descriptions as Captions: Never, Only When There's No Caption, or Always.</summary>
-    private void BuildCaptionPolicyMenu()
+    /// <summary>Photo > Save Descriptions in Photos (#62, Kelly's 12 Oct direction): one switch, off until the person agrees
+    /// once. Asking is the permission to change their photos; when on, only empty captions and alt text are filled.</summary>
+    private void SaveInPhotos_Click(object sender, RoutedEventArgs e) => SetSaveInPhotos(!_model.Settings.SaveDescriptionsInPhotos);
+
+    internal void SetSaveInPhotos(bool on)
     {
-        foreach (var (policy, _, header) in CaptionPolicies.All)
+        if (on && !QuestionDialog.Ask(ActiveWindow, "Save Descriptions in Photos", "Save descriptions in your photos?",
+                "From now on, each new description is also saved in the photo: as its caption when it has none, and in the file's accessibility fields. Captions and alt text that you or other apps wrote are never replaced. You can turn this off at any time.",
+                "Save in Photos"))
         {
-            var item = new AppMenuItem { Header = header, IsCheckable = true, Tag = policy };
-            item.Click += (_, _) => SetCaptionPolicy(policy);
-            CaptionPolicyMenu.Items.Add(item);
+            SaveInPhotosItem.IsChecked = false;
+            return;
         }
-        CaptionPolicyMenu.SubmenuOpened += (_, _) =>
-        {
-            foreach (MenuItem item in CaptionPolicyMenu.Items) item.IsChecked = (CaptionPolicy)item.Tag == _model.Settings.CaptionPolicy;
-        };
-    }
-
-    internal void SetCaptionPolicy(CaptionPolicy policy)
-    {
-        _model.Settings.CaptionPolicy = policy;
+        _model.Settings.SaveDescriptionsInPhotos = on;
         _model.SaveSettings();
-        Services.Announcer.Announce(policy switch
-        {
-            CaptionPolicy.WhenEmpty => "New descriptions are saved as captions when a photo has no caption",
-            CaptionPolicy.Always => "New descriptions are saved as captions",
-            _ => "Descriptions aren't saved as captions",
-        });
+        SaveInPhotosItem.IsChecked = on;
+        Services.Announcer.Announce(on ? "New descriptions are saved in your photos" : "Descriptions aren't saved in your photos");
     }
 
-    /// <summary>Photo > Use Description as Caption: each chosen photo's saved description becomes its caption, the
-    /// file's Title. Captions are read from the files first, never the list's copy (empty until details load), so one
-    /// someone wrote is never replaced without asking.</summary>
+    /// <summary>Photo > Use Description as Caption: each chosen photo's saved description becomes its caption, and for JPEG
+    /// and TIFF files its alt text too (the accessibility fields, #62). What's in the files is read first, never the list's
+    /// copy (empty until details load), so a caption or alt text someone wrote is never replaced without asking.</summary>
     /// <param name="owner">The window asking: Get Info, or this one.</param>
     /// <param name="kind">The description type to use (Get Info's choice); otherwise Photo > Description Type.</param>
     internal async Task UseDescriptionAsCaptionAsync(IReadOnlyList<FileRow> rows, Window? owner = null, string? kind = null)
@@ -357,12 +349,13 @@ public partial class MainWindow : Window
         // Each caption as the file has it now. One that can't be read (locked, moved) is left alone.
         var current = await Task.Run(async () =>
         {
-            var list = new List<(FileRow Row, string Text, string Caption)>();
+            var list = new List<(FileRow Row, string Text, string Caption, string AltText)>();
             foreach (var (row, text) in described)
             {
                 try
                 {
-                    list.Add((row, text, (await MetadataReader.ReadAsync(row.Item!.Path)).Caption.Trim()));
+                    var now = await MetadataReader.ReadAsync(row.Item!.Path);
+                    list.Add((row, text, now.Caption.Trim(), now.AltText.Trim()));
                 }
                 catch (Exception)
                 {
@@ -376,18 +369,26 @@ public partial class MainWindow : Window
             ShowError("The captions couldn't be read, so they weren't changed.", owner);
             return;
         }
-        var replacing = current.Where(c => c.Caption.Length > 0 && c.Caption != c.Text).ToList();
+        // The Mac's question: "Replace the caption and alt text of name?" with what each holds, or, for several photos,
+        // "Replace what's already in N photos?".
+        var replacing = current
+            .SelectMany(c => FileFields.Replaced(c.Caption, XmpFields.CanWrite(c.Row.Item!.Path) ? c.AltText : "", c.Text)
+                .Select(f => (c.Row.Name, f.Field, f.Current)))
+            .ToList();
         if (replacing.Count > 0)
         {
-            var question = replacing.Count == 1
-                ? $"Replace the caption of {replacing[0].Row.Name}?\n\nIts caption is: {replacing[0].Caption}"
-                : $"Replace the captions of {replacing.Count} photos?\n\nTheir captions will be replaced with their descriptions.";
+            var names = replacing.Select(r => r.Name).Distinct().ToList();
+            var question = names.Count == 1
+                ? $"Replace the {string.Join(" and ", replacing.Select(r => r.Field))} of {names[0]}?\n\n" + string.Join("\n", replacing.Select(r => $"Its {r.Field} is: {r.Current}"))
+                : $"Replace what's already in {names.Count} photos?\n\nTheir captions or alt text will be replaced with their descriptions.";
             if (MessageBox.Show(owner, question, "Use Description as Caption", MessageBoxButton.YesNo, MessageBoxImage.Question,
                     MessageBoxResult.No) != MessageBoxResult.Yes)
                 return;
         }
-        // Already the caption: nothing to write, but it counts as saved.
-        var toWrite = current.Where(c => c.Caption != c.Text).Select(c => (c.Row.Item!, c.Text)).ToList();
+        // Already holding it (caption, and alt text where the file has one): nothing to write, but it counts as saved.
+        var toWrite = current
+            .Where(c => c.Caption != c.Text || (XmpFields.CanWrite(c.Row.Item!.Path) && c.AltText != FileFields.AltText(c.Text)))
+            .Select(c => (c.Row.Item!, c.Text)).ToList();
         await _model.SaveCaptionsAsync(toWrite, current.Count - toWrite.Count, photos.Count - described.Count);
         if (unreadable > 0)
             ShowError(unreadable == 1 ? "1 caption couldn't be read, so it wasn't changed." : $"{unreadable} captions couldn't be read, so they weren't changed.", owner);

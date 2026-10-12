@@ -7,20 +7,66 @@ namespace PhotoFinder.Services;
 /// File Explorer uses, so they travel with the file (and sync with OneDrive).</summary>
 public static class MetadataWriter
 {
-    /// <summary>Sets the caption (System.Title). Empty removes it.</summary>
-    public static Task<WriteResult> SetCaptionAsync(IReadOnlyList<MediaItem> items, string caption)
-    {
-        var text = caption.Trim();
-        return WriteAsync(items, "System.Title", text.Length == 0 ? null : text);
-    }
+    /// <summary>Sets the caption on each file. Empty removes it.</summary>
+    public static Task<WriteResult> SetCaptionAsync(IReadOnlyList<MediaItem> items, string caption) =>
+        SetFieldsAsync(items.Select(i => new FieldChanges(i, caption.Trim(), null)).ToList());
 
     /// <summary>Sets a different caption on each file.</summary>
-    public static async Task<WriteResult> SetCaptionsAsync(IReadOnlyList<(MediaItem Item, string Caption)> captions)
+    public static Task<WriteResult> SetCaptionsAsync(IReadOnlyList<(MediaItem Item, string Caption)> captions) =>
+        SetFieldsAsync(captions.Select(c => new FieldChanges(c.Item, c.Caption, null)).ToList());
+
+    /// <summary>What to change in one file: the caption, and a description for the accessibility fields (the alt text from
+    /// it, and the extended description when the alt text is shorter). Null leaves a field as it is.</summary>
+    public sealed record FieldChanges(MediaItem Item, string? Caption, string? AccessibilityDescription);
+
+    /// <summary>
+    /// The caption goes in the standard field, XMP's dc:description, in JPEG and TIFF files, with Explorer's Title kept in
+    /// step when it's empty or still holds the old caption (so a title someone wrote is left alone). Other formats keep
+    /// the caption in the Title, as before. The accessibility fields are written to JPEG and TIFF only.
+    /// </summary>
+    public static async Task<WriteResult> SetFieldsAsync(IReadOnlyList<FieldChanges> changes)
     {
         var failures = new List<(MediaItem Item, string Reason)>();
-        foreach (var (item, caption) in captions)
-            failures.AddRange((await SetCaptionAsync([item], caption)).Failures);
-        return new WriteResult(captions.Count - failures.Count, failures);
+        foreach (var change in changes)
+        {
+            var item = change.Item;
+            try
+            {
+                if (XmpFields.CanWrite(item.Path))
+                {
+                    string? title = null, oldCaption = null;
+                    if (change.Caption is not null)
+                    {
+                        title = await MetadataReader.ReadTitleAsync(item.Path);
+                        var old = (await XmpFields.ReadAsync(item.Path)).Caption;
+                        oldCaption = old.Length > 0 ? old : title;
+                    }
+                    string? alt = null, extended = null;
+                    if (change.AccessibilityDescription is { } description)
+                    {
+                        alt = FileFields.AltText(description);
+                        // Cleared when the alt text holds it all, so an older long description doesn't linger.
+                        extended = FileFields.ExtendedDescription(description) ?? "";
+                    }
+                    await XmpFields.WriteAsync(item.Path, change.Caption, alt, extended);
+                    if (change.Caption is { } caption && FileFields.TitleKeepsInStep(title!, oldCaption!) && title!.Trim() != caption.Trim())
+                    {
+                        var result = await WriteAsync([item], "System.Title", caption.Trim().Length == 0 ? null : caption.Trim());
+                        failures.AddRange(result.Failures);
+                    }
+                }
+                else if (change.Caption is { } caption)
+                {
+                    failures.AddRange((await WriteAsync([item], "System.Title", caption.Trim().Length == 0 ? null : caption.Trim())).Failures);
+                }
+            }
+            catch (Exception ex)
+            {
+                failures.Add((item, Reason(item, ex)));
+            }
+        }
+        var failed = failures.Select(f => f.Item).Distinct().Count();
+        return new WriteResult(changes.Count - failed, failures.DistinctBy(f => f.Item).ToList());
     }
 
     /// <summary>Sets the rating, 0 to 5 stars. 0 removes it.</summary>

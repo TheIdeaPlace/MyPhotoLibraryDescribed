@@ -39,10 +39,10 @@ public sealed class CaptionTests : IDisposable
         Assert.False(CaptionPolicy.Always.ShouldWrite("   ", ""));
     }
 
-    private async Task<LibraryModel> StartAsync(CaptionPolicy policy)
+    private async Task<LibraryModel> StartAsync(bool saveInPhotos)
     {
         var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
-        var model = new LibraryModel(new Settings { CaptionPolicy = policy }, _lib.PathOf(@"data\Settings.json"),
+        var model = new LibraryModel(new Settings { SaveDescriptionsInPhotos = saveInPhotos }, _lib.PathOf(@"data\Settings.json"),
             new MetadataCache(_lib.PathOf(@"data\m.json")), () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1))
         { Descriptions = store };
         await model.StartAsync();
@@ -55,9 +55,9 @@ public sealed class CaptionTests : IDisposable
     private async Task<string> CaptionOf(string name) => (await MetadataReader.ReadAsync(_lib.PathOf(name))).Caption;
 
     [WpfFact]
-    public async Task OnlyWhenThereIsNoCaption_FillsEmptyCaptions_AndLeavesYoursAlone()
+    public async Task SaveInPhotos_FillsEmptyCaptionsAndAltText_AndLeavesYoursAlone()
     {
-        using var model = await StartAsync(CaptionPolicy.WhenEmpty);
+        using var model = await StartAsync(saveInPhotos: true);
         // As if the list hadn't read its details yet: the file decides, not the list's copy.
         Item(model, "captioned.jpg").Metadata = null;
         model.Descriptions!.Put(Item(model, "plain.jpg"), "accessible", "A plain test picture.");
@@ -69,29 +69,43 @@ public sealed class CaptionTests : IDisposable
         Assert.DoesNotContain(_announced, a => a.Contains("Caption"));
         // The description is kept for the file, whose size and date the caption changed.
         Assert.Equal("A plain test picture.", model.Descriptions.Get(Item(model, "plain.jpg"), "accessible"));
+        // In the standard caption field, with Explorer's Title (empty) kept in step, and the alt text filled too.
+        var fields = await XmpFields.ReadAsync(_lib.PathOf("plain.jpg"));
+        Assert.Equal("A plain test picture.", fields.Caption);
+        Assert.Equal("A plain test picture.", fields.AltText);
+        Assert.Equal("A plain test picture.", await MetadataReader.ReadTitleAsync(_lib.PathOf("plain.jpg")));
+        // The captioned photo's alt text was empty, so it's filled, but its caption isn't touched.
+        Assert.Equal("A captioned test picture.", (await XmpFields.ReadAsync(_lib.PathOf("captioned.jpg"))).AltText);
     }
 
     [WpfFact]
-    public async Task Always_ReplacesCaptions_AndNever_LeavesThemAlone()
+    public async Task WithSaveInPhotosOff_NothingIsWritten()
     {
-        using (var model = await StartAsync(CaptionPolicy.Never))
-        {
-            model.Descriptions!.Put(Item(model, "plain.jpg"), "accessible", "Not saved as a caption.");
-            await model.CaptionsWritten;
-            Assert.Equal("", await CaptionOf("plain.jpg"));
-        }
-        using (var model = await StartAsync(CaptionPolicy.Always))
-        {
-            model.Descriptions!.Put(Item(model, "captioned.jpg"), "accessible", "Replaced by the description.");
-            await model.CaptionsWritten;
-            Assert.Equal("Replaced by the description.", await CaptionOf("captioned.jpg"));
-        }
+        using var model = await StartAsync(saveInPhotos: false);
+        model.Descriptions!.Put(Item(model, "plain.jpg"), "accessible", "Not saved in the photo.");
+        await model.CaptionsWritten;
+        Assert.Equal("", await CaptionOf("plain.jpg"));
+        Assert.Equal("", (await XmpFields.ReadAsync(_lib.PathOf("plain.jpg"))).AltText);
+    }
+
+    [Fact]
+    public void TheOldThreeWaySetting_CarriesOver()
+    {
+        var path = _lib.PathOf(@"data\old-settings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """{ "CaptionPolicy": 2 }""");
+        Assert.True(Settings.Load(path).SaveDescriptionsInPhotos);
+        File.WriteAllText(path, """{ "CaptionPolicy": 1 }""");
+        Assert.True(Settings.Load(path).SaveDescriptionsInPhotos);
+        File.WriteAllText(path, """{ "CaptionPolicy": 0 }""");
+        Assert.False(Settings.Load(path).SaveDescriptionsInPhotos);
+        Assert.False(new Settings().SaveDescriptionsInPhotos);
     }
 
     [WpfFact]
     public async Task YourOwnChange_WhileACaptionIsWrittenFromADescription_WaitsRatherThanBeingRefused()
     {
-        using var model = await StartAsync(CaptionPolicy.Always);
+        using var model = await StartAsync(saveInPhotos: true);
         model.Descriptions!.Put(Item(model, "plain.jpg"), "accessible", "A plain test picture.");
         // At once, while that caption is being written.
         var favorite = model.ToggleFavoriteAsync([model.Rows.Single(r => r.Name == "captioned.jpg")]);
@@ -104,9 +118,9 @@ public sealed class CaptionTests : IDisposable
     }
 
     [WpfFact]
-    public async Task ACaptionYouJustSaved_IsntReplaced_UnderOnlyWhenThereIsNoCaption()
+    public async Task ACaptionYouJustSaved_IsntReplaced()
     {
-        using var model = await StartAsync(CaptionPolicy.WhenEmpty);
+        using var model = await StartAsync(saveInPhotos: true);
         var plain = model.Rows.Single(r => r.Name == "plain.jpg");
         // Your caption starts saving, then a description arrives for the same photo.
         var yours = model.SaveCaptionAsync([plain], "Mine");
@@ -116,9 +130,9 @@ public sealed class CaptionTests : IDisposable
     }
 
     [WpfFact]
-    public async Task UseDescriptionAsCaption_SavesIt_OrSaysItHasntBeenDescribed_AndTheSettingIsAMenuChoice()
+    public async Task UseDescriptionAsCaption_SavesIt_OrSaysItHasntBeenDescribed_AndSaveInPhotosAsksOnce()
     {
-        using var model = await StartAsync(CaptionPolicy.Never);
+        using var model = await StartAsync(saveInPhotos: false);
         var window = new MainWindow(model) { ShowActivated = false };
         window.Show();
         try
@@ -136,11 +150,36 @@ public sealed class CaptionTests : IDisposable
             Assert.Equal("A plain test picture.", await CaptionOf("plain.jpg"));
             Assert.Contains("Caption saved", _announced);
 
-            var menu = (MenuItem)window.FindName("CaptionPolicyMenu");
-            Assert.Equal(["Never", "Only When There's No Caption", "Always"],
-                menu.Items.OfType<MenuItem>().Select(m => ((string)m.Header).Replace("_", "")));
-            window.SetCaptionPolicy(CaptionPolicy.WhenEmpty);
-            Assert.Equal(CaptionPolicy.WhenEmpty, Settings.Load(_lib.PathOf(@"data\Settings.json")).CaptionPolicy);
+            // The command writes the alt text too, and the caption goes in the standard field.
+            Assert.Equal("A plain test picture.", (await XmpFields.ReadAsync(_lib.PathOf("plain.jpg"))).AltText);
+
+            // Turning Save Descriptions in Photos on asks once; Cancel leaves it off.
+            var asked = new List<string>();
+            var original = QuestionDialog.Ask;
+            try
+            {
+                QuestionDialog.Ask = (_, _, question, _, yes) => { asked.Add($"{question} [{yes}]"); return false; };
+                window.SetSaveInPhotos(true);
+                Assert.Equal(["Save descriptions in your photos? [Save in Photos]"], asked);
+                Assert.False(model.Settings.SaveDescriptionsInPhotos);
+                Assert.False(window.SaveInPhotosItem.IsChecked);
+
+                QuestionDialog.Ask = (_, _, _, _, _) => true;
+                window.SetSaveInPhotos(true);
+                Assert.True(Settings.Load(_lib.PathOf(@"data\Settings.json")).SaveDescriptionsInPhotos);
+                Assert.True(window.SaveInPhotosItem.IsChecked);
+                Assert.Contains("New descriptions are saved in your photos", _announced);
+
+                // Turning it off doesn't ask.
+                QuestionDialog.Ask = (_, _, _, _, _) => throw new InvalidOperationException("Asked to turn off");
+                window.SetSaveInPhotos(false);
+                Assert.False(model.Settings.SaveDescriptionsInPhotos);
+                Assert.Contains("Descriptions aren't saved in your photos", _announced);
+            }
+            finally
+            {
+                QuestionDialog.Ask = original;
+            }
         }
         finally
         {

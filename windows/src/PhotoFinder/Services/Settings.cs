@@ -26,8 +26,17 @@ public sealed class Settings
     public bool AutoDescribe { get; set; } = true;
     /// <summary>Describe the photos in a folder, behind the scenes, when it's added to the library.</summary>
     public bool DescribeInBackground { get; set; }
-    /// <summary>Photo > Save Descriptions as Captions: also write each new description into the photo's caption.</summary>
+    /// <summary>Photo > Save Descriptions in Photos (#62): each new description is also saved in the photo, filling its
+    /// caption and alt text when they're empty. Off until the person agrees once.</summary>
+    public bool SaveDescriptionsInPhotos { get; set; }
+
+    /// <summary>The three-way setting this replaced, read once to carry the choice over: Never becomes off, Only When
+    /// There's No Caption and Always become on (Always as the safer "only when empty"). Always Never once read.</summary>
     public CaptionPolicy CaptionPolicy { get; set; } = CaptionPolicy.Never;
+
+    /// <summary>What Save Descriptions in Photos means for a caption or alt text already there.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public CaptionPolicy SavePolicy => SaveDescriptionsInPhotos ? CaptionPolicy.WhenEmpty : CaptionPolicy.Never;
     /// <summary>View > Show Description: the Description panel beside the list or gallery. On unless hidden.</summary>
     public bool ShowDescriptionPanel { get; set; } = true;
     public double DescriptionPanelWidth { get; set; } = 320;
@@ -53,7 +62,15 @@ public sealed class Settings
         try
         {
             if (File.Exists(path))
-                return JsonSerializer.Deserialize<Settings>(File.ReadAllText(path)) ?? new Settings();
+            {
+                var settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path)) ?? new Settings();
+                if (settings.CaptionPolicy != CaptionPolicy.Never)
+                {
+                    settings.SaveDescriptionsInPhotos = true;
+                    settings.CaptionPolicy = CaptionPolicy.Never;
+                }
+                return settings;
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {

@@ -1,7 +1,7 @@
 namespace PhotoFinder.Models;
 
-/// <summary>Photo > Save Descriptions as Captions (#30): whether a new description is also written into the photo's
-/// caption, the file's Title. Off unless chosen: a caption is the person's own words. Same choices as the Mac.</summary>
+/// <summary>Whether a new description is also written into a photo's caption (#30). Since #62 the person chooses only
+/// on or off (Save Descriptions in Photos), which means WhenEmpty; the other values remain for reading old settings.</summary>
 public enum CaptionPolicy { Never, WhenEmpty, Always }
 
 public static class CaptionPolicies

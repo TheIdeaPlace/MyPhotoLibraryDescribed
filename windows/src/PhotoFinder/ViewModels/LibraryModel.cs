@@ -577,7 +577,9 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         var saved = alreadyCaptioned;
         if (captions.Count > 0)
         {
-            var result = await WriteAsync("Saving caption…", captions.Select(c => c.Item).ToList(), _ => MetadataWriter.SetCaptionsAsync(captions));
+            // The caption, and for JPEG and TIFF files the accessibility fields too: choosing the command is the permission.
+            var changes = captions.Select(c => new MetadataWriter.FieldChanges(c.Item, c.Caption, XmpFields.CanWrite(c.Item.Path) ? c.Caption : null)).ToList();
+            var result = await WriteAsync("Saving caption…", captions.Select(c => c.Item).ToList(), _ => MetadataWriter.SetFieldsAsync(changes));
             saved += result.Succeeded;
         }
         if (saved == 0) return;
@@ -659,7 +661,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             if (kind == _settings.DescriptionKind && _rowsByPath.TryGetValue(path, out var row)) row.Description = text;
             DescriptionsChanged?.Invoke(path);
             // Online-only photos would have to be downloaded to be changed, which isn't done without asking.
-            if (_settings.CaptionPolicy == CaptionPolicy.Never || item.IsVideo || item.IsOnlineOnly) return;
+            if (!_settings.SaveDescriptionsInPhotos || item.IsVideo || item.IsOnlineOnly) return;
             _pendingCaptions[path] = text;
             if (!_writingCaptions) CaptionsWritten = WriteCaptionsFromDescriptionsAsync();
         }
@@ -685,7 +687,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             {
                 var batch = _pendingCaptions.ToList();
                 _pendingCaptions.Clear();
-                if (_settings.CaptionPolicy == CaptionPolicy.Never) continue;
+                if (!_settings.SaveDescriptionsInPhotos) continue;
                 var byPath = _items.ToDictionary(i => i.Path, StringComparer.OrdinalIgnoreCase);
                 var candidates = batch.Where(b => byPath.TryGetValue(b.Key, out var i) && !i.IsOnlineOnly)
                     .Select(b => (Item: byPath[b.Key], Text: b.Value.Trim())).ToList();
@@ -695,20 +697,24 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
                     await WriteAsync("", candidates.Select(c => c.Item).ToList(), async _ =>
                     {
                         // Decided here, holding the write gate: nothing can change a caption between reading and writing.
-                        var policy = _settings.CaptionPolicy;
-                        var chosen = new List<(MediaItem Item, string Caption)>();
+                        // Only what's empty is filled: never a caption or alt text a person or another app wrote.
+                        var policy = _settings.SavePolicy;
+                        var chosen = new List<MetadataWriter.FieldChanges>();
                         foreach (var (item, text) in candidates)
                         {
                             try
                             {
-                                if (policy.ShouldWrite(text, (await MetadataReader.ReadAsync(item.Path)).Caption)) chosen.Add((item, text));
+                                var now = await MetadataReader.ReadAsync(item.Path);
+                                var caption = policy.ShouldWrite(text, now.Caption) ? text : null;
+                                var alt = XmpFields.CanWrite(item.Path) && policy == CaptionPolicy.WhenEmpty && now.AltText.Length == 0 ? text : null;
+                                if (caption is not null || alt is not null) chosen.Add(new(item, caption, alt));
                             }
                             catch (Exception)
                             {
-                                // Unreadable now (moved, locked): its caption is left alone.
+                                // Unreadable now (moved, locked): it's left alone.
                             }
                         }
-                        return chosen.Count == 0 ? new WriteResult(0, []) : await MetadataWriter.SetCaptionsAsync(chosen);
+                        return chosen.Count == 0 ? new WriteResult(0, []) : await MetadataWriter.SetFieldsAsync(chosen);
                     }, quiet: true);
                 }
                 catch (Exception ex)
