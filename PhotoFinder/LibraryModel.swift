@@ -65,17 +65,17 @@ final class LibraryModel {
     }
     @ObservationIgnored private var fillingDescriptions = false
     /// View > Show Description: the Description panel beside the list or gallery (#50). On unless turned off.
-    var showDescriptionPanel: Bool = UserDefaults.standard.object(forKey: "showDescriptionPanel") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(showDescriptionPanel, forKey: "showDescriptionPanel") }
+    var showDescriptionPanel: Bool {
+        didSet { defaults.set(showDescriptionPanel, forKey: "showDescriptionPanel") }
     }
     /// Photos being described right now, by row id and how many describes are running on each, so the Description
     /// panel can say "Describing…" until the last one finishes.
     private(set) var describingIDs: [String: Int] = [:]
     /// The list's sort, remembered between launches as a column and a direction, as Windows does (#46).
-    var sortOrder: [KeyPathComparator<FileRow>] = ColumnOrder.savedSort(UserDefaults.standard) {
+    var sortOrder: [KeyPathComparator<FileRow>] {
         didSet {
             rows.sort(using: sortOrder)
-            ColumnOrder.saveSort(sortOrder, to: UserDefaults.standard)
+            ColumnOrder.saveSort(sortOrder, to: defaults)
         }
     }
     var selection: Set<String> = [] {
@@ -106,20 +106,20 @@ final class LibraryModel {
     }
     var viewMode: ViewMode = .list {
         didSet {
-            UserDefaults.standard.set(viewMode.rawValue, forKey: "viewMode")
+            defaults.set(viewMode.rawValue, forKey: "viewMode")
             if viewMode == .gallery { ensureGallerySelection() }
         }
     }
     /// The columns shown, in the order they're shown and read. Always includes Name.
     var columnOrder: [String] = ColumnOrder.defaultOrder {
         didSet {
-            UserDefaults.standard.set(columnOrder, forKey: "columnOrder")
+            defaults.set(columnOrder, forKey: "columnOrder")
             if showsDescriptionColumn, !oldValue.contains("description") { fillDescriptions() }
         }
     }
     /// What the gallery says, in order, when you move to a photo (View > Labels > Gallery, #38). Position by default.
     var galleryLabels: [GalleryItem] = GalleryLabels.defaultOrder {
-        didSet { UserDefaults.standard.set(galleryLabels.map(\.rawValue), forKey: GalleryLabels.defaultsKey) }
+        didSet { defaults.set(galleryLabels.map(\.rawValue), forKey: GalleryLabels.defaultsKey) }
     }
     var labelsSheetShown = false {
         didSet { if !labelsSheetShown, oldValue { autoDescriber.refocused(currentID: autoDescribeCandidate) } }
@@ -137,7 +137,7 @@ final class LibraryModel {
     /// The files listed when an added folder is showing, by row id (#36). Empty for Photos' albums.
     @ObservationIgnored private var filesByID: [String: MediaFile] = [:]
     /// Folders added to the library (File > Add Folder to Library…), in the order they were added.
-    private(set) var folderRoots: [String] = FolderRoots.load()
+    private(set) var folderRoots: [String]
     /// The Folders section's tree, from the last scan of the added folders.
     @ObservationIgnored private var folderNodes: [FolderNode] = []
     /// Photos' own sidebar sections from the last full rebuild, kept so a folder scan rebuilds only Folders (#47).
@@ -173,7 +173,14 @@ final class LibraryModel {
     @ObservationIgnored private var nameFillTask: Task<Void, Never>?
     private let names = NameCache()
     /// Apple Intelligence descriptions already made, shared by Get Info and background describing.
-    let descriptions = DescriptionCache()
+    let descriptions: DescriptionCache
+    /// Where settings are remembered: the app's own defaults, or a suite of their own in tests.
+    @ObservationIgnored private let defaults: UserDefaults
+    /// Apple Intelligence, as Describe Photo, Redescribe and describing automatically use it; nil where it can't be
+    /// used (before macOS 27). A stand-in in tests, so describing can be tested on any Mac.
+    @ObservationIgnored var photoDescribing: PhotoDescribing?
+    /// Says something with VoiceOver; `queued` waits for what it's saying. Collected instead in tests.
+    @ObservationIgnored var announcer: @MainActor (_ message: String, _ queued: Bool) -> Void = LibraryModel.postAnnouncement
     /// Every photo, watched for new ones to describe in the background.
     @ObservationIgnored private var allPhotosFetch: PHFetchResult<PHAsset>?
     /// The background describer (macOS 27), kept untyped so this class builds with older SDKs too.
@@ -193,14 +200,14 @@ final class LibraryModel {
     /// Changes whenever a description is saved, so views showing one (the gallery) update.
     private(set) var descriptionRevision = 0
     /// Photo > Describe Photos Automatically; on unless turned off.
-    var describeAutomatically: Bool = UserDefaults.standard.object(forKey: "describeAutomatically") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(describeAutomatically, forKey: "describeAutomatically") }
+    var describeAutomatically: Bool {
+        didSet { defaults.set(describeAutomatically, forKey: "describeAutomatically") }
     }
     @ObservationIgnored private lazy var autoDescriber = makeAutoDescriber()
 
     /// Describe photos added to the Photos library behind the scenes, so their descriptions are ready in Get Info.
-    var describeInBackground: Bool = UserDefaults.standard.bool(forKey: "describeInBackground") {
-        didSet { UserDefaults.standard.set(describeInBackground, forKey: "describeInBackground") }
+    var describeInBackground: Bool {
+        didSet { defaults.set(describeInBackground, forKey: "describeInBackground") }
     }
     nonisolated private static let log = Logger(subsystem: "net.theideaplace.PhotoFinder", category: "library")
     private let imageManager = PHCachingImageManager()
@@ -212,18 +219,34 @@ final class LibraryModel {
         return options
     }()
 
-    init() {
-        if let raw = UserDefaults.standard.string(forKey: "viewMode"), let mode = ViewMode(rawValue: raw) {
+    /// - Parameters:
+    ///   - descriptions: the saved descriptions; tests pass one in a temporary folder.
+    ///   - defaults: where settings are remembered; tests pass a suite of their own.
+    ///   - photoDescribing: Apple Intelligence where it can be used; tests pass a stand-in.
+    init(descriptions: DescriptionCache = DescriptionCache(), defaults: UserDefaults = .standard,
+         photoDescribing: PhotoDescribing? = .appleIntelligence) {
+        self.descriptions = descriptions
+        self.defaults = defaults
+        self.photoDescribing = photoDescribing
+        showDescriptionPanel = defaults.object(forKey: "showDescriptionPanel") as? Bool ?? true
+        sortOrder = ColumnOrder.savedSort(defaults)
+        folderRoots = FolderRoots.load(from: defaults)
+        describeAutomatically = defaults.object(forKey: "describeAutomatically") as? Bool ?? true
+        describeInBackground = defaults.bool(forKey: "describeInBackground")
+        saveInPhotos = CaptionPolicy.isOn(in: defaults)
+        lookUpPlaceNames = PlaceNames.isOn(in: defaults)
+        availableUpdate = Updates.remembered(running: AppInfo.shortVersion, in: defaults)
+        if let raw = defaults.string(forKey: "viewMode"), let mode = ViewMode(rawValue: raw) {
             viewMode = mode
         }
-        if let saved = UserDefaults.standard.stringArray(forKey: "columnOrder") {
+        if let saved = defaults.stringArray(forKey: "columnOrder") {
             columnOrder = ColumnOrder.clean(saved)
-        } else if let data = UserDefaults.standard.data(forKey: "columns"),
+        } else if let data = defaults.data(forKey: "columns"),
                   let migrated = ColumnOrder.migrate(customization: data) {
             // Columns from before they could be reordered: keep which were on, in the default order.
             columnOrder = migrated
         }
-        if let saved = UserDefaults.standard.stringArray(forKey: GalleryLabels.defaultsKey) {
+        if let saved = defaults.stringArray(forKey: GalleryLabels.defaultsKey) {
             galleryLabels = GalleryLabels.clean(saved)
         }
         // Descriptions are saved a couple of seconds after each change; don't lose one made just before quitting.
@@ -1047,7 +1070,7 @@ final class LibraryModel {
             }
         }
         folderRoots = roots
-        FolderRoots.save(roots)
+        FolderRoots.save(roots, to: defaults)
         refreshFolders()
         if added.isEmpty {
             announce(already.count == 1 ? "\(already[0]) is already in the library" : "Those folders are already in the library")
@@ -1077,7 +1100,7 @@ final class LibraryModel {
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         folderRoots = FolderRoots.removing(root, from: folderRoots)
-        FolderRoots.save(folderRoots)
+        FolderRoots.save(folderRoots, to: defaults)
         folderNodes.removeAll { FolderRoots.same($0.path, root) }
         folderMediaPaths[root.lowercased()] = nil
         justAddedFolders.remove(root.lowercased())
@@ -1468,7 +1491,7 @@ final class LibraryModel {
     // MARK: - Descriptions as captions (#30)
 
     /// Photo > Save Descriptions in Photos: off until the person agrees once (Kelly, 12 Oct).
-    private(set) var saveInPhotos: Bool = CaptionPolicy.isOn(in: .standard)
+    private(set) var saveInPhotos: Bool
     var captionPolicy: CaptionPolicy { saveInPhotos ? .whenEmpty : .never }
 
     /// Save Descriptions in Photos, as the Photo menu and Settings show it: paused, and unchecked, while read-only.
@@ -1503,14 +1526,14 @@ final class LibraryModel {
             }
         }
         saveInPhotos = on
-        UserDefaults.standard.set(on, forKey: CaptionPolicy.key)
+        defaults.set(on, forKey: CaptionPolicy.key)
         announce(on ? "New descriptions are saved in your photos" : "Descriptions aren't saved in your photos")
     }
 
     // MARK: - Place names (#105)
 
     /// Settings > Look Up Place Names: off until the person agrees once, since it sends coordinates to Apple.
-    private(set) var lookUpPlaceNames: Bool = PlaceNames.isOn(in: .standard)
+    private(set) var lookUpPlaceNames: Bool
 
     /// Changed when a question behind a Settings checkbox is cancelled, so the checkbox is made again and shows off.
     private(set) var switchesRedraw = 0
@@ -1529,7 +1552,7 @@ final class LibraryModel {
             }
         }
         lookUpPlaceNames = on
-        UserDefaults.standard.set(on, forKey: PlaceNames.key)
+        defaults.set(on, forKey: PlaceNames.key)
         announce(on ? "Get Info looks up place names" : "Place names aren't looked up")
     }
 
@@ -2079,14 +2102,13 @@ final class LibraryModel {
 
     /// A newer Mac release, found by the quiet check at launch or by Check for Updates.
     /// Remembered across restarts until it's installed (#104), so Help keeps saying "Update to X available…".
-    private(set) var availableUpdate: Updates.Release? = Updates.remembered(running: AppInfo.shortVersion,
-                                                                             in: .standard) {
-        didSet { Updates.remember(availableUpdate, in: .standard) }
+    private(set) var availableUpdate: Updates.Release? {
+        didSet { Updates.remember(availableUpdate, in: defaults) }
     }
 
     /// Once a day at most, a moment after launch: is there a newer release? Says nothing; the Help menu item changes.
     func checkForUpdatesQuietly() {
-        let defaults = UserDefaults.standard
+        let defaults = self.defaults
         if let last = defaults.object(forKey: "lastUpdateCheck") as? Date, Date().timeIntervalSince(last) < 86_400 { return }
         Task {
             try? await Task.sleep(for: .seconds(5))
@@ -2100,7 +2122,7 @@ final class LibraryModel {
     /// The first launch after an update: says so, with See What's New, as the apps' shared update experience asks
     /// (The-Idea-Place-Projects#12). Not on a first run or after going back to an older version.
     func sayIfJustUpdated() {
-        let defaults = UserDefaults.standard
+        let defaults = self.defaults
         let current = AppInfo.shortVersion
         let last = defaults.string(forKey: "lastRunVersion")
         defaults.set(current, forKey: "lastRunVersion")
@@ -2134,7 +2156,7 @@ final class LibraryModel {
                     errorMessage = "Couldn't check for updates. Check your internet connection and try again."
                 }
             case .some(.none):
-                UserDefaults.standard.set(Date(), forKey: "lastUpdateCheck")
+                defaults.set(Date(), forKey: "lastUpdateCheck")
                 availableUpdate = nil
                 let alert = NSAlert()
                 alert.messageText = "\(AppInfo.name) is up to date"
@@ -2347,10 +2369,8 @@ final class LibraryModel {
 
     /// Why photos can't be described on this Mac right now, or nil when they can. Never sets anything up.
     var describeUnavailableReason: String? {
-#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
-        if #available(macOS 27, *) { return ImageConversation.unavailableReason }
-#endif
-        return "Describing photos needs Apple Intelligence on macOS 27 or later."
+        guard let photoDescribing else { return "Describing photos needs Apple Intelligence on macOS 27 or later." }
+        return photoDescribing.unavailableReason()
     }
 
     /// Describes the photo with Apple Intelligence and saves the description. Returns what to say: the description,
@@ -2366,44 +2386,42 @@ final class LibraryModel {
             describingIDs[id, default: 1] -= 1
             if describingIDs[id] == 0 { describingIDs[id] = nil }
         }
-#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
-        if #available(macOS 27, *) {
-            let key: String
-            let data: Data?
-            if let asset = assetsByID[id] {
-                key = asset.localIdentifier
-                let box = UncheckedBox(value: asset)
-                data = await PhotoData.request(box.value, allowNetwork: allowNetwork)?.data
-                if data == nil, !allowNetwork { return nil }
-            } else if let file = filesByID[id] {
-                key = file.descriptionKey
-                let url = file.url
-                data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url, options: .mappedIfSafe) }.value
-            } else {
-                return nil
-            }
-            // Dropped while loading (describing ahead, and you landed elsewhere): stop before the model is asked.
-            guard !Task.isCancelled else { return nil }
-            guard let data else { return "This photo couldn't be loaded" }
-            do {
-                guard let text = try await PhotoDescriber.describe(data), !text.isEmpty else {
-                    return "Apple Intelligence returned an empty description"
-                }
-                // A newer Describe Photo replaced this one: its description is the one to keep.
-                guard !Task.isCancelled, keep() else { return nil }
-                // Corrected in the Description panel while this was being described: the person's words win.
-                guard DescriptionCache.mayReplace(edited: descriptions.isEdited(forKey: key),
-                                                  saved: descriptions.description(forKey: key), agreed: replacingEdit)
-                else { return nil }
-                descriptions.remember(text, forKey: key)
-                return text
-            } catch {
-                return ImageConversation.message(for: error)
-            }
+        guard let photoDescribing else {
+            guard descriptionKey(for: id) != nil else { return nil }
+            return "Describing photos needs Apple Intelligence on macOS 27 or later."
         }
-#endif
-        guard descriptionKey(for: id) != nil else { return nil }
-        return "Describing photos needs Apple Intelligence on macOS 27 or later."
+        let key: String
+        let data: Data?
+        if let asset = assetsByID[id] {
+            key = asset.localIdentifier
+            let box = UncheckedBox(value: asset)
+            data = await PhotoData.request(box.value, allowNetwork: allowNetwork)?.data
+            if data == nil, !allowNetwork { return nil }
+        } else if let file = filesByID[id] {
+            key = file.descriptionKey
+            let url = file.url
+            data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url, options: .mappedIfSafe) }.value
+        } else {
+            return nil
+        }
+        // Dropped while loading (describing ahead, and you landed elsewhere): stop before the model is asked.
+        guard !Task.isCancelled else { return nil }
+        guard let data else { return "This photo couldn't be loaded" }
+        do {
+            guard let text = try await photoDescribing.describe(data), !text.isEmpty else {
+                return "Apple Intelligence returned an empty description"
+            }
+            // A newer Describe Photo replaced this one: its description is the one to keep.
+            guard !Task.isCancelled, keep() else { return nil }
+            // Corrected in the Description panel while this was being described: the person's words win.
+            guard DescriptionCache.mayReplace(edited: descriptions.isEdited(forKey: key),
+                                              saved: descriptions.description(forKey: key), agreed: replacingEdit)
+            else { return nil }
+            descriptions.remember(text, forKey: key)
+            return text
+        } catch {
+            return photoDescribing.failureMessage(error)
+        }
     }
 
     /// Spoken only if you're still on that photo and haven't asked about another since.
@@ -2587,6 +2605,11 @@ final class LibraryModel {
     }
 
     private func announce(_ message: String, queued: Bool = false) {
+        announcer(message, queued)
+    }
+
+    /// Posts an announcement for VoiceOver.
+    static func postAnnouncement(_ message: String, queued: Bool) {
         guard queued else {
             AccessibilityNotification.Announcement(message).post()
             return
@@ -2607,6 +2630,27 @@ final class LibraryObserver: NSObject, PHPhotoLibraryChangeObserver, @unchecked 
 
     func photoLibraryDidChange(_ changeInstance: PHChange) {
         handler(UncheckedBox(value: changeInstance))
+    }
+}
+
+/// Apple Intelligence as Describe Photo, Redescribe and describing automatically use it: why it can't be used now,
+/// a photo's description from its data, and what to say when describing fails. The library model is given a
+/// stand-in in tests (#48), so describing can be tested without Apple Intelligence or the macOS 27 SDK.
+struct PhotoDescribing {
+    var unavailableReason: @MainActor () -> String?
+    var describe: @MainActor (Data) async throws -> String?
+    var failureMessage: @MainActor (Error) -> String
+
+    /// Apple's on-device model, on macOS 27 or later; nil before.
+    static var appleIntelligence: PhotoDescribing? {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        if #available(macOS 27, *) {
+            return PhotoDescribing(unavailableReason: { ImageConversation.unavailableReason },
+                                   describe: { try await PhotoDescriber.describe($0) },
+                                   failureMessage: { ImageConversation.message(for: $0) })
+        }
+#endif
+        return nil
     }
 }
 
