@@ -106,7 +106,7 @@ public sealed class SystemCheckTests : IDisposable
     public void WindowsAiNotReadyOrMissing_SaysWhatToDo()
     {
         var notReady = new SystemCheck(Good() with { Readiness = new AIReadiness(false, "NotReady", "x") });
-        Assert.Contains("Windows AI: Needs attention. Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+Shift+D) downloads it.",
+        Assert.Contains("Windows AI: Needs attention. Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+D) downloads it.",
             notReady.Items.Select(i => i.Line));
         var missing = new SystemCheck(Good() with { Readiness = new AIReadiness(false, "NotInstalled", "x") });
         Assert.Contains($"Windows AI: Needs attention. The {AppInfo.HelperName} isn't installed. Install {AppInfo.Name} from PhotoFinder.appinstaller.",

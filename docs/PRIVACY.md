@@ -1,6 +1,6 @@
 # Privacy Policy for Photo Finder
 
-**Last Updated: October 12, 2026**
+**Last Updated: October 13, 2026**
 
 This policy covers both Photo Finder apps: the Mac app and the Windows app. "Photo Finder" is a working name.
 
@@ -24,7 +24,7 @@ Photo Finder connects to the internet only for these things:
    - **Windows (coming; until then it shows coordinates only and sends nothing):** OpenStreetMap's Nominatim service, run by the OpenStreetMap Foundation. Names it looks up will be kept on the PC, so the same place isn't sent twice. This policy will be updated when it arrives. Nominatim's usage policy: https://operations.osmfoundation.org/policies/nominatim/, and the OpenStreetMap Foundation's privacy policy: https://osmfoundation.org/wiki/Privacy_Policy.
 2. **Checking for updates.** On the Mac, Photo Finder asks GitHub for the newest release once a day at most, and when you choose Help > Check for Updates. On Windows, Windows' App Installer checks the place Photo Finder was installed from every few hours, and Help > Check for Updates checks it now. The request carries nothing about you or your photos beyond what any web request does (your IP address and the app's name and version). GitHub's privacy statement: https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement.
 3. **Reporting a bug.** Help > Report a Bug opens a new issue form on GitHub in your web browser, filled in with the results of Help > Check System (the app's version, the operating system and the computer's capabilities, and on Windows the last few description failures, with folder paths left out), and copies the same text to the clipboard. The text travels to GitHub in the page's address so the form can be filled in, but nothing is posted until you submit the issue yourself, and you can edit or remove anything first. **GitHub issues are public.** You need a GitHub account to submit it.
-4. **Opening this policy and the user guide** from the Help menu (on the Mac, for now) opens them on GitHub in your web browser.
+4. **Opening this policy and the user guide** from the Help menu opens them on GitHub in your web browser.
 
 ## What's kept on your computer
 

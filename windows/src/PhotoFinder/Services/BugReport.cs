@@ -24,6 +24,8 @@ public static class BugReport
         ```
         {systemText}
         ```
+
+        Help > Open Log Folder has a log of what went wrong, which can be attached here. It names files and folders, so look at it first: issues are public.
         """;
 
     /// <summary>The new-issue page, titled and labelled as from Windows (GitHub applies labels only for people who can

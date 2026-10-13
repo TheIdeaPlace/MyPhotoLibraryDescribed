@@ -100,13 +100,13 @@ public sealed class ReadOnlyTests : IDisposable
         var original = QuestionDialog.AskSafely;
         try
         {
-            Assert.EndsWith("Photo Finder - Read-Only", window.Title);
+            Assert.EndsWith("Photo Finder - Read-Only Mode", window.Title);
             Assert.True(window.ReadOnlyItem.IsChecked);
 
             var asked = new List<string>();
             QuestionDialog.AskSafely = (_, _, question, _, yes, keep) => { asked.Add($"{question} [{yes}] [{keep}]"); return false; };
             window.SetReadOnly(false);
-            Assert.Equal(["Let Photo Finder change your photos? [Allow Changes] [Keep Read-Only]"], asked);
+            Assert.Equal(["Let Photo Finder change your photos? [Allow Changes] [Keep Read-Only Mode]"], asked);
             Assert.True(model.IsReadOnly);
             Assert.False(PhotoChanges.Allowed);
             Assert.True(window.ReadOnlyItem.IsChecked);
@@ -115,17 +115,17 @@ public sealed class ReadOnlyTests : IDisposable
             window.SetReadOnly(false);
             Assert.False(model.IsReadOnly);
             Assert.True(PhotoChanges.Allowed);
-            Assert.EndsWith("Photo Finder - Editing", window.Title);
+            Assert.EndsWith("Photo Finder - Editing Mode", window.Title);
             // Not remembered: the next launch is read-only again.
             Assert.True(Settings.Load(_lib.PathOf(@"data\Settings.json")).ReadOnly);
-            Assert.Contains("Editing. Photo Finder can change your photos", _announced);
+            Assert.Contains("Editing Mode. Photos can be changed", _announced);
 
             // Going back to read-only doesn't ask.
             QuestionDialog.AskSafely = (_, _, _, _, _, _) => throw new InvalidOperationException("Asked to turn read-only on");
             window.SetReadOnly(true);
             Assert.True(model.IsReadOnly);
             Assert.False(PhotoChanges.Allowed);
-            Assert.EndsWith("Photo Finder - Read-Only", window.Title);
+            Assert.EndsWith("Photo Finder - Read-Only Mode", window.Title);
 
             // And off again asks again.
             asked.Clear();
@@ -190,11 +190,11 @@ public sealed class ReadOnlyTests : IDisposable
         try
         {
             Assert.False(window.SaveInPhotosItem.IsChecked);
-            Assert.Equal("Paused while read-only", System.Windows.Automation.AutomationProperties.GetHelpText(window.SaveInPhotosItem));
+            Assert.Equal("Save Descriptions _in Photos (Paused in Read-Only Mode)", window.SaveInPhotosItem.Header);
             QuestionDialog.AskSafely = (_, _, _, _, _, _) => true;
             window.SetReadOnly(false);
             Assert.True(window.SaveInPhotosItem.IsChecked);
-            Assert.Equal("", System.Windows.Automation.AutomationProperties.GetHelpText(window.SaveInPhotosItem));
+            Assert.Equal("Save Descriptions _in Photos", window.SaveInPhotosItem.Header);
             Assert.True(model.Settings.SaveDescriptionsInPhotos);
         }
         finally

@@ -100,7 +100,7 @@ public sealed partial class SystemCheck : ICheckResult
             items.Add((facts.Readiness?.State) switch
             {
                 "Ready" => new("Windows AI", Status.Ok, "Ready to describe photos, on this PC."),
-                "NotReady" => new("Windows AI", Status.Problem, "Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+Shift+D) downloads it."),
+                "NotReady" => new("Windows AI", Status.Problem, "Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+D) downloads it."),
                 "NotInstalled" => new("Windows AI", Status.Problem, $"The {AppInfo.HelperName} isn't installed. Install {AppInfo.Name} from PhotoFinder.appinstaller."),
                 var state => new("Windows AI", Status.Problem, facts.Readiness?.Message ?? $"Not available ({state ?? "no answer"})."),
             });

@@ -389,7 +389,7 @@ public sealed class AutoDescriberTests : IDisposable
         }
     }
 
-    // MARK: Describe Photo (Ctrl+Shift+D)
+    // MARK: Describe Photo (Ctrl+D)
 
     private static readonly Settings ManualOnly = new() { AutoDescribe = false };
 
@@ -533,7 +533,7 @@ public sealed class AutoDescriberTests : IDisposable
 
             await auto.DescribeNowAsync(row, () => true, again: true);
             Assert.Equal(["a.jpg:accessible"], _described);
-            Assert.Contains("Describing a.jpg again", _announced);
+            Assert.Contains("Redescribing a.jpg", _announced);
             Assert.Equal("A fresh look.", _announced[^1]);
             Assert.Equal("A fresh look.", store.Get(row.Item!, "accessible"));
             Assert.Equal("A fresh look.", row.Description);

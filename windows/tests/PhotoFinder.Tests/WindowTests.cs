@@ -116,7 +116,7 @@ public sealed class WindowTests : IDisposable
     }
 
     [WpfFact]
-    public void InfoWindow_DescribeButton_SaysDescribeAgain_WhenThisTypeHasASavedDescription()
+    public void InfoWindow_DescribeButton_SaysRedescribe_WhenThisTypeHasASavedDescription()
     {
         var path = _lib.AddJpeg("a.jpg");
         var row = RowFor(path);
@@ -128,7 +128,7 @@ public sealed class WindowTests : IDisposable
         {
             Assert.Equal("_Describe Image", window.DescribeButton.Content);
             window.KindBox.SelectedValue = "brief";
-            Assert.Equal("Describe A_gain", window.DescribeButton.Content);
+            Assert.Equal("Redescri_be", window.DescribeButton.Content);
             Assert.Equal("A short one.", window.DescriptionBox.Text);
         }
         finally
@@ -268,7 +268,7 @@ public sealed class WindowTests : IDisposable
         try
         {
             Assert.True(await WaitFor(() => model.Rows.Count == 2 && model.DetailProgress is null && model.Rows.Any(r => r.Caption == "Beach")));
-            Assert.Equal("All Photos - Photo Finder - Read-Only", window.Title);
+            Assert.Equal("All Photos - Photo Finder - Read-Only Mode", window.Title);
             Assert.Equal("All Photos", AutomationProperties.GetName(window.FileList));
             Assert.Equal(2, window.FileList.Items.Count);
 
@@ -448,7 +448,7 @@ public sealed class WindowTests : IDisposable
 
             // The Help menu in the order both apps use (#33).
             var help = window.MainMenu.Items.OfType<MenuItem>().Last();
-            Assert.Equal([AppCommands.CheckForUpdates, AppCommands.ReportBug, AppCommands.CheckSystem, AppCommands.CheckAIDescription, AppCommands.OpenLogFolder, null, AppCommands.About],
+            Assert.Equal([AppCommands.CheckForUpdates, AppCommands.ReportBug, AppCommands.CheckSystem, AppCommands.CheckAIDescription, AppCommands.OpenLogFolder, null, AppCommands.UserGuide, AppCommands.PrivacyPolicy, null, AppCommands.About],
                 help.Items.Cast<object>().Select(i => (i as MenuItem)?.Command));
             Assert.Equal($"_About {AppInfo.Name}", AppCommands.About.Text);
 
@@ -466,10 +466,10 @@ public sealed class WindowTests : IDisposable
             model.SelectedRows = [model.Rows.Single(r => r.Name == "Trip")];
             Assert.True(AppCommands.DescribePhoto.CanExecute(null, window));
 
-            // Ctrl+Alt+Shift+D is AltGr+Shift+D: while typing in the search box, the box gets it, not Describe Again.
-            Assert.True(AppCommands.DescribeAgain.CanExecute(null, window));
+            // Redescribe is Ctrl+R (#119), which no text box uses, so it works from the search box too.
+            Assert.True(AppCommands.Redescribe.CanExecute(null, window));
             Assert.True(window.SearchBox.Focus());
-            Assert.False(AppCommands.DescribeAgain.CanExecute(null, window));
+            Assert.True(AppCommands.Redescribe.CanExecute(null, window));
         }
         finally
         {

@@ -19,7 +19,8 @@ public sealed class AIDescriptionCheck : ICheckResult
     internal static readonly (string Thing, string[] Words)[] Expected =
     [
         ("the mug", ["mug", "cup"]),
-        ("the table", ["table", "desk"]),
+        // Apple Intelligence calls the table "a wooden surface" (#13, 13 Oct).
+        ("the table", ["table", "tabletop", "desk", "surface", "counter", "countertop"]),
         ("the OPEN sign", ["open"]),
     ];
 
@@ -46,7 +47,7 @@ public sealed class AIDescriptionCheck : ICheckResult
                 readiness.Message ?? WindowsAI.MessageForState(readiness.State) ?? $"Windows AI isn't available ({readiness.State}).");
         if (readiness is { State: "NotReady" })
             return new AIDescriptionCheck(kind, readiness, TimeSpan.Zero, null, readiness.State,
-                "Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+Shift+D) downloads it.");
+                "Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+D) downloads it.");
         var jpeg = SampleJpeg();
         var clock = Stopwatch.StartNew();
         try

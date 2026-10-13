@@ -27,6 +27,10 @@ internal static class AppInfo
     /// <summary>Windows releases are tagged windows-v&lt;version&gt;, as the Mac's are mac-v&lt;version&gt;.</summary>
     public const string ReleaseTagPrefix = "windows-v";
 
+    /// <summary>The user guide and privacy policy, shared by both apps (#105).</summary>
+    public const string UserGuideUrl = $"https://github.com/{Repository}/blob/main/docs/user-guide.md";
+    public const string PrivacyPolicyUrl = $"https://github.com/{Repository}/blob/main/docs/PRIVACY.md";
+
     /// <summary>All the releases.</summary>
     public const string ReleasesUrl = $"https://github.com/{Repository}/releases";
 

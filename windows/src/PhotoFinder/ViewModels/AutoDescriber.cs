@@ -43,11 +43,11 @@ public sealed class AutoDescriber : IDisposable
     private bool _unavailable;
     /// <summary>Describe Photo requests in progress.</summary>
     private int _manual;
-    /// <summary>The photos Describe Photo or Describe Again is working on, so asking again doesn't describe one twice.</summary>
+    /// <summary>The photos Describe Photo or Redescribe is working on, so asking again doesn't describe one twice.</summary>
     private readonly Dictionary<string, Task> _manualRuns = [];
     /// <summary>The photo automatic describing is asking Windows about right now.</summary>
     private string? _describingPath;
-    /// <summary>Photos Describe Again is describing, with how many requests: automatic describing leaves them alone
+    /// <summary>Photos Redescribe is describing, with how many requests: automatic describing leaves them alone
     /// meanwhile, and an automatic description of one that was already under way is older, so it's neither saved nor
     /// spoken. Counted, as on the Mac, so one request finishing doesn't unprotect another.</summary>
     private readonly Dictionary<string, int> _againPaths = [];
@@ -159,13 +159,13 @@ public sealed class AutoDescriber : IDisposable
     }
 
     /// <summary>
-    /// Photo > Describe Photo (Ctrl+Shift+D): describes <paramref name="row"/> now and speaks it, whether or not
+    /// Photo > Describe Photo (Ctrl+D): describes <paramref name="row"/> now and speaks it, whether or not
     /// automatic descriptions are on. Since you asked, it gets Windows' model ready if that's all it needs, and says
     /// why when it can't. <paramref name="stillOn"/> says whether you're still on that photo when it's done.
-    /// With <paramref name="again"/> (Photo > Describe Again, Ctrl+Alt+Shift+D), a saved description isn't used: the
+    /// With <paramref name="again"/> (Photo > Redescribe, Ctrl+R), a saved description isn't used: the
     /// photo is described afresh and the new description replaces it, for one that's poor or from another prompt.
     /// </summary>
-    /// <param name="replacing">Describe Again on a description the person corrected, after they agreed to replace it: the
+    /// <param name="replacing">Redescribe on a description the person corrected, after they agreed to replace it: the
     /// correction they agreed to replace. A newer correction typed meanwhile is still kept. Otherwise any correction made
     /// meanwhile is kept and the new description dropped.</param>
     public Task DescribeNowAsync(FileRow row, Func<bool> stillOn, bool again = false, string? replacing = null)
@@ -240,7 +240,7 @@ public sealed class AutoDescriber : IDisposable
             }
             _unavailable = false;
             _aheadNotReady = false;
-            Announcer.Announce(again ? $"Describing {item.Name} again" : $"Describing {item.Name}");
+            Announcer.Announce(again ? $"Redescribing {item.Name}" : $"Describing {item.Name}");
             // Automatic describing is already asking about this photo: wait for that rather than asking twice. Describe
             // Again still asks afresh afterwards; the automatic result isn't saved (see _againPaths).
             while (_describingPath == item.Path || IsAhead(item.Path)) await Task.Delay(50, _closing.Token);
@@ -355,7 +355,7 @@ public sealed class AutoDescriber : IDisposable
                 }
                 if (_againPaths.ContainsKey(path))
                 {
-                    // Describe Again is describing it: it speaks the new description itself. Saying the old saved one,
+                    // Redescribe is describing it: it speaks the new description itself. Saying the old saved one,
                     // or asking the model twice, would only get in the way.
                     _target = null;
                     break;
@@ -398,7 +398,7 @@ public sealed class AutoDescriber : IDisposable
                     }
                     if (_againPaths.ContainsKey(path))
                     {
-                        // Describe Again started on this photo meanwhile: its description is the newer one.
+                        // Redescribe started on this photo meanwhile: its description is the newer one.
                     }
                     else if (ahead is not null)
                     {
@@ -494,7 +494,7 @@ public sealed class AutoDescriber : IDisposable
                 return;
             }
             var text = await _describeAhead(item, kind, cancel.Token);
-            // Saved, not spoken (the store puts it on its row); a correction or Describe Again meanwhile is newer.
+            // Saved, not spoken (the store puts it on its row); a correction or Redescribe meanwhile is newer.
             if (text.Length > 0 && !_againPaths.ContainsKey(item.Path)) _store.PutUnlessEdited(item, kind, text);
         }
         catch (Exception)

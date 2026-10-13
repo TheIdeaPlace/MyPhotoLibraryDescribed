@@ -282,7 +282,7 @@ public sealed class AIDetailsTests : IDisposable
     [Theory]
     [InlineData("NotInstalled", false, "not_installed message", "not_installed message")]
     [InlineData("NotSupportedOnCurrentSystem", false, null, "Windows' image description needs a Copilot+ PC")]
-    [InlineData("NotReady", true, null, "Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+Shift+D) downloads it")]
+    [InlineData("NotReady", true, null, "Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+D) downloads it")]
     public async Task WhenWindowsAICantDescribe_OrWouldDownloadFirst_ItSaysSo_WithoutAsking(string state, bool installed, string? message, string expected)
     {
         var asked = false;
@@ -328,7 +328,7 @@ public sealed class AIDetailsTests : IDisposable
                 var until = DateTime.UtcNow.AddSeconds(10);
                 while (check.Result is null && DateTime.UtcNow < until) await Task.Delay(20);
                 Assert.Equal("Check AI Description", check.Title);
-                Assert.Equal("Describe _Again", check.AgainButton.Content);
+                Assert.Equal("Redescri_be", check.AgainButton.Content);
                 Assert.StartsWith("Windows AI described the sample photo in ", check.SummaryText.Text);
                 // Focus lands on the description, so it's what's read; the summary follows.
                 Assert.Equal(0, check.ChecksList.SelectedIndex);

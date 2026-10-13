@@ -12,7 +12,7 @@ Kelly's goals for the app, from 11 October 2026 (status updated after the Mac PR
 | 2 | Adding folders outside the default location is also nice. | Done on both: File > Add Folder to Library (Mac in #44). | #36, #47 |
 | 3 | By default, as the user moves around photos in any view, descriptions are given, using a default prompt or setting as the platform allows. | Done on both: Photo > Describe Photos Automatically, on by default (Mac in #28). | #15 |
 | 4 | Descriptions are cached. | Done on both (saved descriptions). | |
-| 5 | The user can ask for a photo to be described again, and the cache is updated. | Done on both: Photo > Redescribe, Command-R on the Mac (#40, renamed 13 Oct); Describe Again, Ctrl+Alt+Shift+D on Windows, becoming Redescribe on Ctrl+R (#119). | #29 |
+| 5 | The user can ask for a photo to be described again, and the cache is updated. | Done on both: Photo > Redescribe, Command-R on the Mac (#40, renamed 13 Oct) and Ctrl+R on Windows (#119). | #29 |
 | — | In list view, the user chooses which columns are shown and in what order. | Done on both (View > Columns). | |
 | 6 | Gallery view uses the photo's name and nothing else by default. Customizing it is a nice-to-have. | Name only on both. The description is in the Description panel, or under the photo when the panel is hidden. Customizing: not yet. | #38 |
 | — | Sighted people get the descriptions too. | Done on both: View > Show Description, a Description panel beside the list and gallery (corrections are saved and protected), and a Description column (Mac #51, Windows #55). | #50 |

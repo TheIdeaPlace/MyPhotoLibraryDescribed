@@ -4,7 +4,7 @@
              AutomationProperties.Name="Description">
     <!-- View > Show Description (#50): the photo's description for everyone who reads the screen, with what's happening,
          the caption, and the actions that go with them. Access keys stay clear of the menu bar's (F, E, V, G, P, H) and
-         Search (S): Description D, Describe Again A, Use as Caption C, Copy O, Edit Caption T. -->
+         Search (S): Description D, Redescribe B, Use as Caption C, Copy O, Edit Caption T. -->
     <Border Padding="12,10" BorderThickness="1,0,0,0" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}">
         <Grid>
             <!-- A photo. -->
@@ -18,7 +18,7 @@
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Bottom">
                     <WrapPanel Margin="0,8,0,0">
-                        <Button x:Name="DescribeAgainButton" Content="Describe _Again" Padding="8,2" Margin="0,0,6,6" Click="DescribeAgain_Click" />
+                        <Button x:Name="RedescribeButton" Content="Redescri_be" Padding="8,2" Margin="0,0,6,6" Click="Redescribe_Click" />
                         <Button x:Name="UseAsCaptionButton" Content="Use as _Caption" Padding="8,2" Margin="0,0,6,6" Click="UseAsCaption_Click" />
                         <Button x:Name="CopyButton" Content="C_opy" Padding="8,2" Margin="0,0,6,6" Click="Copy_Click" />
                     </WrapPanel>
