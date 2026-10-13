@@ -480,4 +480,58 @@ final class PNGMetadataTests: XCTestCase {
         XCTAssertEqual(Array(result[exifIFD...]), Array(exif[exifIFD...]))
         XCTAssertEqual(result[8], 1)
     }
+
+    /// #111: an Exif directory at the end whose table is cut short, promising three entries with only one there, and
+    /// that one sharing the description's bytes. The whole entry is still followed, so those bytes are kept.
+    func testSharedDescriptionBytesInAnExifDirectoryCutShortAreKept() throws {
+        func u16(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8(v >> 8)] }
+        func u32(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8(v >> 24)] }
+        let text = Array("Hello world!".utf8)
+        let description = 38, exifIFD = description + text.count
+        var exif: [UInt8] = [0x49, 0x49] + u16(42) + u32(8)
+        exif += u16(2)
+        exif += u16(0x010E) + u16(2) + u32(text.count) + u32(description)
+        exif += u16(0x8769) + u16(4) + u32(1) + u32(exifIFD)
+        exif += u32(0)
+        exif += text
+        exif += u16(3) + u16(0x9286) + u16(7) + u32(text.count) + u32(description) + [0, 0, 0]  // two entries missing
+        let result = try XCTUnwrap(PNGMetadata.removingImageDescription(fromEXIF: exif))
+        XCTAssertEqual(Array(result[description..<exifIFD]), text)
+        XCTAssertEqual(Array(result[exifIFD...]), Array(exif[exifIFD...]))
+        XCTAssertTrue(PNGMetadata.onlyImageDescriptionRemoved(from: exif, to: result))
+    }
+
+    /// #111: the PNG writer's last look. Only the XMP, and the EXIF changed by its description being taken out, may
+    /// differ; anything else in the EXIF, another chunk or what follows IEND is refused.
+    func testTheLastLookRefusesAnythingButTheXMPAndTheDescriptionChanging() throws {
+        let data = try Data(contentsOf: makePNG())
+        let (before, trailing) = try PNGMetadata.chunks(of: data)
+        let good = try PNGMetadata.rewrite(data, setting: [FileMetadataWriter.captionPath: "A dog"],
+                                           removingEXIFDescription: true)
+        XCTAssertNoThrow(try PNGMetadata.check(good, against: before, trailing))
+
+        /// The file with one chunk's body changed, its CRC worked out again so it still parses.
+        func changing(_ type: String, _ change: (inout [UInt8]) -> Void) throws -> Data {
+            let (list, rest) = try PNGMetadata.chunks(of: good)
+            var out = PNGMetadata.signature
+            for item in list {
+                if item.type == type {
+                    var body = Array(item.body)
+                    change(&body)
+                    out += PNGMetadata.Chunk(type: type, body: body).raw
+                } else {
+                    out += item.raw
+                }
+            }
+            return Data(out + rest)
+        }
+        // The UserComment, the last bytes of the EXIF.
+        XCTAssertThrowsError(try PNGMetadata.check(try changing("eXIf") { $0[$0.count - 1] = 0 }, against: before, trailing))
+        XCTAssertThrowsError(try PNGMetadata.check(try changing("tEXt") { $0[0] = UInt8(ascii: "s") }, against: before, trailing))
+        XCTAssertThrowsError(try PNGMetadata.check(good + Data([0]), against: before, trailing), "more after IEND")
+        // Unchanged but for the XMP: an EXIF that still has its description isn't a removal, but is the same.
+        let xmpOnly = try PNGMetadata.rewrite(data, setting: [FileMetadataWriter.altTextPath: "A dog"],
+                                              removingEXIFDescription: false)
+        XCTAssertNoThrow(try PNGMetadata.check(xmpOnly, against: before, trailing))
+    }
 }
