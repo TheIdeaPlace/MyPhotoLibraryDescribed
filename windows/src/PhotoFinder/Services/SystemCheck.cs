@@ -9,7 +9,7 @@ namespace PhotoFinder.Services;
 /// line per check in the Mac's layout and wording (#32): "Name: OK. detail", "Name: Needs attention. what to do", or
 /// "Name: detail" for information.
 /// </summary>
-public sealed partial class SystemCheck
+public sealed partial class SystemCheck : ICheckResult
 {
     public enum Status { Ok, Problem, Info }
 
@@ -48,6 +48,24 @@ public sealed partial class SystemCheck
         public int SavedDescriptions { get; init; }
         public bool DescribeAutomatically { get; init; }
         public bool DescribeInBackground { get; init; }
+
+        // The details (#94): each is left out when it couldn't be read.
+        /// <summary>"Windows 11 Pro 26H2, build 26340.9616".</summary>
+        public string? WindowsEdition { get; init; }
+        public string? Processor { get; init; }
+        public string? Memory { get; init; }
+        public string? Power { get; init; }
+        /// <summary>"version 30.0.220.3000 from Qualcomm Technologies, Inc., dated 1/7/2026".</summary>
+        public string? NpuDriver { get; init; }
+        /// <summary>Photo Finder's package, as Windows names it.</summary>
+        public string? PackageName { get; init; }
+        public string? AppRuntime { get; init; }
+        public IReadOnlyList<(string Name, string Version)> AIPackages { get; init; } = [];
+        /// <summary>This session's descriptions: how many, and how long they took.</summary>
+        public string? DescribeTimings { get; init; }
+        public IReadOnlyList<string> RecentFailures { get; init; } = [];
+        /// <summary>Help > Check AI Description's last result this session (#95).</summary>
+        public string? AIDescriptionCheck { get; init; }
     }
 
     /// <summary>Windows 11 24H2: the first build with Windows AI's image description.</summary>
@@ -66,9 +84,9 @@ public sealed partial class SystemCheck
             new(AppInfo.Name, Status.Info, $"Version {facts.AppVersion}." +
                 (facts.UpdatesItself ? " Updates itself: Help > Check for Updates checks now." : " Not installed with its installer, so it doesn't update itself.")),
             newEnough
-                ? new("Windows", Status.Ok, $"Build {build}.")
+                ? new("Windows", Status.Ok, facts.WindowsEdition is { } edition ? $"{edition}." : $"Build {build}.")
                 : new("Windows", Status.Problem, $"Build {build}. Describing photos needs Windows 11 version 24H2 (build {MinimumBuild}) or later. Browsing works on this version."),
-            facts.Npu is { } npu ? new("NPU", Status.Ok, $"{npu}.")
+            facts.Npu is { } npu ? new("NPU", Status.Ok, $"{npu}." + (facts.NpuDriver is { } driver ? $" Driver {driver}." : ""))
                 : aiReady ? new("NPU", Status.Info, "Windows doesn't list one, but Windows AI is ready.")
                 : new("NPU", Status.Problem, "None found. Windows describes photos only on a Copilot+ PC, which has an NPU."),
         };
@@ -102,10 +120,44 @@ public sealed partial class SystemCheck
             saved == 0 ? "None yet." : saved == 1 ? "1 photo described." : $"{saved.ToString("N0", CultureInfo.CurrentCulture)} photos described."));
         items.Add(new("Describe Photos Automatically", Status.Info, facts.DescribeAutomatically ? "On." : "Off. Turn it on in the Photo menu."));
         items.Add(new("Describe Photos in the Background", Status.Info, facts.DescribeInBackground ? "On." : "Off."));
+        // The details last, so the checks that might need doing something come first.
+        AddDetails(items, facts);
         Items = items;
 
         static string Folders(int n) => n == 1 ? "1 folder" : $"{n} folders";
     }
+
+    /// <summary>The PC, and what's underneath Windows AI: the helper, the runtime and the Windows AI packages, the other AI
+    /// features' states, and how describing has gone this session.</summary>
+    private static void AddDetails(List<Item> items, Facts facts)
+    {
+        if (facts.Processor is { } processor) items.Add(new("Processor", Status.Info, $"{processor}."));
+        if (facts.Memory is { } memory) items.Add(new("Memory", Status.Info, $"{memory}."));
+        if (facts.Power is { } power) items.Add(new("Power", Status.Info, $"{power}."));
+        if (facts.Readiness?.HelperVersion is { } helper)
+            items.Add(new("AI helper", Status.Info, $"Version {helper}" + (facts.Readiness.Protocol is { } p ? $", protocol {p}." : ".")));
+        if (facts.PackageName is { } package) items.Add(new("Package", Status.Info, $"{package}."));
+        if (facts.AppRuntime is { } runtime) items.Add(new("Windows App Runtime", Status.Info, $"{runtime}."));
+        if (facts.AIPackages.Count > 0)
+            items.Add(new("Windows AI packages", Status.Info, string.Join("; ", facts.AIPackages.Select(p => $"{p.Name} {p.Version}")) + "."));
+        var components = facts.Readiness?.Components ?? new Dictionary<string, string>();
+        if (components.TryGetValue("textRecognition", out var text)) items.Add(new("Text recognition", Status.Info, $"{StateText(text)}."));
+        if (components.TryGetValue("languageModel", out var phi)) items.Add(new("Phi Silica", Status.Info, $"{StateText(phi)}."));
+        if (facts.DescribeTimings is { } timings) items.Add(new("Descriptions this session", Status.Info, timings));
+        foreach (var failure in facts.RecentFailures) items.Add(new("Recent failure", Status.Info, failure));
+        if (facts.AIDescriptionCheck is { } check) items.Add(new("AI description check", Status.Info, check));
+    }
+
+    /// <summary>A Windows AI ready state in words.</summary>
+    internal static string StateText(string state) => state switch
+    {
+        "Ready" => "Ready",
+        "NotReady" => "Not downloaded yet",
+        "DisabledByUser" => "Turned off in Settings",
+        "NotSupportedOnCurrentSystem" => "Not supported on this PC",
+        "NotCompatibleWithSystemHardware" => "Not compatible with this PC's hardware",
+        _ => state,
+    };
 
     public string Summary
     {
@@ -121,7 +173,8 @@ public sealed partial class SystemCheck
     public string Text => string.Join(Environment.NewLine, Items.Select(i => i.Line).Prepend(Summary));
 
     /// <summary>For a bug report, which is public: the same without folder paths.</summary>
-    public string ReportText => string.Join(Environment.NewLine, Items.Select(i => i.ReportLine).Prepend(Summary));
+    /// Windows' and the helper's own messages can name the helper's path, in the user's folder.
+    public string ReportText => Privacy.Redact(string.Join(Environment.NewLine, Items.Select(i => i.ReportLine).Prepend(Summary)));
 
     /// <summary>The NPU Windows lists (the Compute Accelerator device class, "Neural processors"), or null.</summary>
     public static async Task<string?> FindNpuAsync()
