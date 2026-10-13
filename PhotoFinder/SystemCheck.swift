@@ -91,7 +91,7 @@ struct SystemCheck: Equatable {
             saved == 0 ? "None yet." : saved == 1 ? "1 photo described." : "\(saved.formatted()) photos described."))
         items.append(Item(name: "Describe Photos Automatically", status: .info,
                           detail: facts.describeAutomatically ? "On." : "Off. Turn it on in the Photo menu."))
-        items.append(Item(name: "Describe New Photos in the Background", status: .info,
+        items.append(Item(name: "Describe Photos in the Background", status: .info,
                           detail: facts.describeInBackground ? "On." : "Off."))
         self.items = items
     }

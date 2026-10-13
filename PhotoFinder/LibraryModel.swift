@@ -120,8 +120,13 @@ final class LibraryModel {
     var columnsSheetShown = false {
         didSet { if !columnsSheetShown, oldValue { autoDescriber.refocused(currentID: autoDescribeCandidate) } }
     }
-    /// What describing new photos in the background is doing, shown in the status bar.
+    /// What describing in the background is doing, shown in the status bar.
     var backgroundProgress: String?
+    /// Why background describing stopped by itself (too many failures in a row), shown in the status bar until it
+    /// runs again (#102).
+    var backgroundProblem: String?
+    /// The status bar's background section: what it's doing, or why it stopped.
+    var backgroundStatus: String? { backgroundProgress ?? backgroundProblem }
     var errorMessage: String?
 
     @ObservationIgnored private var assetsByID: [String: PHAsset] = [:]
@@ -138,6 +143,8 @@ final class LibraryModel {
     @ObservationIgnored private var folderMediaPaths: [String: Set<String>] = [:]
     /// Added folders whose first scan should describe all their photos in the background, by lowercased path.
     @ObservationIgnored private var justAddedFolders: Set<String> = []
+    /// Added folders whose photos have joined the background backlog since launch, by lowercased path (#102).
+    @ObservationIgnored private var folderBacklogQueued: Set<String> = []
     /// The scan of each added folder in progress, by lowercased path; a newer scan of the same folder cancels it.
     @ObservationIgnored private var folderScans: [String: Task<FolderScan, Never>] = [:]
     /// Metadata already read from files, so going back to a folder doesn't read it all again. Keyed like
@@ -299,7 +306,7 @@ final class LibraryModel {
 
     /// View > Read Status Bar (Control-F9): says what the status bar says, without moving.
     func readStatusBar() {
-        let parts = [statusText, activity ?? nameProgress, backgroundProgress].compactMap { $0 }.filter { !$0.isEmpty }
+        let parts = [statusText, activity ?? nameProgress, backgroundStatus].compactMap { $0 }.filter { !$0.isEmpty }
         announce(parts.isEmpty ? "Status bar is empty" : parts.joined(separator: ". "))
     }
 
@@ -484,7 +491,11 @@ final class LibraryModel {
         selectedSourceID = SidebarID.allPhotos
         refreshFolders()
         // Watched for new photos only while describing them in the background is on: it's a whole-library fetch.
-        if describeInBackground { allPhotosFetch = PHAsset.fetchAssets(with: .image, options: nil) }
+        // The photos not described yet carry on from where the last run left off (#102).
+        if describeInBackground {
+            allPhotosFetch = PHAsset.fetchAssets(with: .image, options: nil)
+            describeLibraryBacklog(announce: false)
+        }
         await refreshDateBuckets()
         rebuildSidebar()
         warmNameCache()
@@ -910,6 +921,7 @@ final class LibraryModel {
             // The photos there at the last scan, so the new ones are worked out off the main actor too (#47).
             let before = folderMediaPaths[key]
             let justAdded = justAddedFolders.contains(key)
+                || (describeInBackground && before == nil && !folderBacklogQueued.contains(key))
             let scan = Task.detached(priority: .utility) {
                 FolderScan.scan(root, before: before, justAdded: justAdded)
             }
@@ -921,18 +933,31 @@ final class LibraryModel {
             var results: [(Task<FolderScan, Never>, FolderScan)] = []
             for scan in scans { results.append((scan, await scan.value)) }
             // Checked once they're all in: a folder scanned again meanwhile has its older result left out.
-            var newPhotos: [String] = []
+            var newPhotos: [String] = [], backlog: [String] = []
+            var addedNames: [String] = []
             for (scan, result) in results where !scan.isCancelled {
                 let key = result.node.path.lowercased()
                 fresh[key] = result.node
                 if folderScans[key] == scan { folderScans[key] = nil }
                 // A folder that's missing (an unplugged disk) keeps its last list of photos.
                 guard let paths = result.paths, folderRoots.contains(where: { $0.lowercased() == key }) else { continue }
+                // Its first scan since launch: every photo not described yet joins the backlog (#102). A folder just
+                // added, and photos new since the last scan, go ahead of it.
+                let firstScan = folderMediaPaths[key] == nil && !justAddedFolders.contains(key)
                 folderMediaPaths[key] = paths
-                justAddedFolders.remove(key)
-                newPhotos += result.newPhotos
+                if justAddedFolders.remove(key) != nil { addedNames.append(FolderRoots.displayName(result.node.path)) }
+                if firstScan {
+                    folderBacklogQueued.insert(key)
+                    backlog += result.newPhotos
+                } else {
+                    newPhotos += result.newPhotos
+                }
             }
-            if describeInBackground, !newPhotos.isEmpty { describeFilesLater(newPhotos) }
+            if describeInBackground {
+                let text = addedNames.count == 1 ? "Describing {count} from \(addedNames[0]) in the background" : nil
+                if !newPhotos.isEmpty { describeFilesLater(newPhotos, first: true, announce: text) }
+                if !backlog.isEmpty { describeFilesLater(backlog, first: false, announce: nil) }
+            }
             guard !fresh.isEmpty else { return }
             // In the order they were added; folders removed meanwhile drop out.
             let old = Dictionary(folderNodes.map { ($0.path.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
@@ -1073,7 +1098,7 @@ final class LibraryModel {
             allPhotosFetch = details.fetchResultAfterChanges
             // Without incremental changes Photos doesn't say what's new; those photos are described in Get Info as usual.
             if describeInBackground, details.hasIncrementalChanges, !details.insertedObjects.isEmpty {
-                describeLater(details.insertedObjects)
+                describeLater(details.insertedObjects, first: true)
             }
         }
 
@@ -1781,21 +1806,55 @@ final class LibraryModel {
 
     // MARK: - Describing in the background
 
-    /// Photo > Describe New Photos in the Background.
+    /// Photo > Describe Photos in the Background (#102): every photo not described yet, newest first, now and at each
+    /// launch until they're done.
     func setDescribeInBackground(_ on: Bool) {
         describeInBackground = on
+        backgroundProblem = nil
         allPhotosFetch = on ? PHAsset.fetchAssets(with: .image, options: nil) : nil
         guard on else {
             let left = stopBackgroundDescribing(announce: false)
             announce(left > 0 ? "Background describing off. Stopped with \(left == 1 ? "1 photo" : "\(left) photos") not described."
-                     : "New photos won't be described in the background")
+                     : "Photos won't be described in the background")
             return
         }
         if let reason = backgroundUnavailableReason {
             announce("Photos can't be described in the background. \(reason)")
-        } else {
-            announce("Photos added to your library or your folders will be described in the background")
+            return
         }
+        // Said once; the run's finish is said too, since the person started it.
+        announce("Photos in the library will be described in the background")
+        describeLibraryBacklog(announce: true)
+    }
+
+    /// Queues every photo not described yet: the Photos library's newest first, then the added folders' photos.
+    private func describeLibraryBacklog(announce: Bool) {
+        guard backgroundUnavailableReason == nil else { return }
+        let folderPaths = folderMediaPaths.keys.sorted().flatMap { folderMediaPaths[$0].map { Array($0).sorted() } ?? [] }
+        folderBacklogQueued.formUnion(folderMediaPaths.keys)
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        let fetch = PHAsset.fetchAssets(with: .image, options: options)
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        guard #available(macOS 27, *) else { return }
+        let describer = makeBackgroundDescriber()
+        // Stop Background Describing during the batches drops the rest, rather than starting again.
+        let generation = describer.generation
+        Task {
+            // In batches, so a big library doesn't hold up the window.
+            var index = 0
+            while index < fetch.count, describeInBackground, describer.generation == generation {
+                let end = min(index + 500, fetch.count)
+                describer.enqueue(fetch.objects(at: IndexSet(integersIn: index..<end)), sayFinish: announce,
+                                  since: generation)
+                index = end
+                await Task.yield()
+            }
+            if !folderPaths.isEmpty {
+                await describer.enqueue(filePaths: folderPaths, since: generation)
+            }
+        }
+#endif
     }
 
     /// Why background describing can't work on this Mac, or nil when it can.
@@ -1808,7 +1867,7 @@ final class LibraryModel {
 
     var isDescribingInBackground: Bool { backgroundProgress != nil }
 
-    /// Photo > Stop Background Describing: stops this run; the setting stays on for photos added later.
+    /// Photo > Stop Background Describing: stops this run; the setting stays on, so it carries on at the next launch.
     @discardableResult
     func stopBackgroundDescribing(announce shouldAnnounce: Bool = true) -> Int {
         var left = 0
@@ -1818,23 +1877,26 @@ final class LibraryModel {
         }
 #endif
         if shouldAnnounce {
-            announce(left > 0 ? "Stopped describing in the background. \(left == 1 ? "1 photo" : "\(left) photos") not described."
+            announce(left > 0 ? "Stopped describing in the background. \(left == 1 ? "1 photo" : "\(left) photos") not described; it carries on the next time \(AppInfo.name) starts."
                      : "Nothing is being described in the background")
         }
         return left
     }
 
-    private func describeLater(_ assets: [PHAsset]) {
+    private func describeLater(_ assets: [PHAsset], first: Bool = false, announce text: String? = nil) {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
-        if #available(macOS 27, *) { makeBackgroundDescriber().enqueue(assets) }
+        if #available(macOS 27, *) { makeBackgroundDescriber().enqueue(assets, first: first, announce: text) }
 #endif
     }
 
     /// Photos added to an added folder (or in a folder just added), by path (#47). Only their descriptions are saved;
     /// nothing goes into the files unless Save Descriptions in Photos is on, through the usual path.
-    private func describeFilesLater(_ paths: [String]) {
+    private func describeFilesLater(_ paths: [String], first: Bool, announce text: String?) {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
-        if #available(macOS 27, *) { makeBackgroundDescriber().enqueue(filePaths: paths) }
+        if #available(macOS 27, *) {
+            let describer = makeBackgroundDescriber()
+            Task { await describer.enqueue(filePaths: paths, first: first, announce: text) }
+        }
 #endif
     }
 
@@ -1844,7 +1906,10 @@ final class LibraryModel {
         if let describer = backgroundDescriber as? BackgroundDescriber { return describer }
         let describer = BackgroundDescriber(cache: descriptions) { [weak self] text in
             self?.backgroundProgress = text
+            if text != nil { self?.backgroundProblem = nil }
         }
+        describer.stopped = { [weak self] message in self?.backgroundProblem = message }
+        describer.isOn = { [weak self] in self?.describeInBackground ?? false }
         // A photo whose folder was taken out of the library meanwhile isn't described.
         describer.isForegroundBusy = { [weak self] in
             guard let self else { return false }

@@ -164,7 +164,7 @@ struct PhotoCommands: Commands {
                 get: { model.describeAutomatically },
                 set: { model.setDescribeAutomatically($0) }
             ))
-            Toggle("Describe New Photos in the Background", isOn: Binding(
+            Toggle("Describe Photos in the Background", isOn: Binding(
                 get: { model.describeInBackground },
                 set: { model.setDescribeInBackground($0) }
             ))

@@ -99,17 +99,44 @@ final class BackgroundQueueTests: XCTestCase {
         XCTAssertEqual(queue.summary, "Finished describing 1 photo in the background. 1 photo wasn't described because it's only in iCloud.")
     }
 
-    func testFailedPhotosAreRetriedAFewTimesThenLeft() {
+    func testFiveFailuresInARowStopTheRunButOneSuccessResetsTheCount() {
         var queue = BackgroundQueue()
-        queue.add(["a"])
+        queue.add(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"])
+        for _ in 0..<4 {
+            _ = queue.next()
+            XCTAssertFalse(queue.failed())
+        }
+        _ = queue.next()
+        queue.finished(described: true)
+        XCTAssertEqual(queue.failedInARow, 0)
+        for _ in 0..<4 {
+            _ = queue.next()
+            XCTAssertFalse(queue.failed())
+        }
+        _ = queue.next()
+        XCTAssertTrue(queue.failed())
+        XCTAssertEqual(queue.progress, "Describing photos in the background, 10 of 10")
+        XCTAssertEqual(BackgroundQueue.stoppedMessage(left: 3, reason: "The model isn't ready."),
+                       "Background describing stopped: 5 photos in a row couldn't be described, so 3 photos weren't tried. The model isn't ready.")
+    }
+
+    func testAFolderJustAddedGoesAheadOfTheBacklog() {
+        var queue = BackgroundQueue()
+        queue.add(["old1", "old2"])
+        XCTAssertEqual(queue.add(["new1", "old1", "new2"], first: true), 2)
+        XCTAssertEqual(queue.next(), "new1")
+        XCTAssertEqual(queue.next(), "new2")
+        XCTAssertEqual(queue.next(), "old1")
+    }
+
+    func testABusyPhotoIsPutBackAtTheFrontWithoutCountingAgain() {
+        var queue = BackgroundQueue()
+        queue.add(["a", "b"])
         XCTAssertEqual(queue.next(), "a")
-        XCTAssertTrue(queue.retryLater("a"))
+        queue.putBack("a")
+        XCTAssertEqual(queue.total, 2)
         XCTAssertEqual(queue.next(), "a")
-        XCTAssertTrue(queue.retryLater("a"))
-        XCTAssertEqual(queue.next(), "a")
-        XCTAssertFalse(queue.retryLater("a"))
-        XCTAssertNil(queue.next())
-        XCTAssertNil(queue.summary)
+        XCTAssertEqual(queue.next(), "b")
     }
 
     func testStopEmptiesTheQueueAndSaysHowManyWereLeft() {
