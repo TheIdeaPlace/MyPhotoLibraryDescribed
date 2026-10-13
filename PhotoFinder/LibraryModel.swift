@@ -91,9 +91,14 @@ final class LibraryModel {
 
     /// The selected rows that are showing: what Open, Favorite, Rating, Edit Caption and the rest act on, so nothing
     /// out of sight is changed while a search hides it, whatever reloaded or changed meanwhile (#159).
-    var selectedShowing: Set<String> {
-        guard !selection.isEmpty, !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return selection }
-        return selection.intersection(visibleRows.map(\.id))
+    var selectedShowing: Set<String> { showing(nil) }
+
+    /// `ids` (a context menu's rows, which can include hidden ones it got from the selection), or the selection,
+    /// without any a search hides.
+    func showing(_ ids: Set<String>?) -> Set<String> {
+        let ids = ids ?? selection
+        guard !ids.isEmpty, !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return ids }
+        return ids.intersection(visibleRows.map(\.id))
     }
 
     /// Once typing in Search pauses, rows it hides leave the selection, as on Windows, so they don't come back when
@@ -1327,7 +1332,7 @@ final class LibraryModel {
     }
 
     func open(_ ids: Set<String>? = nil) {
-        let ids = ids ?? selectedShowing
+        let ids = showing(ids)
         let chosen = rows.filter { ids.contains($0.id) }
         if let container = chosen.first(where: \.isContainer), chosen.allSatisfy(\.isContainer) {
             navigate(to: container.id)
@@ -1363,13 +1368,13 @@ final class LibraryModel {
             previewURL = nil
             return
         }
-        let files = Array(files(for: ids ?? selectedShowing).prefix(200))
+        let files = Array(files(for: showing(ids)).prefix(200))
         if !files.isEmpty {
             previewURLs = files.map(\.url)
             previewURL = previewURLs.first
             return
         }
-        let assets = Array(assets(for: ids ?? selectedShowing).prefix(200))
+        let assets = Array(assets(for: showing(ids)).prefix(200))
         guard !assets.isEmpty else { NSSound.beep(); return }
         perform("Preparing preview…") {
             let urls = try await self.exportTemporary(assets)
@@ -1379,8 +1384,8 @@ final class LibraryModel {
     }
 
     func exportSelection(_ ids: Set<String>? = nil) {
-        let assets = assets(for: ids ?? selectedShowing)
-        let files = files(for: ids ?? selectedShowing)
+        let assets = assets(for: showing(ids))
+        let files = files(for: showing(ids))
         let count = assets.count + files.count
         guard count > 0 else { NSSound.beep(); return }
         let panel = NSOpenPanel()
@@ -1409,14 +1414,14 @@ final class LibraryModel {
     }
 
     func copySelection(_ ids: Set<String>? = nil) {
-        let files = files(for: ids ?? selectedShowing)
+        let files = files(for: showing(ids))
         if !files.isEmpty {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.writeObjects(files.map { $0.url as NSURL })
             announce(files.count == 1 ? "Copied \(files[0].name)" : "Copied \(files.count) items")
             return
         }
-        let assets = assets(for: ids ?? selectedShowing)
+        let assets = assets(for: showing(ids))
         guard !assets.isEmpty else { NSSound.beep(); return }
         perform("Copying…") {
             let urls = try await self.exportTemporary(assets)
@@ -1429,10 +1434,10 @@ final class LibraryModel {
 
     func toggleFavorite(_ ids: Set<String>? = nil) {
         guard changesAllowed() else { return }
-        let assets = assets(for: ids ?? selectedShowing)
+        let assets = assets(for: showing(ids))
         guard !assets.isEmpty else {
             // Windows makes a file a favorite by rating it five stars; writing file metadata on the Mac is to come.
-            if !files(for: ids ?? selectedShowing).isEmpty { announce("Favorites aren't available for files yet") } else { NSSound.beep() }
+            if !files(for: showing(ids)).isEmpty { announce("Favorites aren't available for files yet") } else { NSSound.beep() }
             return
         }
         let makeFavorite = !assets.allSatisfy(\.isFavorite)
@@ -1455,7 +1460,7 @@ final class LibraryModel {
             errorMessage = "Rating photos requires macOS 27 or later."
             return
         }
-        let ids = ids ?? selectedShowing
+        let ids = showing(ids)
         let assets = assets(for: ids)
         guard !assets.isEmpty else {
             if !files(for: ids).isEmpty { announce("Ratings aren't available for files yet") } else { NSSound.beep() }
@@ -1480,7 +1485,7 @@ final class LibraryModel {
     }
 
     func showInfo(_ ids: Set<String>? = nil) {
-        let ids = ids ?? selectedShowing
+        let ids = showing(ids)
         guard let row = rows.first(where: { ids.contains($0.id) && !$0.isContainer }) else {
             NSSound.beep()
             return
@@ -1528,7 +1533,7 @@ final class LibraryModel {
 
     func editCaption(_ ids: Set<String>? = nil) {
         guard changesAllowed() else { return }
-        let ids = ids ?? selectedShowing
+        let ids = showing(ids)
         // Files in an added folder have their caption written into the file (#31).
         let files = files(for: ids)
         if !files.isEmpty {
@@ -1685,7 +1690,7 @@ final class LibraryModel {
     /// replacing captions people wrote.
     func useDescriptionAsCaption(_ ids: Set<String>? = nil) {
         guard changesAllowed() else { return }
-        let ids = ids ?? selectedShowing
+        let ids = showing(ids)
         let files = files(for: ids)
         if !files.isEmpty {
             guard assets(for: ids).isEmpty else { announceMixedSelection(); return }
@@ -2584,7 +2589,7 @@ final class LibraryModel {
         cacheNeighbors(of: 0, in: visibleRows)
     }
 
-    /// Home and End in the gallery: the first or last item, whatever's selected now (even a photo Search hides).
+    /// Home and End in the gallery: the first or last item, whatever's selected now.
     func moveSelectionToEnd(last: Bool) {
         let rows = visibleRows
         guard !rows.isEmpty else { NSSound.beep(); return }

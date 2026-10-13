@@ -174,6 +174,8 @@ final class StatusBarTests: XCTestCase {
         // At once, nothing hidden is counted or acted on.
         XCTAssertEqual(model.statusText, "1 item")
         XCTAssertTrue(model.selectedShowing.isEmpty)
+        // A context menu's rows too.
+        XCTAssertTrue(model.showing([library.id("a.jpg")]).isEmpty)
         // Once typing pauses, the hidden rows leave the selection, and clearing the search doesn't bring them back.
         try await waitUntil("the hidden rows to leave the selection") { model.selection.isEmpty }
         model.searchText = ""
