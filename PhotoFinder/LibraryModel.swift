@@ -2432,8 +2432,10 @@ final class LibraryModel {
         announce("\(rows[index].name), \(index + 1) of \(rows.count)")
     }
 
-    /// Starts loading the images on either side so moving through the gallery feels instant.
+    /// Starts loading the images on either side so moving through the gallery feels instant. Only in the gallery:
+    /// these may download from iCloud, and stepping through the list (Command-Right Arrow) mustn't (#120's review).
     private func cacheNeighbors(of index: Int, in rows: [FileRow]) {
+        guard viewMode == .gallery else { return }
         let neighbors = [index - 1, index + 1, index + 2]
             .filter { rows.indices.contains($0) }
             .compactMap { assetsByID[rows[$0].id] }

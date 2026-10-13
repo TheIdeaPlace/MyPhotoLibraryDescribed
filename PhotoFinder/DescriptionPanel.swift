@@ -151,13 +151,21 @@ private struct PanelPreview: View {
                     .scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             } else {
+                // Loading, or nothing on this Mac to show (a file only in iCloud Drive): a spinner only while loading.
                 RoundedRectangle(cornerRadius: 6)
                     .fill(.quaternary)
-                    .overlay { ProgressView().controlSize(.small) }
+                    .overlay {
+                        if loadedID == id {
+                            Image(systemName: "photo").font(.largeTitle).foregroundStyle(.secondary)
+                        } else {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: 240)
-        .frame(height: 240)
+        // Up to 240 points, shrinking first in a short window so the description keeps its room.
+        .frame(maxWidth: .infinity, minHeight: 0, maxHeight: 240)
+        .layoutPriority(-1)
         .accessibilityHidden(true)
         .task(id: id) {
             let loaded = await model.previewImage(for: id)
