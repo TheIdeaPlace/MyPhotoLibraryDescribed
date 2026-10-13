@@ -38,7 +38,7 @@ The window has a sidebar (the library, albums on the Mac, and folders), the list
 
 - **List** (Command-2 / Ctrl+2) shows one photo per row, with the columns you choose.
 - **Gallery** (Command-4 / Ctrl+4) shows one photo at a time with its description; Left and Right Arrow move between photos, Home and End go to the first and last.
-- **The status bar** says what's in the list, what's being done, and how background describing is going. Control-F9 / Ctrl+F9 reads it from anywhere, and Control-Shift-F9 / Ctrl+Shift+F9 goes to it. On a Mac laptop, add Fn unless the function keys are set as standard keys.
+- **The status bar** says what's in the list, what's being done, and how background describing is going. Control-F9 / Ctrl+F9 reads it from anywhere, and Control-Shift-F9 / Ctrl+Shift+F9 goes to it (in the Go menu on the Mac, the View menu on Windows). On a Mac laptop, add Fn unless the function keys are set as standard keys.
 
 ## Hearing photos described
 

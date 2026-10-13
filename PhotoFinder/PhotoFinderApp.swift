@@ -87,11 +87,6 @@ struct PhotoCommands: Commands {
             ))
             .keyboardShortcut("4")
             Button("Columns…") { model.columnsSheetShown = true }
-            // The status bar from anywhere (#84), as on Windows: Control-F9 reads it, Control-Shift-F9 goes to it.
-            Button("Read Status Bar") { model.readStatusBar() }
-                .keyboardShortcut(Self.f9, modifiers: .control)
-            Button("Go to Status Bar") { model.goToStatusBar() }
-                .keyboardShortcut(Self.f9, modifiers: [.control, .shift])
             // The Description panel (#50); Option-Command-I, as Finder's Show Inspector.
             Toggle("Show Description", isOn: Binding(
                 get: { model.showDescriptionPanel },
@@ -150,6 +145,12 @@ struct PhotoCommands: Commands {
                 .keyboardShortcut(Self.f6, modifiers: [])
             Button("Previous Pane") { model.movePane(by: -1) }
                 .keyboardShortcut(Self.f6, modifiers: .shift)
+            // The status bar from anywhere (#84): Control-F9 reads it, Control-Shift-F9 goes to it. In Go, with the
+            // panes, rather than View (Kelly, 13 Oct).
+            Button("Go to Status Bar") { model.goToStatusBar() }
+                .keyboardShortcut(Self.f9, modifiers: [.control, .shift])
+            Button("Read Status Bar") { model.readStatusBar() }
+                .keyboardShortcut(Self.f9, modifiers: .control)
         }
         CommandMenu("Photo") {
             Button("Toggle Favorite") { model.toggleFavorite() }
