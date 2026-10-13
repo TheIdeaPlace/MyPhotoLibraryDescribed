@@ -1,16 +1,16 @@
-// Photo Finder's Windows AI helper: describes pictures with Windows' on-device model on a Copilot+ PC.
+// My Photo Library Described's Windows AI helper: describes pictures with Windows' on-device model on a Copilot+ PC.
 // Adapted from Image Description Toolkit's helper (windows_ai_helper/IdtWindowsAI), same protocol.
 //
 //   photofinder-ai --check                 readiness, as one JSON line
 //   photofinder-ai --details               --check plus text recognition's and Phi Silica's states, for Check System
 //   photofinder-ai --prepare               make the model ready (may download it), as one JSON line
-//   photofinder-ai --serve                 JSON lines on stdin and stdout, for Photo Finder (see Server.cs)
+//   photofinder-ai --serve                 JSON lines on stdin and stdout, for My Photo Library Described (see Server.cs)
 //   photofinder-ai --describe <picture> [kind ...]   describe one picture, for people
 //   photofinder-ai --version
 //
 // Windows only lets a packaged app use the model, so this must run with its package's identity:
 // started as photofinder-ai (the command its package adds), not as PhotoFinderAI.exe from its
-// folder. Photo Finder always starts it by that command. Started without identity, as a person might, it
+// folder. My Photo Library Described always starts it by that command. Started without identity, as a person might, it
 // starts itself again through the command, tied to this process so it can't outlive it.
 using System.ComponentModel;
 using PhotoFinderAI;
@@ -46,7 +46,7 @@ try
             return 0;
 
         case "--details":
-            // For Photo Finder's Check System: --check plus the other AI features' states. Kept apart from --check, which
+            // For My Photo Library Described's Check System: --check plus the other AI features' states. Kept apart from --check, which
             // every description waits on.
             Line(Protocol.Readiness(true, Describer.ReadyState(), components: Describer.OtherStates()));
             return 0;
@@ -76,7 +76,7 @@ try
 }
 catch (Exception ex)
 {
-    // One readable line, never a .NET stack trace: Photo Finder reads --check and --prepare as JSON, and
+    // One readable line, never a .NET stack trace: My Photo Library Described reads --check and --prepare as JSON, and
     // a person reading --describe with a screen reader doesn't want a wall of symbols.
     var message = $"Windows' image description failed: {ex.Message.Trim()} ({ex.GetType().Name}, 0x{ex.HResult:X8})";
     if (mode is "--check" or "--details" or "--prepare") Line(Protocol.Readiness(true, "Error", message));

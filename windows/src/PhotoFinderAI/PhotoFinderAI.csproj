@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Photo Finder's Windows AI helper. Built per architecture by ..\..\scripts\build-ai-helper.ps1, which also lays out
+  <!-- My Photo Library Described's Windows AI helper. Built per architecture by ..\..\scripts\build-ai-helper.ps1, which also lays out
        the package (AppxManifest.xml with the architecture and publisher filled in). -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

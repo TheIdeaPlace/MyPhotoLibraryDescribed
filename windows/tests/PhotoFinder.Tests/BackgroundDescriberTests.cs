@@ -174,7 +174,7 @@ public sealed class BackgroundDescriberTests : IDisposable
             await WaitUntil(() => _described.Count == 1);
             Assert.True(background.IsRunning);
             background.Stop();
-            Assert.Contains("Stopped describing in the background. 1 photo not described; it carries on the next time Photo Finder starts.", _announced);
+            Assert.Contains("Stopped describing in the background. 1 photo not described; it carries on the next time My Photo Library Described starts.", _announced);
             release.SetResult();
             await background.WhenIdleAsync();
             Assert.Single(_described);

@@ -8,10 +8,10 @@ namespace PhotoFinder.ViewModels;
 /// when you arrow to them, spoken after the usual short pause without waiting for Windows AI (#96).
 ///
 /// - It works through every photo in the library not described yet, newest first: when it's turned on, each time
-///   Photo Finder starts (so a big library carries on across restarts), and for a folder as it's added.
+///   My Photo Library Described starts (so a big library carries on across restarts), and for a folder as it's added.
 /// - One photo at a time, into the same store automatic descriptions and Get Info use.
 /// - Photos are queued by path and looked up again when their turn comes, so a folder removed meanwhile is
-///   skipped and a photo Photo Finder edited is described under its current details.
+///   skipped and a photo My Photo Library Described edited is described under its current details.
 /// - Arrowing comes first: a photo isn't started while automatic descriptions are describing or about to.
 /// - Already described photos, videos, and online-only cloud photos (describing would download them) are skipped.
 /// - Progress is in the status bar, finishing a folder is announced, and Photo > Stop Background Describing stops it.
@@ -159,7 +159,7 @@ public sealed class BackgroundDescriber : IDisposable
         if (Enabled && !IsRunning) _model.ShowBackgroundProblem(problem);
     }
 
-    /// <summary>The library's photos not described yet, newest first, queued: when it's turned on, and when Photo Finder
+    /// <summary>The library's photos not described yet, newest first, queued: when it's turned on, and when My Photo Library Described
     /// starts. Said aloud only when the person turned it on; at a start the status bar shows it. "Newest" is the date
     /// taken when the details have been read, and otherwise the file's modified date. Returns whether it's worth asking
     /// Windows AI again (it didn't answer), and why it can't describe, if it can't.</summary>

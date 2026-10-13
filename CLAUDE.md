@@ -1,6 +1,6 @@
-# Photo Finder
+# My Photo Library Described
 
-A screen-reader-first, Finder-style browser for photos, built as two separate apps that should **work the same wherever the platform allows**. "Photo Finder" is a working name; the final one isn't chosen, so don't build the name into anything that's hard to change (#34):
+A screen-reader-first, Finder-style browser for photos, built as two separate apps that should **work the same wherever the platform allows**. "My Photo Library Described" is the name for now (Kelly, 13 Oct; it was "Photo Finder", and the repo moved to TheIdeaPlace/MyPhotoLibraryDescribed). It may change again, so don't build the name into anything that's hard to change (#34): identifiers keep the old name on purpose: the package and bundle IDs, the data folders, the `PhotoFinder` code namespaces, folders and projects, the photofinder-ai alias, the `PhotoFinder.appinstaller` and `PhotoFinder_<version>.msixbundle` file names, and the `CN=Photo Finder Development` publisher of unsigned builds. Leave them out of any find-and-replace.
 
 - **Mac:** `PhotoFinder/` (SwiftUI, PhotoKit, Apple Intelligence), tests in `PhotoFinderTests/`, project generated from `project.yml` by XcodeGen.
 - **Windows:** `windows/` (WPF, .NET, Windows AI through the packaged `PhotoFinderAI` helper). See `windows/README.md`.

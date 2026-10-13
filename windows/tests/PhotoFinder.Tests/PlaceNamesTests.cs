@@ -141,11 +141,13 @@ public sealed class PlaceNamesTests : IDisposable
     [Fact]
     public void TheRequest_SaysWhichAppAsks_AndNothingAboutThePerson()
     {
-        Assert.Matches(@"^PhotoFinder/[\w.]+ \(\+https://github\.com/kellylford/PhotoFinder\)$", PlaceNames.UserAgent.Replace(AppInfo.Name.Replace(" ", ""), "PhotoFinder"));
+        Assert.Matches(@"^[A-Za-z0-9]+/[\w.]+ \(\+https://github\.com/[\w.-]+/[\w.-]+\)$", PlaceNames.UserAgent);
+        Assert.StartsWith(PlaceNames.Token(AppInfo.Name) + "/", PlaceNames.UserAgent);
+        Assert.Contains(AppInfo.Repository, PlaceNames.UserAgent);
     }
 
     [Theory]
-    [InlineData("Photo Finder", "PhotoFinder")]
+    [InlineData("My Photo Library Described", "MyPhotoLibraryDescribed")]
     [InlineData("Fotó (Finder)", "FotFinder")]
     [InlineData("…", "PhotoFinder")]
     public void TheAppsName_BecomesAValidProductToken(string name, string token) => Assert.Equal(token, PlaceNames.Token(name));

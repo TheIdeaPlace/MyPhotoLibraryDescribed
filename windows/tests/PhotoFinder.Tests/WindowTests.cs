@@ -142,7 +142,7 @@ public sealed class WindowTests : IDisposable
     [WpfFact]
     public async Task InfoWindow_DescribeNow_DescribesThePhotoAndRemembersTheKind()
     {
-        Assert.SkipUnless(WindowsAI.IsInstalled, "The Photo Finder AI helper isn't installed here.");
+        Assert.SkipUnless(WindowsAI.IsInstalled, "The My Photo Library Described AI helper isn't installed here.");
         var readiness = await WindowsAI.CheckAsync();
         Assert.SkipUnless(readiness.State == "Ready", $"Windows' model isn't ready here: {readiness.State}");
 
@@ -268,7 +268,7 @@ public sealed class WindowTests : IDisposable
         try
         {
             Assert.True(await WaitFor(() => model.Rows.Count == 2 && model.DetailProgress is null && model.Rows.Any(r => r.Caption == "Beach")));
-            Assert.Equal("All Photos - Photo Finder - Read-Only Mode", window.Title);
+            Assert.Equal("All Photos - My Photo Library Described - Read-Only Mode", window.Title);
             Assert.Equal("All Photos", AutomationProperties.GetName(window.FileList));
             Assert.Equal(2, window.FileList.Items.Count);
 

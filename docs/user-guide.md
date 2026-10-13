@@ -1,6 +1,6 @@
-# Photo Finder User Guide
+# My Photo Library Described User Guide
 
-Photo Finder is a photo browser built for screen reader users, on the Mac and on Windows. It shows your photos the way Finder or File Explorer shows files, in a list or a gallery, and describes each photo as you move to it, using the AI built into your computer. "Photo Finder" is a working name.
+My Photo Library Described is a photo browser built for screen reader users, on the Mac and on Windows. It shows your photos the way Finder or File Explorer shows files, in a list or a gallery, and describes each photo as you move to it, using the AI built into your computer. "My Photo Library Described" is a working name.
 
 The two apps work the same wherever the platform allows. Where they differ, this guide says so. Keys are given as Mac / Windows.
 
@@ -27,10 +27,10 @@ The two apps work the same wherever the platform allows. Where they differ, this
 
 ## What you need
 
-- **Mac:** macOS 27 or later on Apple silicon, with Apple Intelligence turned on, for descriptions. Photo Finder browses your Photos library, so it asks for access to Photos the first time.
-- **Windows:** Windows 11 on a Copilot+ PC, for descriptions. Photo Finder browses your Pictures library.
+- **Mac:** macOS 27 or later on Apple silicon, with Apple Intelligence turned on, for descriptions. My Photo Library Described browses your Photos library, so it asks for access to Photos the first time.
+- **Windows:** Windows 11 on a Copilot+ PC, for descriptions. My Photo Library Described browses your Pictures library.
 
-Without the AI, Photo Finder still browses, searches, sorts and shows your photos; it just doesn't describe them. **Help > Check System** says what your computer has and what to do about anything missing.
+Without the AI, My Photo Library Described still browses, searches, sorts and shows your photos; it just doesn't describe them. **Help > Check System** says what your computer has and what to do about anything missing.
 
 ## Layout
 
@@ -44,7 +44,7 @@ The window has a sidebar (the library, albums on the Mac, and folders), the list
 
 **Photo > Describe Photos Automatically** is on by default. Arrow to a photo and pause: its name is read first, then its description. Arrowing quickly past photos describes only the one you stop on. Descriptions are saved, so going back to a photo reads its description at once.
 
-While you step through photos one at a time, Photo Finder quietly describes the next one in the direction you're going, so it's ready when you get there. It doesn't do this on Low Power Mode / energy saver.
+While you step through photos one at a time, My Photo Library Described quietly describes the next one in the direction you're going, so it's ready when you get there. It doesn't do this on Low Power Mode / energy saver.
 
 - **Describe Photo** (Command-D / Ctrl+D) describes the photo you're on and reads it, whether or not automatic descriptions are on.
 - **Redescribe** (Command-R / Ctrl+R) describes it afresh and replaces the saved description.
@@ -60,15 +60,15 @@ In list view, the panel starts with a picture of the photo you're on, as Finder'
 
 ## Read-only, and changing your photos
 
-Photo Finder starts in **Read-Only Mode** every time: nothing it does can change a photo. The window title ends with "Read-Only Mode".
+My Photo Library Described starts in **Read-Only Mode** every time: nothing it does can change a photo. The window title ends with "Read-Only Mode".
 
-To change photos (favorites, ratings, captions), turn off **File > Read-Only Mode**. Photo Finder asks "Let Photo Finder change your photos?" first; Keep Read-Only Mode is the default. Changes are then allowed until Photo Finder quits, and the title ends with "Editing Mode".
+To change photos (favorites, ratings, captions), turn off **File > Read-Only Mode**. My Photo Library Described asks "Let My Photo Library Described change your photos?" first; Keep Read-Only Mode is the default. Changes are then allowed until My Photo Library Described quits, and the title ends with "Editing Mode".
 
 ## Captions and saving descriptions in photos
 
 - **Edit Caption** (Shift-Command-E / Ctrl+Shift+E) changes a photo's caption.
 - **Use Description as Caption** makes the saved description the caption of the photos you choose. It asks before replacing a caption that's already there.
-- **Photo > Save Descriptions in Photos** saves each new description in the photo too: as its caption when it has none, and, for files, in its alt text when that's empty. It's off until you turn it on, and asks first. Nothing you or another app wrote is replaced. While Photo Finder is in Read-Only Mode, it's paused.
+- **Photo > Save Descriptions in Photos** saves each new description in the photo too: as its caption when it has none, and, for files, in its alt text when that's empty. It's off until you turn it on, and asks first. Nothing you or another app wrote is replaced. While My Photo Library Described is in Read-Only Mode, it's paused.
 
 On the Mac, a photo in your Photos library gets a Photos caption, which syncs with iCloud Photos. A file in a folder you added gets its caption, and its accessibility alt text, written in the file itself. Only those fields change; the picture and everything else in the file stay exactly as they were.
 
@@ -90,11 +90,11 @@ Photos often record where they were taken, as coordinates. Get Info always shows
 
 ## Settings
 
-On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save Descriptions in Photos and Look Up Place Names. On Windows, these are in the Photo menu.
+On the Mac, My Photo Library Described > Settings (Command-,) has the description prompt, Save Descriptions in Photos and Look Up Place Names. On Windows, these are in the Photo menu.
 
 ## Help menu
 
-- **Check for Updates** says whether there's a newer version. Photo Finder also checks quietly once a day, and the item then reads "Update to *version* available…".
+- **Check for Updates** says whether there's a newer version. My Photo Library Described also checks quietly once a day, and the item then reads "Update to *version* available…".
 - **Report a Bug…** opens a new GitHub issue in your browser with the details filled in. GitHub issues are public, and nothing is sent until you submit it.
 - **Check System…** checks that your computer can describe photos, and says what to do if it can't.
 - **Check AI Description…** describes a sample photo that comes with the app (a red mug on a table beside a sign reading OPEN), to show describing works end to end. It saves nothing.
@@ -127,4 +127,4 @@ On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save
 
 ## Privacy
 
-Photos are described on your computer and never uploaded to describe them. Photo Finder uses the internet only to check for updates, to look up place names if you turn that on, and to open GitHub when you report a bug or open this guide. The [privacy policy](PRIVACY.md) has the details.
+Photos are described on your computer and never uploaded to describe them. My Photo Library Described uses the internet only to check for updates, to look up place names if you turn that on, and to open GitHub when you report a bug or open this guide. The [privacy policy](PRIVACY.md) has the details.

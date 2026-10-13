@@ -526,7 +526,7 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>"Pictures - Photo Finder - Read-Only Mode", or "- Editing Mode" once changes to photos are allowed (#83, #119), so it's
+    /// <summary>"Pictures - My Photo Library Described - Read-Only Mode", or "- Editing Mode" once changes to photos are allowed (#83, #119), so it's
     /// heard with the window's name.</summary>
     private void UpdateTitle()
     {
@@ -1256,7 +1256,7 @@ public partial class MainWindow : Window
         Found(state, version);
     }
 
-    /// <summary>The first launch after an update: "Photo Finder Update Installed", with See what's new, as the apps' shared
+    /// <summary>The first launch after an update: "My Photo Library Described Update Installed", with See what's new, as the apps' shared
     /// update experience asks. Only for installed copies, and not on a first run or after going back to an older version.
     /// OK is the default, so Enter and Escape close it. True when it was shown.</summary>
     internal bool SayIfJustUpdated()
@@ -1351,7 +1351,7 @@ public partial class MainWindow : Window
         if (MessageBox.Show(this, $"A new version of {AppInfo.Name} is available. Install it now? {AppInfo.Name} closes, updates, and opens again.",
                 "Check for Updates", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes) != MessageBoxResult.Yes)
             return;
-        // Windows closes Photo Finder itself to install, without the usual closing steps, so nothing may be half written.
+        // Windows closes My Photo Library Described itself to install, without the usual closing steps, so nothing may be half written.
         if (_model.IsWriting)
         {
             MessageBox.Show(this, $"{AppInfo.Name} is still saving changes to your photos. Check for updates again when it's finished.",

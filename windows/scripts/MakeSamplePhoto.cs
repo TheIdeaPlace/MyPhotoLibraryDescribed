@@ -1,5 +1,5 @@
 // Draws the sample picture Help > Check AI Description describes (#95): a red mug on a wooden table beside a small sign
-// reading OPEN, against a wall. Photo Finder owns it outright (it's drawn here, with no people and nothing anyone else
+// reading OPEN, against a wall. My Photo Library Described owns it outright (it's drawn here, with no people and nothing anyone else
 // made), so it ships with the app and can appear in bug reports. Run it again only to change the picture; the result is
 // committed:
 //

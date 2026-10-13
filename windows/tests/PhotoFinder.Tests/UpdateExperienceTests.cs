@@ -64,8 +64,8 @@ public sealed class UpdateExperienceTests : IDisposable
     [Fact]
     public void TheRepository_IsInOnePlace()
     {
-        Assert.Equal("https://github.com/kellylford/PhotoFinder/issues/new", AppInfo.IssuesUrl);
-        Assert.Equal("https://github.com/kellylford/PhotoFinder/releases/tag/windows-v0.2.0", AppInfo.ReleaseNotesUrl("0.2.0"));
+        Assert.Equal("https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/issues/new", AppInfo.IssuesUrl);
+        Assert.Equal("https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/tag/windows-v0.2.0", AppInfo.ReleaseNotesUrl("0.2.0"));
         Assert.Equal("0.2.0", Updates.ShortVersion("0.2.0.310"));
     }
 
@@ -159,8 +159,8 @@ public sealed class UpdateExperienceTests : IDisposable
             opened.Clear();
             model.Settings.LastRunVersion = "0.2.0.310";
             Assert.True(window.SayIfJustUpdated());
-            Assert.Equal(["Photo Finder Update Installed|Photo Finder is now version 0.3.0.|_See what's new|OK"], asked);
-            Assert.Equal(["https://github.com/kellylford/PhotoFinder/releases/tag/windows-v0.3.0"], opened);
+            Assert.Equal(["My Photo Library Described Update Installed|My Photo Library Described is now version 0.3.0.|_See what's new|OK"], asked);
+            Assert.Equal(["https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/tag/windows-v0.3.0"], opened);
             Assert.Equal("0.3.0.400", Settings.Load(_lib.PathOf(@"data\Settings.json")).LastRunVersion);
             // The update that was waiting is the one now running.
             Assert.Null(model.Settings.AvailableUpdate);
@@ -172,7 +172,7 @@ public sealed class UpdateExperienceTests : IDisposable
             opened.Clear();
             Updates.InstalledVersion = () => "0.3.0.410";
             Assert.True(window.SayIfJustUpdated());
-            Assert.Equal(["https://github.com/kellylford/PhotoFinder/releases"], opened);
+            Assert.Equal(["https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases"], opened);
         }
         finally
         {

@@ -3,7 +3,7 @@ using Windows.Storage;
 namespace PhotoFinder.Services;
 
 /// <summary>The folders that make up the library: the Windows Pictures library (the same folders the
-/// Photos app and File Explorer show), plus any folders added in Photo Finder.</summary>
+/// Photos app and File Explorer show), plus any folders added in My Photo Library Described.</summary>
 public static class LibraryRoots
 {
     public static async Task<List<string>> PicturesLibraryAsync()

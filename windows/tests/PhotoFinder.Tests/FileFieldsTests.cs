@@ -177,7 +177,7 @@ public sealed class FileFieldsTests : IDisposable
     private static bool IsXmp(byte[] b, (byte Marker, int Offset, int Length) s) =>
         s.Marker == 0xE1 && b.AsSpan(s.Offset + 4).StartsWith(XmpSignature);
 
-    /// <summary>The file with its XMP segment taken out: everything Photo Finder must leave as it was.</summary>
+    /// <summary>The file with its XMP segment taken out: everything My Photo Library Described must leave as it was.</summary>
     private static byte[] WithoutXmp(byte[] b)
     {
         var output = new List<byte>();
@@ -406,7 +406,7 @@ public sealed class FileFieldsTests : IDisposable
     private static bool IsXmpChunk(byte[] b, (string Type, int Offset, int Length) c) =>
         c.Type == "iTXt" && b.AsSpan(c.Offset + 8).StartsWith("XML:com.adobe.xmp\0"u8);
 
-    /// <summary>The file without its XMP chunk: everything Photo Finder must leave as it was.</summary>
+    /// <summary>The file without its XMP chunk: everything My Photo Library Described must leave as it was.</summary>
     private static byte[] WithoutXmpChunk(byte[] b)
     {
         var output = new List<byte>(b[..8]);
@@ -627,7 +627,7 @@ public sealed class FileFieldsTests : IDisposable
     [Fact]
     public async Task ACaptionKeptTheOldWay_InTheTitle_IsFollowedByTheTitleWhenReplaced()
     {
-        // Photo Finder before #62, and Explorer, kept the caption in the Title (EXIF and XP title too).
+        // My Photo Library Described before #62, and Explorer, kept the caption in the Title (EXIF and XP title too).
         var path = _lib.AddJpeg("old.jpg", new TestLibrary.JpegOptions { Title = "The old caption" });
         Assert.Equal(1, (await MetadataWriter.SetCaptionAsync([ItemFor(path)], "The new caption")).Succeeded);
         Assert.Equal("The new caption", (await XmpFields.ReadAsync(path)).Caption);

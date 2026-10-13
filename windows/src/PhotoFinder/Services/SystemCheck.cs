@@ -60,7 +60,7 @@ public sealed partial class SystemCheck : ICheckResult
         public string? Power { get; init; }
         /// <summary>"version 30.0.220.3000 from Qualcomm Technologies, Inc., dated 1/7/2026".</summary>
         public string? NpuDriver { get; init; }
-        /// <summary>Photo Finder's package, as Windows names it.</summary>
+        /// <summary>My Photo Library Described's package, as Windows names it.</summary>
         public string? PackageName { get; init; }
         public string? AppRuntime { get; init; }
         public IReadOnlyList<(string Name, string Version)> AIPackages { get; init; } = [];

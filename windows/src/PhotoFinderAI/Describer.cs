@@ -17,7 +17,7 @@ public sealed class Describer : IDisposable
 
     public static string ReadyState() => ImageDescriptionGenerator.GetReadyState().ToString();
 
-    /// <summary>The ready state of Windows' other AI features, for Photo Finder's Check System: text recognition, and
+    /// <summary>The ready state of Windows' other AI features, for My Photo Library Described's Check System: text recognition, and
     /// Phi Silica (the language model, which Windows lets an app use only with Microsoft's permission). A feature that
     /// can't be asked says why, briefly.</summary>
     public static Dictionary<string, string> OtherStates() => new()

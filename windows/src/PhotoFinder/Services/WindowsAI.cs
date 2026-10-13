@@ -61,7 +61,7 @@ public sealed class WindowsAI : IDisposable
     public static string AliasPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps", Alias);
 
-    /// <summary>The helper to start. Installed, it's the one in Photo Finder's own package, started directly: a packaged
+    /// <summary>The helper to start. Installed, it's the one in My Photo Library Described's own package, started directly: a packaged
     /// app's child runs with the package's identity, and this can't pick up another package's photofinder-ai.exe
     /// alias (an old test install, or a development registration). If it somehow starts without identity, it
     /// relaunches itself through the alias. Otherwise (development), the alias.</summary>

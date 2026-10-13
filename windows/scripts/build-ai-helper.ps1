@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Builds Photo Finder's Windows AI helper for one architecture and lays out its package.
+Builds My Photo Library Described's Windows AI helper for one architecture and lays out its package.
 
 .DESCRIPTION
 Publishes PhotoFinderAI self-contained into windows\out\ai\<arch>, then writes AppxManifest.xml there with
@@ -8,7 +8,7 @@ the architecture, version and publisher filled in, beside the logos. That folder
 package layout:
   - in Developer Mode, -Register installs it straight from the folder, for development;
   - -Pack packs it into windows\artifacts\PhotoFinderAI_<arch>.msix, which a release signs and
-    ships beside Photo Finder.
+    ships beside My Photo Library Described.
 
 .PARAMETER Arch
 x64 or arm64. Defaults to this PC's architecture.
@@ -18,7 +18,7 @@ The package publisher. For a signed release it must equal the signing certificat
 exactly. The default is for unsigned development builds.
 
 .PARAMETER Version
-The version, as up to three numbers. Defaults to windows\VERSION, Photo Finder's own version.
+The version, as up to three numbers. Defaults to windows\VERSION, My Photo Library Described's own version.
 
 .PARAMETER Revision
 The package version's fourth number. Windows won't install a package over one of the same

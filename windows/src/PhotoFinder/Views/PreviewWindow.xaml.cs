@@ -6,7 +6,7 @@ using PhotoFinder.Services;
 
 namespace PhotoFinder.Views;
 
-/// <summary>A quick look at photos and videos without leaving Photo Finder: Space or Escape closes it,
+/// <summary>A quick look at photos and videos without leaving My Photo Library Described: Space or Escape closes it,
 /// the arrow keys move through the items. Videos play here.</summary>
 public partial class PreviewWindow : Window
 {
