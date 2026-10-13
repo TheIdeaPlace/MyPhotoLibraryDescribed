@@ -129,6 +129,19 @@ enum FolderRoots {
         }
         return nil
     }
+
+    /// The sidebar place to show instead of one that's gone (#47): the nearest folder above `previousPath` that's still
+    /// listed; otherwise All Photos, or without Photos access the first added folder still listed, and failing that the
+    /// "Photos library: no access" row.
+    static func fallbackPlace(previousPath: String?, roots: [String], photosAllowed: Bool,
+                              isListed: (String) -> Bool) -> String {
+        if let path = previousPath, let parent = nearestListed(above: path, roots: roots, isListed: isListed) {
+            return FolderID.folder(parent)
+        }
+        if photosAllowed { return SidebarID.allPhotos }
+        if let root = roots.first(where: isListed) { return FolderID.folder(root) }
+        return SidebarID.photosNoAccess
+    }
 }
 
 /// Which photos in an added folder to describe in the background after it's scanned (#47): every photo in a folder

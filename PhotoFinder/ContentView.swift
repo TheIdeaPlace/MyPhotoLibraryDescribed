@@ -9,9 +9,9 @@ struct ContentView: View {
         case .unknown:
             ProgressView("Asking for access to your photo library…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .denied:
-            AccessDeniedView()
-        case .authorized:
+        case .denied, .authorized:
+            // Without Photos access the browser still opens, for added folders; the sidebar's "Photos library: no
+            // access" row says how to give it (#47).
             BrowserView()
         }
     }
@@ -52,9 +52,13 @@ struct BrowserView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 230)
         } detail: {
             Group {
-                switch model.viewMode {
-                case .list: FileListView(pane: $pane)
-                case .gallery: GalleryView(pane: $pane)
+                if model.showingPhotosNoAccess {
+                    PhotosAccessView(pane: $pane)
+                } else {
+                    switch model.viewMode {
+                    case .list: FileListView(pane: $pane)
+                    case .gallery: GalleryView(pane: $pane)
+                    }
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar(pane: $pane) }
@@ -136,6 +140,15 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Return or a double-click on "Photos library: no access" opens Privacy Settings (#47); other rows are
+        // unchanged.
+        .contextMenu(forSelectionType: String.self) { ids in
+            if ids.contains(SidebarID.photosNoAccess) {
+                Button("Open Privacy Settings") { model.openPhotosPrivacySettings() }
+            }
+        } primaryAction: { ids in
+            if ids.contains(SidebarID.photosNoAccess) { model.openPhotosPrivacySettings() }
+        }
         // Delete on an added folder removes it from the library (after asking), as on Windows (#36).
         .onDeleteCommand { model.deleteInSidebar() }
         .focused(pane, equals: .sidebar)
@@ -161,16 +174,22 @@ private struct SidebarNode: View {
 
     private var label: some View {
         // Not .badge(): VoiceOver reads a badge as the row's value, so the sidebar sounds like a list of numbers.
-        HStack {
+        // The no-access row has no count: it's read as its name only.
+        let noAccess = item.kind == .photosNoAccess
+        return HStack {
             Label(item.title, systemImage: item.systemImage)
             Spacer()
-            Text(item.count.formatted())
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
+            if !noAccess {
+                Text(item.count.formatted())
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.title), \(item.count == 1 ? "1 item" : "\(item.count.formatted()) items")")
+        .accessibilityLabel(noAccess ? item.title
+                            : "\(item.title), \(item.count == 1 ? "1 item" : "\(item.count.formatted()) items")")
         .accessibilityAddTraits(.isStaticText)
+        .accessibilityHint(noAccess ? "Return opens Privacy Settings" : "")
         .tag(item.id as String?)
     }
 
@@ -551,18 +570,30 @@ private struct StatusBar: View {
     }
 }
 
-struct AccessDeniedView: View {
+/// Shown in place of the list or gallery while the sidebar's "Photos library: no access" row is chosen (#47): the
+/// explanation and Open Privacy Settings that used to block the whole window. It's the F6 loop's list-or-gallery stop:
+/// Return or Space opens Privacy Settings, and VoiceOver can read the explanation and the button inside it.
+struct PhotosAccessView: View {
+    @Environment(LibraryModel.self) private var model
+    var pane: FocusState<Pane?>.Binding
+
+    static let explanation = "\(AppInfo.name) needs permission to read your Photos library. Turn it on in System Settings, Privacy & Security, Photos. Folders you add with File > Add Folder to Library work without it."
+
     var body: some View {
         ContentUnavailableView {
             Label("No Access to Photos", systemImage: "photo.badge.exclamationmark")
         } description: {
-            Text("\(AppInfo.name) needs permission to read your photo library. Turn it on in System Settings, Privacy & Security, Photos, then reopen \(AppInfo.name).")
+            Text(Self.explanation)
         } actions: {
-            Button("Open Privacy Settings") {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos") {
-                    NSWorkspace.shared.open(url)
-                }
-            }
+            Button("Open Privacy Settings") { model.openPhotosPrivacySettings() }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .focusable()
+        .focused(pane, equals: .content)
+        .onKeyPress(.return) { model.openPhotosPrivacySettings(); return .handled }
+        .onKeyPress(.space) { model.openPhotosPrivacySettings(); return .handled }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("No access to Photos")
+        .accessibilityHint("Return opens Privacy Settings")
     }
 }
