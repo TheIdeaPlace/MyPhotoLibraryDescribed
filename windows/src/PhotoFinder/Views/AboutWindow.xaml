@@ -11,6 +11,6 @@
         <Button x:Name="SourceButton" Content="_Source code on GitHub" HorizontalAlignment="Left" Padding="10,3" Margin="0,0,0,6" Click="Source_Click" />
         <Button Content="User _Guide" HorizontalAlignment="Left" Padding="10,3" Margin="0,0,0,6" Click="Guide_Click" />
         <Button Content="_Privacy Policy" HorizontalAlignment="Left" Padding="10,3" Margin="0,0,0,12" Click="Privacy_Click" />
-        <Button Content="Close" IsCancel="True" IsDefault="True" HorizontalAlignment="Right" MinWidth="80" Padding="10,3" />
+        <Button x:Name="CloseButton" Content="Close" IsCancel="True" IsDefault="True" HorizontalAlignment="Right" MinWidth="80" Padding="10,3" />
     </StackPanel>
 </Window>

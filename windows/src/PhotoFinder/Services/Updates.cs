@@ -101,14 +101,18 @@ public static class Updates
     public static async Task<string?> InstallAsync(Uri source)
     {
         RegisterApplicationRestart(null, 0);
+        // Windows may end the app to install without it quitting normally, which isn't a crash (#138).
+        CrashCheck.End();
         try
         {
             var result = await new PackageManager().AddPackageByAppInstallerFileAsync(
                 source, AddPackageByAppInstallerOptions.ForceTargetAppShutdown, null);
+            if (!result.IsRegistered) CrashCheck.Begin();
             return result.IsRegistered ? null : string.IsNullOrWhiteSpace(result.ErrorText) ? $"Error {result.ExtendedErrorCode?.HResult:X8}." : result.ErrorText;
         }
         catch (Exception ex)
         {
+            CrashCheck.Begin();
             return ex.Message;
         }
     }

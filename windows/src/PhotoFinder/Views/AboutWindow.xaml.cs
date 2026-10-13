@@ -20,8 +20,9 @@ public partial class AboutWindow : Window
         NameText.Text = AppInfo.Name;
         VersionText.Text = $"Version {Services.Updates.AppVersion}";
         WhatText.Text = What;
-        System.Windows.Automation.AutomationProperties.SetHelpText(SourceButton, $"{AppInfo.Name}, version {Services.Updates.AppVersion}. {What}");
-        Loaded += (_, _) => SourceButton.Focus();
+        // Focus starts on Close, so Enter dismisses it as an About box should, and it says what the window shows.
+        System.Windows.Automation.AutomationProperties.SetHelpText(CloseButton, $"{AppInfo.Name}, version {Services.Updates.AppVersion}. {What}");
+        Loaded += (_, _) => CloseButton.Focus();
     }
 
     private void Source_Click(object sender, RoutedEventArgs e) => _open($"https://github.com/{AppInfo.Repository}", "The source code is");

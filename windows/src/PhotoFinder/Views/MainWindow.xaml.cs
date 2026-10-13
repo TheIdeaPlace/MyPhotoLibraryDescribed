@@ -107,13 +107,13 @@ public partial class MainWindow : Window
             FocusContent();
             // Background describing picks up where it left off: the library's photos not described yet (#96).
             BackgroundDescriber?.Resume();
-            // After a run that didn't quit cleanly (#33), offer once to report it.
-            _ = Dispatcher.BeginInvoke(OfferCrashReport, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
             // Once the library is showing and focus is on it: say so if this is the first launch after an update. Closing
-            // that puts focus back on the photo.
+            // that puts focus back on the photo. Otherwise, after a run that didn't quit cleanly (#33), offer once to
+            // report it; never over the update's message, and never for the update itself.
             _ = Dispatcher.BeginInvoke(() =>
             {
                 if (SayIfJustUpdated()) FocusContent();
+                else _ = Dispatcher.BeginInvoke(OfferCrashReport, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
             }, System.Windows.Threading.DispatcherPriority.Input);
         };
         model.FilesChanged += paths => { foreach (var p in paths) _thumbnails.Forget(p); };
@@ -1231,12 +1231,12 @@ public partial class MainWindow : Window
     /// form with the end of the log, for the person to read before sending.</summary>
     private void OfferCrashReport()
     {
-        if (App.UncleanLaunch is not { } since) return;
+        if (App.UncleanLaunch is null) return;
         App.UncleanLaunch = null;
         if (!QuestionDialog.AskSafely(this, AppInfo.Name, $"{AppInfo.Name} quit unexpectedly last time. Report it?",
                 "The report opens in a form, where you can read and change it before it's sent. Reports are public.", "Report…", "Not Now"))
             return;
-        ReportBugWith(null, null, Services.CrashCheck.Attachments(since), "Quit unexpectedly");
+        ReportBugWith(null, null, App.CrashAttachments, "Quit unexpectedly");
     }
 
     private bool _updating;
@@ -1482,9 +1482,7 @@ public partial class MainWindow : Window
 
     private bool _reporting;
 
-    /// <summary>Help > Report a Bug…: a new GitHub issue in the browser, prefilled with the questions and the system
-    /// check, and the same text on the clipboard, as on the Mac. Until the app kit's relay is set up (#33). The report
-    /// leaves out folder paths, since an issue is public.</summary>
+    /// <summary>Help > Report a Bug… (#138), and Check System's button: the form, with the system check.</summary>
     private void ReportBug(Services.SystemCheck? check) => ReportBugWith(check, null);
 
     /// <summary>Help > Report a Bug… (#138): the form, filled in with the system check and anything that came with it.</summary>
@@ -1519,12 +1517,6 @@ public partial class MainWindow : Window
             _reporting = false;
         }
     }
-
-    /// <summary>When neither the browser nor the clipboard could take the report: shown, so it can still be copied.</summary>
-    private void ShowReport(string body) =>
-        MessageBox.Show(this,
-            $"Press Ctrl+C to copy this report, then paste it into a new issue at {AppInfo.IssuesUrl}.\n\n{body}",
-            "Report a Bug", MessageBoxButton.OK, MessageBoxImage.Information);
 
     /// <summary>Over the window in front (Get Info, say), so focus goes back there afterwards, not to this one behind it.</summary>
     private void ShowError(string message, Window? owner = null) =>

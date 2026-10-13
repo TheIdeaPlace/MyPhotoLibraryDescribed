@@ -22,7 +22,8 @@
                                      AutomationProperties.Name="Kind: Suggestion" />
                     </StackPanel>
                     <Label Content="_Title:" Target="{Binding ElementName=TitleBox}" Padding="0,0,0,3" />
-                    <TextBox x:Name="TitleBox" Margin="0,0,0,8" TextChanged="Field_Changed" />
+                    <!-- The relay keeps 200 characters of a title, and "[Windows] " comes first. -->
+                    <TextBox x:Name="TitleBox" MaxLength="180" Margin="0,0,0,8" TextChanged="Field_Changed" />
                     <StackPanel x:Name="BugFields">
                         <Label Content="What _happened:" Target="{Binding ElementName=HappenedBox}" Padding="0,0,0,3" />
                         <TextBox x:Name="HappenedBox" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="60" Margin="0,0,0,8" TextChanged="Field_Changed" />
@@ -53,10 +54,10 @@
         <!-- Filed. -->
         <StackPanel x:Name="FiledPanel" Visibility="Collapsed">
             <TextBlock x:Name="FiledHeading" FontSize="15" FontWeight="SemiBold" AutomationProperties.HeadingLevel="Level1" />
-            <TextBlock Text="Thank you. It's public on GitHub, where you can follow it." TextWrapping="Wrap" Margin="0,8,0,12" />
+            <TextBlock x:Name="FiledText" Text="Thank you. It's public on GitHub, where you can follow it." TextWrapping="Wrap" Margin="0,8,0,12" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button x:Name="OpenIssueButton" Content="_Open Issue" MinWidth="90" Padding="10,3" Click="OpenIssue_Click" />
-                <Button Content="Done" IsDefault="True" MinWidth="80" Padding="10,3" Margin="8,0,0,0" Click="Done_Click" />
+                <Button Content="Done" IsDefault="True" IsCancel="True" MinWidth="80" Padding="10,3" Margin="8,0,0,0" Click="Done_Click" />
             </StackPanel>
         </StackPanel>
 
@@ -65,9 +66,15 @@
         <StackPanel x:Name="NotSentPanel" Visibility="Collapsed">
             <TextBlock x:Name="NotSentHeading" FontSize="15" FontWeight="SemiBold" AutomationProperties.HeadingLevel="Level1" />
             <TextBlock x:Name="NotSentText" TextWrapping="Wrap" Margin="0,8,0,12" />
+            <!-- Only when the clipboard couldn't take it, so the report can still be copied. -->
+            <StackPanel x:Name="ReportTextPanel" Visibility="Collapsed" Margin="0,0,0,12">
+                <Label Content="_Report:" Target="{Binding ElementName=ReportTextBox}" Padding="0,0,0,3" />
+                <TextBox x:Name="ReportTextBox" IsReadOnly="True" IsReadOnlyCaretVisible="True" TextWrapping="Wrap" FontFamily="Consolas"
+                         MinHeight="160" MaxHeight="360" VerticalScrollBarVisibility="Auto" />
+            </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button x:Name="OpenInBrowserButton" Content="Open in _Browser" IsDefault="True" MinWidth="110" Padding="10,3" Click="OpenInBrowser_Click" />
-                <Button Content="Done" MinWidth="80" Padding="10,3" Margin="8,0,0,0" Click="Done_Click" />
+                <Button Content="Done" IsCancel="True" MinWidth="80" Padding="10,3" Margin="8,0,0,0" Click="Done_Click" />
             </StackPanel>
         </StackPanel>
     </Grid>

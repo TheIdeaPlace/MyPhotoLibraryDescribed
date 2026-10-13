@@ -11,19 +11,24 @@ public sealed class BugReportTests : IDisposable
 {
     private readonly List<string> _announced = [];
     private readonly List<string> _opened = [];
-    private readonly Action<string> _openWas = BugReportWindow.OpenUrl;
+    private readonly Action<string> _openWas = MainWindow.OpenUrl;
 
     public BugReportTests()
     {
         Announcer.Observer = _announced.Add;
-        BugReportWindow.OpenUrl = _opened.Add;
+        MainWindow.OpenUrl = _opened.Add;
     }
 
     public void Dispose()
     {
         Announcer.Observer = null;
-        BugReportWindow.OpenUrl = _openWas;
+        MainWindow.OpenUrl = _openWas;
     }
+
+    private static void Click(System.Windows.Controls.Button button) =>
+        button.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+
+    private static string Help(System.Windows.DependencyObject element) => System.Windows.Automation.AutomationProperties.GetHelpText(element);
 
     private static BugReport Report() => new()
     {
@@ -67,6 +72,22 @@ public sealed class BugReportTests : IDisposable
     }
 
     [Fact]
+    public void ALongLog_LosesItsOldestLines_SoTheRelayKeepsTheCrash()
+    {
+        var report = Report();
+        var log = string.Join("\n", Enumerable.Range(1, 200).Select(i => $"12:00:{i:000} [describe] line {i} " + new string('x', 80))) + "\n12:01 [crash] Unhandled: the end";
+        report.Attachments.Add(new("the log", "Diagnostic log", log));
+        var body = report.Body;
+        Assert.True(body.Length <= BugReport.LongestBody, $"{body.Length}");
+        Assert.Contains("[crash] Unhandled: the end\n```", body);
+        Assert.Contains("```\n" + BugReport.LinesLeftOut + "\n", body);
+        Assert.DoesNotContain("line 1 ", body);
+        Assert.Contains("**System**", body);
+        // The preview is what's sent.
+        Assert.EndsWith(body, report.Preview);
+    }
+
+    [Fact]
     public void TheRelayGetsTheReport_TheAppsIdAndKey_InHeadersOnly()
     {
         var report = Report();
@@ -107,6 +128,15 @@ public sealed class BugReportTests : IDisposable
         var long_ = Report();
         long_.Happened = new string('x', 9000);
         Assert.Contains(Uri.EscapeDataString("(Cut short here: paste the rest from the clipboard.)"), long_.IssuePageUri().AbsoluteUri);
+        Assert.Contains(Uri.EscapeDataString("(Cut short here: copy the rest from the report in"), long_.IssuePageUri(copied: false).AbsoluteUri);
+
+        // It's the address's encoded length that's kept short: 2,000 Japanese characters are 18,000 once encoded.
+        var japanese = Report();
+        japanese.Happened = new string('写', 2000);
+        var address = japanese.IssuePageUri().AbsoluteUri;
+        Assert.True(address.Length <= BugReport.LongestPageAddress, $"{address.Length}");
+        Assert.Contains(Uri.EscapeDataString("(Cut short here"), address);
+        Assert.EndsWith("&labels=bug%2Cuser-reported%2Cwindows", address);
     }
 
     [Fact]
@@ -122,16 +152,53 @@ public sealed class BugReportTests : IDisposable
     [Fact]
     public void ACrash_IsTold_ByAFlagLeftFromTheLastRun_ButNotByACopyStillRunning()
     {
-        CrashCheck.End();
+        File.Delete(CrashCheck.FlagPath);
         Assert.Null(CrashCheck.Begin(_ => false, processId: 1));
         // Not removed: the next start finds it.
         Assert.NotNull(CrashCheck.Begin(_ => false, processId: 2));
-        // A second copy, while the first is still running: not a crash.
+        // A second copy, while the first is still running: not a crash, and its quitting leaves the first one's flag.
         Assert.Null(CrashCheck.Begin(pid => pid == 2, processId: 3));
-        CrashCheck.End();
+        CrashCheck.End(processId: 3);
+        Assert.True(File.Exists(CrashCheck.FlagPath));
+        CrashCheck.End(processId: 2);
         Assert.False(File.Exists(CrashCheck.FlagPath));
         Assert.Null(CrashCheck.Begin(_ => false, processId: 4));
+        CrashCheck.End(processId: 4);
+        // A flag naming a process number since reused by another program (Windows' System, 4) is still a crash; one
+        // naming a copy of the app still running (this test host, PhotoFinder.Tests) isn't.
+        Assert.Null(CrashCheck.Begin(processId: 4));
+        Assert.NotNull(CrashCheck.Begin(processId: Environment.ProcessId));
+        Assert.Null(CrashCheck.Begin(processId: 5));
         CrashCheck.End();
+        CrashCheck.End(processId: 5);
+        Assert.False(File.Exists(CrashCheck.FlagPath));
+    }
+
+    [Fact]
+    public void ACrashReport_HasTheNewestLogsLastLines_CutAndWithoutTheUserFolder()
+    {
+        Directory.CreateDirectory(Log.Folder);
+        foreach (var f in Directory.EnumerateFiles(Log.Folder, "PhotoFinder-*.log")) File.Delete(f);
+        Assert.Empty(CrashCheck.Attachments());
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        File.WriteAllLines(Path.Combine(Log.Folder, "PhotoFinder-2026-10-01.log"), ["old"]);
+        File.WriteAllLines(Path.Combine(Log.Folder, "PhotoFinder-2026-10-12.log"),
+            [.. Enumerable.Range(1, 50).Select(i => $"line {i}"), $"[crash] Unhandled in {home}\\Pictures " + new string('x', 3000)]);
+        try
+        {
+            var a = Assert.Single(CrashCheck.Attachments());
+            Assert.Equal("Diagnostic log, PhotoFinder-2026-10-12.log (last 40 lines)", a.Heading);
+            var lines = a.Text.Split('\n');
+            Assert.Equal(40, lines.Length);
+            Assert.Equal("line 12", lines[0]);
+            Assert.StartsWith(@"[crash] Unhandled in %USERPROFILE%\Pictures x", lines[^1]);
+            Assert.EndsWith(" …", lines[^1]);
+            Assert.True(lines[^1].Length < CrashCheck.LongestLogLine + 10);
+        }
+        finally
+        {
+            foreach (var f in Directory.EnumerateFiles(Log.Folder, "PhotoFinder-2026-10-*.log")) File.Delete(f);
+        }
     }
 
     [WpfFact]
@@ -147,7 +214,9 @@ public sealed class BugReportTests : IDisposable
         try
         {
             Assert.False(window.SendButton.IsDefault);
-            Assert.Equal(BugReportWindow.ContactNoteText, System.Windows.Automation.AutomationProperties.GetHelpText(window.ContactBox));
+            Assert.Equal(180, window.TitleBox.MaxLength);
+            Assert.Equal("", Help(window.SendButton));
+            Assert.Equal(BugReportWindow.ContactNoteText, Help(window.ContactBox));
             window.TitleBox.Text = "Something else";
             Assert.StartsWith("Title: [Windows] Something else", window.PreviewBox.Text);
             window.SuggestionKind.IsChecked = true;
@@ -156,9 +225,13 @@ public sealed class BugReportTests : IDisposable
             await window.SendAsync();
             Assert.Equal(1, sent);
             Assert.Equal("Report filed as issue #151", window.FiledHeading.Text);
-            Assert.Contains("Report filed as issue #151", _announced);
-            window.OpenIssueButton.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            // Said where focus lands, not announced over it.
+            Assert.Equal("Report filed as issue #151. Thank you. It's public on GitHub, where you can follow it.", Help(window.OpenIssueButton));
+            Assert.Equal(["Sending"], _announced);
+            Click(window.OpenIssueButton);
             Assert.Equal(["https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/issues/151"], _opened);
+            // Escape closes the result.
+            Assert.Single(((System.Windows.Controls.Panel)window.OpenIssueButton.Parent).Children.OfType<System.Windows.Controls.Button>(), b => b.IsCancel);
         }
         finally
         {
@@ -174,14 +247,61 @@ public sealed class BugReportTests : IDisposable
         try
         {
             Assert.Equal(System.Windows.Visibility.Visible, window.NoKeyText.Visibility);
+            Assert.Equal(BugReportWindow.NoKeyNote, Help(window.SendButton));
             await window.SendAsync();
             Assert.Equal("Ready to submit on GitHub", window.NotSentHeading.Text);
-            window.OpenInBrowserButton.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            Assert.StartsWith("Ready to submit on GitHub. ", Help(window.OpenInBrowserButton));
+            Assert.Single(((System.Windows.Controls.Panel)window.OpenInBrowserButton.Parent).Children.OfType<System.Windows.Controls.Button>(), b => b.IsCancel);
+            Click(window.OpenInBrowserButton);
             Assert.StartsWith(AppInfo.IssuesUrl + "?title=", _opened.Single());
         }
         finally
         {
             if (window.IsVisible) window.Close();
+        }
+    }
+
+    [WpfFact]
+    public async Task ClosingWhileSending_Waits_SoTheAnswerIsntLost()
+    {
+        var answer = new TaskCompletionSource<(int, string)>();
+        var window = new BugReportWindow(Report(), "key", (_, _) => answer.Task) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            var sending = window.SendAsync();
+            await window.SendAsync();
+            Assert.Equal(["Sending", "Still sending"], _announced);
+            window.Close();
+            Assert.True(window.IsVisible);
+            Assert.Equal("Still sending", _announced[^1]);
+            answer.SetResult((502, ""));
+            await sending;
+            Assert.Equal("Couldn't send the report", window.NotSentHeading.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+        Assert.False(window.IsVisible);
+    }
+
+    [WpfFact]
+    public void About_StartsOnClose_SayingWhatItIs_WithItsLinks()
+    {
+        var opened = new List<string>();
+        var window = new AboutWindow((url, _) => { opened.Add(url); return true; }) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.True(window.CloseButton.IsDefault && window.CloseButton.IsCancel);
+            Assert.Equal($"{AppInfo.Name}, version {Updates.AppVersion}. {AboutWindow.What}", Help(window.CloseButton));
+            Click(window.SourceButton);
+            Assert.Equal([$"https://github.com/{AppInfo.Repository}"], opened);
+        }
+        finally
+        {
+            window.Close();
         }
     }
 }

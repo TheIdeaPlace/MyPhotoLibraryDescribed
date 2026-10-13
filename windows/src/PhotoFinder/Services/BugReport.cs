@@ -41,8 +41,8 @@ public sealed class BugReport
 
     public static string KindTitle(Kinds kind) => kind == Kinds.Bug ? "Bug" : "Suggestion";
 
-    /// <summary>GitHub's labels, as the relay applies them; the fallback page asks for the same (only people who can
-    /// triage the repo get them, hence "[Windows]" in the title too).</summary>
+    /// <summary>The labels the GitHub page asks for (only people who can triage the repo get them, hence "[Windows]" in
+    /// the title too). The relay applies its own: bug or enhancement, and user-reported.</summary>
     public string Labels => Kind == Kinds.Bug ? "bug,user-reported,windows" : "enhancement,user-reported,windows";
 
     /// <summary>The check box for what came with the report: "Include the log".</summary>
@@ -52,8 +52,16 @@ public sealed class BugReport
 
     public string? TrimmedContact => Contact.Trim() is { Length: > 0 } c ? c : null;
 
-    /// <summary>The issue's text: the questions, then the system check, then anything attached. An empty answer is left
-    /// out rather than sent as an empty heading.</summary>
+    /// <summary>The longest body sent. The relay cuts a body at 8,000 characters, which would lose the end of a crash
+    /// log, the part that matters; so attachments lose their oldest lines first, and the preview stays exactly what's
+    /// sent.</summary>
+    public const int LongestBody = 7800;
+
+    /// <summary>Put in place of an attachment's lines left out to fit.</summary>
+    public const string LinesLeftOut = "(Earlier lines left out.)";
+
+    /// <summary>The issue's text: the questions, then the system check, then anything attached, within
+    /// <see cref="LongestBody"/>. An empty answer is left out rather than sent as an empty heading.</summary>
     public string Body
     {
         get
@@ -72,9 +80,35 @@ public sealed class BugReport
             else Add("Suggestion", Suggestion);
             if (IncludeSystemCheck && SystemText.Length > 0) sections.Add($"**System**\n```\n{SystemText}\n```");
             if (IncludeAttachments)
-                foreach (var a in Attachments.Where(a => a.Text.Length > 0)) sections.Add($"**{a.Heading}**\n```\n{a.Text}\n```");
+            {
+                var room = LongestBody - sections.Sum(s => s.Length + 2);
+                foreach (var a in Attachments.Where(a => a.Text.Length > 0))
+                {
+                    var frame = $"**{a.Heading}**\n```\n\n```".Length + 2;
+                    if (Fitted(a.Text, room - frame) is not { } text) break;
+                    var section = $"**{a.Heading}**\n```\n{text}\n```";
+                    sections.Add(section);
+                    room -= section.Length + 2;
+                }
+            }
             return sections.Count == 0 ? "(No details given.)" : string.Join("\n\n", sections);
         }
+    }
+
+    /// <summary>The text, or its last lines within <paramref name="room"/> after <see cref="LinesLeftOut"/>; null when
+    /// not even a line fits.</summary>
+    private static string? Fitted(string text, int room)
+    {
+        if (text.Length <= room) return text;
+        var lines = text.Split('\n');
+        var kept = new List<string>();
+        var used = LinesLeftOut.Length;
+        for (var i = lines.Length - 1; i >= 0 && used + lines[i].Length + 1 <= room; i--)
+        {
+            kept.Insert(0, lines[i]);
+            used += lines[i].Length + 1;
+        }
+        return kept.Count == 0 ? null : LinesLeftOut + "\n" + string.Join("\n", kept);
     }
 
     /// <summary>Exactly what Send sends, for the form's preview: the title, the kind, the contact if there is one, and
@@ -103,16 +137,25 @@ public sealed class BugReport
     /// <summary>On the GitHub page only, where a file can be attached; the relay takes text alone.</summary>
     public const string LogNote = "Help > Open Log Folder has a log of what went wrong, which can be attached here. It names files and folders, so look at it first: issues are public.";
 
-    /// <summary>Characters of body the GitHub page is given, which keeps its address well under GitHub's limit once
-    /// encoded; the whole report is on the clipboard.</summary>
-    public const int LongestPageBody = 5000;
+    /// <summary>The longest address the GitHub page is given: longer ones risk GitHub or the browser refusing them. It's
+    /// the encoded length that counts, which can be several times the text's (a non-Latin character is 9).</summary>
+    public const int LongestPageAddress = 6000;
 
-    /// <summary>The prefilled GitHub page used when the relay isn't.</summary>
-    public Uri IssuePageUri()
+    /// <summary>The prefilled GitHub page used when the relay isn't, cut short to fit the address when it must.</summary>
+    /// <param name="copied">Whether the whole report is on the clipboard, which the cut-short note then says.</param>
+    public Uri IssuePageUri(bool copied = true)
     {
-        var body = Body + "\n\n" + LogNote;
-        if (body.Length > LongestPageBody) body = body[..LongestPageBody] + "\n\n(Cut short here: paste the rest from the clipboard.)";
-        return new Uri($"{AppInfo.IssuesUrl}?title={Uri.EscapeDataString(FullTitle)}&body={Uri.EscapeDataString(body)}&labels={Uri.EscapeDataString(Labels)}");
+        string Address(string body) =>
+            $"{AppInfo.IssuesUrl}?title={Uri.EscapeDataString(FullTitle)}&body={Uri.EscapeDataString(body)}&labels={Uri.EscapeDataString(Labels)}";
+        var whole = Body + "\n\n" + LogNote;
+        var address = Address(whole);
+        var cutNote = copied ? "\n\n(Cut short here: paste the rest from the clipboard.)" : $"\n\n(Cut short here: copy the rest from the report in {AppInfo.Name}.)";
+        for (var length = whole.Length; address.Length > LongestPageAddress && length > 0; )
+        {
+            length = length * 9 / 10;
+            address = Address(whole[..length] + cutNote);
+        }
+        return new Uri(address);
     }
 
     private static string Joined(IReadOnlyList<string> items) =>
@@ -199,7 +242,11 @@ public static class BugReportRelay
         {
             using var request = Request(report, key);
             var (status, body) = await (transport ?? Send)(request, cancel);
-            if (Filed(status, body) is { } filed) return filed;
+            if (Filed(status, body) is { } filed)
+            {
+                Log.Write("report", $"Filed as issue #{filed.Number}");
+                return filed;
+            }
             Log.Write("report", $"The bug-report relay answered {status}; opening the GitHub page instead");
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancel.IsCancellationRequested)
@@ -245,10 +292,16 @@ public static class CrashCheck
         return previous;
     }
 
-    /// <summary>Called as the app quits normally.</summary>
-    public static void End()
+    /// <summary>Called as the app quits normally, and before an update closes it. Only the copy that wrote the flag
+    /// removes it, so a second copy quitting doesn't hide the first one's crash.</summary>
+    public static void End(int? processId = null)
     {
-        try { File.Delete(FlagPath); }
+        var pid = processId ?? Environment.ProcessId;
+        try
+        {
+            if (File.Exists(FlagPath) && File.ReadAllText(FlagPath).Trim() == pid.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                File.Delete(FlagPath);
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* left; offered next time */ }
     }
 
@@ -265,28 +318,27 @@ public static class CrashCheck
         }
     }
 
-    /// <summary>What goes with a crash report: the last 40 lines of the log from the day of the crashed run (and today's,
-    /// when that's another day), which has the crash itself when there was one. Without the user folder.</summary>
-    public static List<BugReport.Attachment> Attachments(DateTime since, DateTime? now = null)
+    /// <summary>A log line longer than this (a crash's whole exception, say) is cut, so one line can't crowd out the
+    /// rest of the report.</summary>
+    public const int LongestLogLine = 1500;
+
+    /// <summary>What goes with a crash report: the last 40 lines of the newest log, which end with the crash itself when
+    /// there was one. Read at start, before this run writes to the log, so they're the crashed run's last lines whatever
+    /// day it ended. With the user folder written as %USERPROFILE%.</summary>
+    public static List<BugReport.Attachment> Attachments()
     {
-        var today = (now ?? DateTime.Now).Date;
-        var days = since.Date == today ? new[] { today } : [since.Date, today];
-        var attachments = new List<BugReport.Attachment>();
-        foreach (var day in days)
+        try
         {
-            var name = $"PhotoFinder-{day:yyyy-MM-dd}.log";
-            var path = Path.Combine(Log.Folder, name);
-            try
-            {
-                if (!File.Exists(path)) continue;
-                var lines = File.ReadAllLines(path);
-                attachments.Add(new("the log", $"Diagnostic log, {name} (last 40 lines)", Privacy.Redact(string.Join("\n", lines.TakeLast(40)))));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Left out.
-            }
+            if (!Directory.Exists(Log.Folder)) return [];
+            // The names sort by date: PhotoFinder-2026-10-13.log.
+            if (Directory.EnumerateFiles(Log.Folder, "PhotoFinder-*.log").Max(StringComparer.OrdinalIgnoreCase) is not { } path) return [];
+            var lines = File.ReadAllLines(path).TakeLast(40)
+                .Select(l => l.Length > LongestLogLine ? l[..LongestLogLine] + " …" : l);
+            return [new("the log", $"Diagnostic log, {Path.GetFileName(path)} (last 40 lines)", Privacy.Redact(string.Join("\n", lines)))];
         }
-        return attachments;
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
     }
 }
