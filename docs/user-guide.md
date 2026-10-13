@@ -46,7 +46,7 @@ The window has a sidebar (the library, albums on the Mac, and folders), the list
 
 While you step through photos one at a time, Photo Finder quietly describes the next one in the direction you're going, so it's ready when you get there. It doesn't do this on Low Power Mode / energy saver.
 
-- **Describe Photo** (Shift-Command-D / Ctrl+Shift+D) describes the photo you're on and reads it, whether or not automatic descriptions are on.
+- **Describe Photo** (Command-D / Ctrl+Shift+D, becoming Ctrl+D) describes the photo you're on and reads it, whether or not automatic descriptions are on.
 - **Describe Again** (Option-Shift-Command-D / Ctrl+Alt+Shift+D) describes it afresh and replaces the saved description.
 - **Describe in the background:** Photo > Describe Photos in the Background describes photos that haven't been described yet behind the scenes, so their descriptions are ready when you get to them. Photo > Stop Background Describing stops it for now.
 
@@ -54,19 +54,19 @@ How photos are described: on the Mac, Settings has the prompt Apple Intelligence
 
 ## The Description panel
 
-**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Describe Again, Use as Caption and Copy, and the photo's caption with Edit Caption. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow on the Mac) and Previous Photo (Command-Left): the photo changes and focus stays where it is.
+**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Describe Again, Use as Caption and Copy, and the photo's caption with Edit Caption. Shift-Command-D on the Mac goes straight to the description, showing the panel if it's hidden, and pressed again goes back to the list or gallery. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow on the Mac) and Previous Photo (Command-Left): the photo changes and focus stays where it is.
 
 ## Read-only, and changing your photos
 
-Photo Finder starts **read-only** every time: nothing it does can change a photo. The window title ends with "Read-Only".
+Photo Finder starts in **Read-Only Mode** every time: nothing it does can change a photo. The window title ends with "Read-Only Mode".
 
-To change photos (favorites, ratings, captions), turn off **File > Read-Only**. Photo Finder asks "Let Photo Finder change your photos?" first; Keep Read-Only is the default. Changes are then allowed until Photo Finder quits, and the title ends with "Editing".
+To change photos (favorites, ratings, captions), turn off **File > Read-Only Mode**. Photo Finder asks "Let Photo Finder change your photos?" first; Keep Read-Only Mode is the default. Changes are then allowed until Photo Finder quits, and the title ends with "Editing Mode".
 
 ## Captions and saving descriptions in photos
 
 - **Edit Caption** (Shift-Command-E / Ctrl+Shift+E) changes a photo's caption.
 - **Use Description as Caption** makes the saved description the caption of the photos you choose. It asks before replacing a caption that's already there.
-- **Photo > Save Descriptions in Photos** saves each new description in the photo too: as its caption when it has none, and, for files, in its alt text when that's empty. It's off until you turn it on, and asks first. Nothing you or another app wrote is replaced. While Photo Finder is read-only, it's paused.
+- **Photo > Save Descriptions in Photos** saves each new description in the photo too: as its caption when it has none, and, for files, in its alt text when that's empty. It's off until you turn it on, and asks first. Nothing you or another app wrote is replaced. While Photo Finder is in Read-Only Mode, it's paused.
 
 On the Mac, a photo in your Photos library gets a Photos caption, which syncs with iCloud Photos. A file in a folder you added gets its caption, and its accessibility alt text, written in the file itself. Only those fields change; the picture and everything else in the file stay exactly as they were.
 
@@ -107,7 +107,8 @@ On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save
 | Go to the enclosing folder | Command-Up Arrow | Alt+Up Arrow or Backspace |
 | Preview | Command-Y (Quick Look) | Space or Ctrl+Y |
 | Get Info | Command-I | Ctrl+I or Alt+Enter |
-| Describe Photo | Shift-Command-D | Ctrl+Shift+D |
+| Describe Photo | Command-D | Ctrl+Shift+D (Ctrl+D coming) |
+| Go to the description, and back to the list or gallery | Shift-Command-D | Coming |
 | Describe Again | Option-Shift-Command-D | Ctrl+Alt+Shift+D |
 | Turn automatic descriptions on or off | Photo menu | Ctrl+Shift+U |
 | Export | Command-E | Ctrl+E |

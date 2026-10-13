@@ -11,7 +11,7 @@ final class ReadOnlyTests: XCTestCase {
         PhotoChanges.allowed = false
         XCTAssertFalse(PhotoChanges.allowed)
         XCTAssertEqual(PhotoChanges.ReadOnly().errorDescription, PhotoChanges.readOnlyMessage)
-        XCTAssertTrue(PhotoChanges.readOnlyMessage.hasSuffix("turn off Read-Only in the File menu."))
+        XCTAssertTrue(PhotoChanges.readOnlyMessage.hasSuffix("turn off Read-Only Mode in the File menu."))
     }
 
     func testTheFileWriterRefusesWhileReadOnlyAndLeavesTheFileAlone() throws {

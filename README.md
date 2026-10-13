@@ -13,8 +13,8 @@ There's also a separate native Windows version, built for JAWS, NVDA and Narrato
 - **Edit Caption** (macOS 27 and later) writes the caption to your Photos library, where it syncs with iCloud Photos. PhotoKit can't rename a photo's original file, so the app offers captions instead.
 - Folders, years and albums also appear as rows in the list, so you can move through the library like Finder.
 - **Get Info** shows the date, location, camera, lens and exposure details. Its *Describe Image* button uses on-device Vision to list what is in the photo and read any text it contains.
-- **Describe Photo** (Shift-Command-D, macOS 27): describes the photo you're on with Apple Intelligence and speaks it, in the list or gallery. A saved description is spoken at once. **Photo Finder > Settings** (Command-,) has the prompt Apple Intelligence is given, for people who want different descriptions; Use Standard Prompt puts it back.
-- **Saved descriptions** (macOS 27): Apple Intelligence descriptions are saved, so Get Info shows a photo's description at once the next time, and follow-up questions still work. **Photo > Describe New Photos in the Background** describes photos added to your library behind the scenes, so their descriptions are ready; the status bar shows progress, and Photo > Stop Background Describing stops a run. Photos only in iCloud aren't downloaded for this.
+- **Describe Photo** (Command-D, macOS 27): describes the photo you're on with Apple Intelligence and speaks it, in the list or gallery. A saved description is spoken at once. **Photo Finder > Settings** (Command-,) has the prompt Apple Intelligence is given, for people who want different descriptions; Use Standard Prompt puts it back.
+- **Saved descriptions** (macOS 27): Apple Intelligence descriptions are saved, so Get Info shows a photo's description at once the next time, and follow-up questions still work. **Photo > Describe Photos in the Background** describes the library's photos behind the scenes, so their descriptions are ready; the status bar shows progress, and Photo > Stop Background Describing stops a run. Photos only in iCloud aren't downloaded for this.
 - **Open, Quick Look, Copy, Export and drag to Finder** work on the current version of each item (including edits), and download originals from iCloud when needed.
 - VoiceOver announces the results of navigation, exports, copies and favorite changes.
 
@@ -30,7 +30,8 @@ There's also a separate native Windows version, built for JAWS, NVDA and Narrato
 | Export to a folder | Command-E |
 | Toggle Favorite | Shift-Command-F |
 | Edit Caption | Shift-Command-E |
-| Describe the photo you're on and speak it | Shift-Command-D |
+| Describe the photo you're on and speak it | Command-D |
+| Go to the description, and back to the list or gallery | Shift-Command-D |
 | List view / Gallery view | Command-2 / Command-4 |
 | Previous or next item in the gallery | Left or Right Arrow (Up or Down also work) |
 | Move between the sidebar, the list or gallery, Search and the status bar | F6 and Shift-F6 (Fn-F6 on a Mac keyboard) |

@@ -71,7 +71,8 @@ struct BrowserView: View {
         // Go > Next Pane (F6) and Previous Pane (Shift-F6): sidebar, list or gallery, Description, Search, status bar,
         // and round.
         .onChange(of: model.paneRequest) {
-            let target = model.paneRequest.target ?? Pane.next(from: searchFocused ? .search : pane,
+            let toggled: Pane? = model.paneRequest.toggleDescription ? (pane == .description ? .content : .description) : nil
+            let target = toggled ?? model.paneRequest.target ?? Pane.next(from: searchFocused ? .search : pane,
                                                                by: model.paneRequest.direction,
                                                                showingDescription: model.showDescriptionPanel)
             if target == .search {
@@ -89,6 +90,19 @@ struct BrowserView: View {
                 pendingStatusFocus = nil
                 searchFocused = false
                 pane = target
+                // The Description panel may only just be appearing (Shift-Command-D shows it): tried again a
+                // moment later if focus didn't take.
+                if target == .description {
+                    let serial = model.paneRequest.serial
+                    Task { @MainActor in
+                        for _ in 0..<5 where pane != .description {
+                            try? await Task.sleep(for: .milliseconds(50))
+                            // Another move (F6, Shift-Command-D again) since: that one wins.
+                            guard model.paneRequest.serial == serial else { return }
+                            pane = .description
+                        }
+                    }
+                }
             }
         }
         .quickLookPreview($model.previewURL, in: model.previewURLs)

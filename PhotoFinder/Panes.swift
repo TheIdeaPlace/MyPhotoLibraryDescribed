@@ -49,4 +49,6 @@ struct PaneRequest: Equatable {
     var serial = 0
     /// A pane to go straight to (Control-Shift-F9's status bar), instead of moving by `direction`.
     var target: Pane?
+    /// Shift-Command-D: to the Description panel, or from it back to the list or gallery.
+    var toggleDescription = false
 }

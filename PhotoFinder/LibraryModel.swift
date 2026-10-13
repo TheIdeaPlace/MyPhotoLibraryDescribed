@@ -268,18 +268,18 @@ final class LibraryModel {
 
     // MARK: - Read-only (#84)
 
-    /// File > Read-Only: on at every launch; allowing changes lasts until the app quits (Kelly, 12 Oct).
+    /// File > Read-Only Mode: on at every launch; allowing changes lasts until the app quits (Kelly, 12 Oct).
     private(set) var readOnly = true
 
-    /// Turns Read-Only off, after asking every time, or back on.
+    /// Turns Read-Only Mode off, after asking every time, or back on.
     func setReadOnly(_ on: Bool) {
         if !on {
             let alert = NSAlert()
             alert.messageText = "Let \(AppInfo.name) change your photos?"
-            alert.informativeText = "\(AppInfo.name) will be able to write captions, alt text and ratings into your photos, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to read-only at any time."
+            alert.informativeText = "\(AppInfo.name) will be able to write captions, alt text and ratings into your photos, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to Read-Only Mode at any time."
             alert.window.title = "Allow Changes to Photos"
             // Keep Read-Only first, so it's the default: Return alone never allows changes.
-            alert.addButton(withTitle: "Keep Read-Only")
+            alert.addButton(withTitle: "Keep Read-Only Mode")
             alert.addButton(withTitle: "Allow Changes")
             let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 guard event.keyCode == 53 else { return event }
@@ -291,7 +291,7 @@ final class LibraryModel {
         }
         readOnly = on
         PhotoChanges.allowed = !on
-        announce(on ? "Read-only. Photos won't be changed" : "Editing. Photos can be changed")
+        announce(on ? "Read-Only Mode. Photos won't be changed" : "Editing Mode. Photos can be changed")
     }
 
     /// Whether a command may change photos; says why not while read-only.
@@ -301,8 +301,9 @@ final class LibraryModel {
         return false
     }
 
-    /// The window's title, with the mode, as on Windows: "All Photos - Photo Finder - Read-Only".
-    var windowTitle: String { "\(currentTitle) - \(AppInfo.name) - \(readOnly ? "Read-Only" : "Editing")" }
+    /// The window's title, with the mode: "All Photos - Photo Finder - Read-Only Mode". "Mode", so a screen reader
+    /// doesn't sound as if the window or a control is read-only (Kelly, 13 Oct).
+    var windowTitle: String { "\(currentTitle) - \(AppInfo.name) - \(readOnly ? "Read-Only Mode" : "Editing Mode")" }
 
     /// View > Read Status Bar (Control-F9): says what the status bar says, without moving.
     func readStatusBar() {
@@ -1465,7 +1466,7 @@ final class LibraryModel {
 
     /// Save Descriptions in Photos, as the Photo menu and Settings show it: paused, and unchecked, while read-only.
     var saveInPhotosTitle: String {
-        readOnly && saveInPhotos ? "Save Descriptions in Photos (Paused While Read-Only)" : "Save Descriptions in Photos"
+        readOnly && saveInPhotos ? "Save Descriptions in Photos (Paused in Read-Only Mode)" : "Save Descriptions in Photos"
     }
 
     var saveInPhotosShownOn: Bool { saveInPhotos && !readOnly }
@@ -1936,7 +1937,7 @@ final class LibraryModel {
 
     // MARK: - Describe Photo
 
-    /// Photo > Describe Photo (Shift-Command-D): describes the photo you're on with Apple Intelligence and speaks it,
+    /// Photo > Describe Photo (Command-D): describes the photo you're on with Apple Intelligence and speaks it,
     /// in the list or gallery. A saved description is spoken at once.
     func describeFocusedPhoto() {
         guard let row = focusedRow, !row.isContainer, let key = descriptionKey(for: row.id) else {
@@ -2490,6 +2491,13 @@ final class LibraryModel {
             return nil
         }
         return provider
+    }
+
+    /// Go > Go to Description or Back to Photos (Shift-Command-D): to the Description panel's text, showing the panel if it's
+    /// hidden; from there, back to the list or gallery.
+    func toggleDescriptionFocus() {
+        if !showDescriptionPanel { showDescriptionPanel = true }
+        paneRequest = PaneRequest(direction: 0, serial: paneRequest.serial + 1, toggleDescription: true)
     }
 
     func movePane(by direction: Int) {
