@@ -112,7 +112,17 @@ enum FileMetadataWriter {
         guard PhotoChanges.allowed else { throw PhotoChanges.ReadOnly() }
         let name = url.lastPathComponent
         guard canWrite(name: name), !MediaFiles.isRaw(name) else { throw FileMetadataWriteError.unsupportedFormat(formatName(of: name)) }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+
+        // Saved dates, to the nanosecond, before anything changes. They also tell whether the file changed while it
+        // was being saved (#111).
+        var info = stat()
+        guard stat(url.path, &info) == 0 else { throw FileMetadataWriteError.unreadable }
+        let created = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+        // The file is read once (#111): its format, its title, its layout and the bytes rewritten all come from these
+        // bytes, so nothing is decided from one version of the file and written from another. Read whole rather than
+        // mapped, so another app writing into the file can't change them underneath.
+        guard let data = try? Data(contentsOf: url),
+              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               let type = CGImageSourceGetType(source), CGImageSourceGetCount(source) > 0 else {
             throw FileMetadataWriteError.unreadable
         }
@@ -131,8 +141,8 @@ enum FileMetadataWriter {
             // A PNG's or JPEG's own XMP counts too: ImageIO reads an EXIF description as the caption ahead of it.
             let current = CGImageSourceCopyMetadataAtIndex(source, 0, nil)
             let own: CGImageMetadata? = switch type as String {
-            case UTType.png.identifier: (try? Data(contentsOf: url)).flatMap(PNGMetadata.xmp(of:))
-            case UTType.jpeg.identifier: (try? Data(contentsOf: url, options: .mappedIfSafe)).flatMap(JPEGMetadata.xmp(of:))
+            case UTType.png.identifier: PNGMetadata.xmp(of: data)
+            case UTType.jpeg.identifier: JPEGMetadata.xmp(of: data)
             default: nil
             }
             func text(_ metadata: CGImageMetadata?, _ path: String) -> String {
@@ -151,41 +161,40 @@ enum FileMetadataWriter {
         }
         guard !expected.isEmpty else { return FileMetadata.read(url) }
 
-        // Saved dates, to the nanosecond, before anything changes.
-        var info = stat()
-        guard stat(url.path, &info) == 0 else { throw FileMetadataWriteError.unreadable }
-        let created = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
-
         // Hidden, so the folder's listing never shows it, and in the same folder, so swapping it in is a rename.
         let temp = url.deletingLastPathComponent()
             .appendingPathComponent(".\(url.deletingPathExtension().lastPathComponent).\(UUID().uuidString).\(url.pathExtension)")
         defer { try? FileManager.default.removeItem(at: temp) }
-        // A JPEG's data after its picture, a motion photo's video or an Ultra HDR photo's gain map, must come through
-        // exactly (#79, #90); JPEGMetadata keeps a Multi-Picture index pointing at it.
-        var jpegTail: Data?
-        if type as String == UTType.jpeg.identifier {
-            let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
-            // Its layout couldn't be followed (cut short, say): refused rather than written unchecked.
-            guard let tail = JPEGLayout.trailingData(bytes) else {
-                throw FileMetadataWriteError.notWritten("Its JPEG layout couldn't be read.")
-            }
-            jpegTail = tail
-        }
         if type as String == UTType.png.identifier || type as String == UTType.jpeg.identifier {
             // A PNG's chunks (#61) and a JPEG's segments (#81) are edited directly, every byte but the XMP and the EXIF
             // description copied as it was. ImageIO's copy of a JPEG can drop its comment and most of its EXIF, the
             // embedded thumbnail included.
-            try writeEdited(from: url, to: temp) { data in
+            let rewritten = try rewrite(data) { data in
                 if type as String == UTType.png.identifier {
                     return try PNGMetadata.rewrite(data, setting: expected,
                                                    removingEXIFDescription: expected.keys.contains(captionPath))
                 }
-                // The bytes being rewritten are the ones checked (#111): a file replaced since the check above isn't
-                // written.
-                guard JPEGLayout.trailingData(data) == jpegTail else {
-                    throw PNGMetadata.Failure.malformed("It changed while it was being saved.")
+                // A JPEG's data after its picture, a motion photo's video or an Ultra HDR photo's gain map, must come
+                // through exactly (#79, #90); JPEGMetadata keeps a Multi-Picture index pointing at it. Its layout
+                // couldn't be followed (cut short, say): refused rather than written unchecked.
+                guard let tail = JPEGLayout.trailingData(data) else {
+                    throw PNGMetadata.Failure.malformed("Its JPEG layout couldn't be read.")
                 }
-                return try JPEGMetadata.rewrite(data, setting: expected)
+                let result = try JPEGMetadata.rewrite(data, setting: expected)
+                guard result.count >= tail.count, result.suffix(tail.count) == tail else {
+                    throw PNGMetadata.Failure.malformed(
+                        "The data after the picture, a motion photo's video or an HDR map say, wasn't kept.")
+                }
+                return result
+            }
+            do {
+                try rewritten.write(to: temp, options: .withoutOverwriting)
+            } catch {
+                throw FileMetadataWriteError.notWritten("A new copy couldn't be made in its folder.")
+            }
+            // What's on disk is exactly what was checked.
+            guard (try? Data(contentsOf: temp)) == rewritten else {
+                throw FileMetadataWriteError.notWritten("A new copy couldn't be made in its folder.")
             }
             guard readsBack(temp, expected) else { throw FileMetadataWriteError.notWritten("The new metadata didn't read back.") }
         } else {
@@ -201,12 +210,14 @@ enum FileMetadataWriter {
         }
         // The same pictures, the same size, before the original is touched: a guard against ImageIO ever dropping one.
         guard samePictures(source, temp) else { throw FileMetadataWriteError.notWritten("The pictures in the new file didn't match.") }
-        if let jpegTail, !jpegTail.isEmpty {
-            let written = try Data(contentsOf: temp, options: .mappedIfSafe)
-            guard written.count >= jpegTail.count, written.suffix(jpegTail.count) == jpegTail else {
-                throw FileMetadataWriteError.notWritten("The data after the picture, a motion photo's video or an HDR map say, wasn't kept.")
-            }
-        }
+
+        // Changed or replaced by another app since it was read (#111): left as that app left it, since the new copy was
+        // made from the old bytes.
+        beforeReplacing?(url)
+        var now = stat()
+        guard stat(url.path, &now) == 0, now.st_dev == info.st_dev, now.st_ino == info.st_ino, now.st_size == info.st_size,
+              now.st_mtimespec.tv_sec == info.st_mtimespec.tv_sec, now.st_mtimespec.tv_nsec == info.st_mtimespec.tv_nsec
+        else { throw FileMetadataWriteError.notWritten("It changed while it was being saved.") }
 
         do {
             _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
@@ -232,19 +243,15 @@ enum FileMetadataWriter {
         return a == b
     }
 
-    /// The file as `rewrite` changes it, written to `temp`. Rewriting refuses anything it can't follow.
-    private static func writeEdited(from url: URL, to temp: URL, _ rewrite: (Data) throws -> Data) throws {
-        guard let data = try? Data(contentsOf: url) else { throw FileMetadataWriteError.unreadable }
-        let rewritten: Data
+    /// Called by tests just before the original is replaced, to change it as another app might (#111).
+    nonisolated(unsafe) static var beforeReplacing: ((URL) -> Void)?
+
+    /// The file's bytes as `change` rewrites them, its refusals given as the reason the file wasn't written.
+    private static func rewrite(_ data: Data, _ change: (Data) throws -> Data) throws -> Data {
         do {
-            rewritten = try rewrite(data)
+            return try change(data)
         } catch PNGMetadata.Failure.malformed(let reason) {
             throw FileMetadataWriteError.notWritten(reason)
-        }
-        do {
-            try rewritten.write(to: temp, options: .withoutOverwriting)
-        } catch {
-            throw FileMetadataWriteError.notWritten("A new copy couldn't be made in its folder.")
         }
     }
 

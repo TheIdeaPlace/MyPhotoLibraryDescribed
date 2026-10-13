@@ -221,15 +221,22 @@ enum JPEGMetadata {
         return xmpHeader + head + xmp + [UInt8(ascii: "\n")] + spaces + tail
     }
 
-    /// A last look before the file is written: the same segments in the same order but the XMP, the EXIF and the
-    /// Multi-Picture index the same size, everything else byte for byte, and the picture data and what follows it
-    /// exactly as they were.
-    private static func check(_ result: Data, against before: [Segment], _ picture: [UInt8]) throws {
+    /// A last look before the file is written: the same segments in the same order but the XMP, the EXIF changed only
+    /// by its description being taken out (#111), the Multi-Picture index the same size, everything else byte for
+    /// byte, and the picture data and what follows it exactly as they were.
+    static func check(_ result: Data, against before: [Segment], _ picture: [UInt8]) throws {
         let (after, newPicture) = try segments(of: result)
         func others(_ list: [Segment]) -> [Segment] { list.filter { !isXMP($0) } }
         func inPlace(_ old: Segment, _ new: Segment) -> Bool {
-            old.raw.count == new.raw.count
-                && ((isEXIF(old) && isEXIF(new)) || (MultiPictureIndex.isIndex(old) && MultiPictureIndex.isIndex(new)))
+            guard old.raw.count == new.raw.count else { return false }
+            if isEXIF(old), isEXIF(new) {
+                // The fill bytes, marker, length and "Exif\0\0" as they were; in the TIFF data after them, only IFD0's
+                // table and the old description's bytes.
+                let head = old.bodyStart + exifHeader.count
+                return new.bodyStart == old.bodyStart && old.raw[..<head] == new.raw[..<head]
+                    && PNGMetadata.onlyImageDescriptionRemoved(from: Array(old.raw[head...]), to: Array(new.raw[head...]))
+            }
+            return MultiPictureIndex.isIndex(old) && MultiPictureIndex.isIndex(new)
         }
         let a = others(before), b = others(after)
         guard newPicture == picture, a.count == b.count, after.filter(isXMP).count <= 1,

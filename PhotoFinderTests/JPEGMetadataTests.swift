@@ -875,4 +875,59 @@ final class JPEGMetadataTests: XCTestCase {
         XCTAssertEqual(FileMetadataWriteError.multiPicture.errorDescription,
                        "It holds a second picture, such as an HDR map, laid out in a way that can't be updated safely.")
     }
+
+    // MARK: - The last look at the EXIF (#111)
+
+    /// A same-sized EXIF used to pass the last look whatever had changed in it. Now only IFD0's table and the old
+    /// description's bytes may differ, so a mistake that zeroed the maker note or the thumbnail is caught.
+    func testTheLastLookRefusesAnEXIFChangedAnywhereButItsDescription() throws {
+        for big in [true, false] {
+            let label = big ? "big-endian" : "little-endian"
+            let data = try Data(contentsOf: makeJPEG("check-\(label).jpg", big: big))
+            let (before, picture) = try JPEGMetadata.segments(of: data)
+            let good = [UInt8](try JPEGMetadata.rewrite(data, setting: [FileMetadataWriter.captionPath: short]))
+            XCTAssertNoThrow(try JPEGMetadata.check(Data(good), against: before, picture), label)
+
+            // Where the EXIF's TIFF data is in the new file, and how long it is.
+            let exifAt = try XCTUnwrap(offset(of: 0xE1, in: good))
+            let tiff = exifAt + 4 + JPEGMetadata.exifHeader.count
+            let tiffLength = (Int(good[exifAt + 2]) << 8 | Int(good[exifAt + 3])) - 2 - JPEGMetadata.exifHeader.count
+            let note = tiff + (try XCTUnwrap(Data(good[tiff...]).range(of: Data(Self.makerNote))).lowerBound)
+            let make = tiff + (try XCTUnwrap(Data(good[tiff...]).range(of: Data(Self.make.utf8))).lowerBound)
+
+            func refused(_ change: (inout [UInt8]) -> Void, _ what: String) {
+                var bad = good
+                change(&bad)
+                XCTAssertNotEqual(bad, good, "\(label): \(what)")
+                XCTAssertThrowsError(try JPEGMetadata.check(Data(bad), against: before, picture), "\(label): \(what)")
+            }
+            refused({ $0[note + 100] = 0 }, "a maker note byte zeroed")
+            refused({ $0[tiff + tiffLength - 1] ^= 0xFF }, "the thumbnail's last byte changed")
+            refused({ $0[make] = 0 }, "the camera make's text zeroed")
+            // IFD0's table, but not as taking out the description leaves it: Orientation changed.
+            let orientation = tiff + 8 + 2 + 12 + 8  // the second entry left, its value
+            refused({ $0[orientation + (big ? 1 : 0)] = 6 }, "Orientation in IFD0's table changed")
+            // The old text's bytes, not zeroed but changed.
+            let oldText = 8 + 2 + 4 * 12 + 4
+            refused({ $0[tiff + oldText] = UInt8(ascii: "X") }, "the old description's bytes changed to something else")
+            // Nothing changed in the EXIF but its header.
+            refused({ $0[exifAt + 4] = UInt8(ascii: "e") }, "the EXIF header changed")
+        }
+    }
+
+    func testTakingOutTheDescriptionIsRecognisedAndAnythingElseIsnt() throws {
+        thumbnail = try encoded(width: 8, height: 4)
+        for big in [true, false] {
+            let old = exif(big: big, description: "Camera caption", thumbnail: thumbnail)
+            let new = try XCTUnwrap(PNGMetadata.removingImageDescription(fromEXIF: old))
+            XCTAssertTrue(PNGMetadata.onlyImageDescriptionRemoved(from: old, to: new))
+            XCTAssertFalse(PNGMetadata.onlyImageDescriptionRemoved(from: old, to: old), "unchanged isn't a removal")
+            XCTAssertFalse(PNGMetadata.onlyImageDescriptionRemoved(from: old, to: new.dropLast()), "a different size")
+            var zeroedThumbnail = new
+            for i in (new.count - thumbnail.count)..<new.count { zeroedThumbnail[i] = 0 }
+            XCTAssertFalse(PNGMetadata.onlyImageDescriptionRemoved(from: old, to: zeroedThumbnail), "the thumbnail zeroed")
+            let none = exif(big: big, description: nil, thumbnail: thumbnail)
+            XCTAssertFalse(PNGMetadata.onlyImageDescriptionRemoved(from: none, to: none), "no description to take out")
+        }
+    }
 }
