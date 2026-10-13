@@ -1458,8 +1458,9 @@ final class LibraryModel {
             alert.addButton(withTitle: "Save in Photos")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else {
-                // Set again, so a switch already showing on (Settings' checkbox) redraws as off.
-                saveInPhotos = false
+                // Settings' checkbox already shows on: made again, so it shows off. Setting the same value again
+                // wouldn't redraw it.
+                switchesRedraw += 1
                 return
             }
         }
@@ -1470,8 +1471,11 @@ final class LibraryModel {
 
     // MARK: - Place names (#105)
 
-    /// Settings > Look up place names: off until the person agrees once, since it sends coordinates to Apple.
+    /// Settings > Look Up Place Names: off until the person agrees once, since it sends coordinates to Apple.
     private(set) var lookUpPlaceNames: Bool = PlaceNames.isOn(in: .standard)
+
+    /// Changed when a question behind a Settings checkbox is cancelled, so the checkbox is made again and shows off.
+    private(set) var switchesRedraw = 0
 
     /// Turns place names on, after saying what's sent and to whom, or off.
     func setLookUpPlaceNames(_ on: Bool) {
@@ -1482,8 +1486,7 @@ final class LibraryModel {
             alert.addButton(withTitle: "Look Up Place Names")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else {
-                // Set again, so Settings' checkbox, already showing on, redraws as off.
-                lookUpPlaceNames = false
+                switchesRedraw += 1
                 return
             }
         }

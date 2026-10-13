@@ -48,7 +48,7 @@ While you step through photos one at a time, Photo Finder quietly describes the 
 
 - **Describe Photo** (Shift-Command-D / Ctrl+Shift+D) describes the photo you're on and reads it, whether or not automatic descriptions are on.
 - **Describe Again** (Option-Shift-Command-D / Ctrl+Alt+Shift+D) describes it afresh and replaces the saved description.
-- **Describe in the background:** Photo > Describe New Photos in the Background (Mac) or Describe Photos in the Background (Windows) describes photos that haven't been described yet behind the scenes, so their descriptions are ready when you get to them. Photo > Stop Background Describing stops it for now.
+- **Describe in the background:** Photo > Describe Photos in the Background describes photos that haven't been described yet behind the scenes, so their descriptions are ready when you get to them. Photo > Stop Background Describing stops it for now.
 
 How photos are described: on the Mac, Settings has the prompt Apple Intelligence is given (leave it empty for the standard one). On Windows, Photo > Description Type chooses Accessible, Detailed, Brief or Diagram.
 
@@ -84,18 +84,18 @@ On the Mac, a photo in your Photos library gets a Photos caption, which syncs wi
 
 ## Place names
 
-Photos often record where they were taken, as coordinates. Get Info always shows the coordinates. On the Mac, **Settings > Look up place names** also names the place, such as "Pike Place Market, Seattle, Washington, United States". To find the name, the coordinates (nothing else) are sent to Apple's location service, so it's off until you turn it on, and it asks first. The Windows app shows coordinates only for now.
+Photos often record where they were taken, as coordinates. Get Info always shows the coordinates. On the Mac, **Settings > Look Up Place Names** also names the place, such as "Pike Place Market, Seattle, Washington, United States". To find the name, the coordinates (nothing else) are sent to Apple's location service, so it's off until you turn it on, and it asks first. The Windows app shows coordinates only for now.
 
 ## Settings
 
-On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save descriptions in photos and Look up place names. On Windows, these are in the Photo menu.
+On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save Descriptions in Photos and Look Up Place Names. On Windows, these are in the Photo menu.
 
 ## Help menu
 
 - **Check for Updates** says whether there's a newer version. Photo Finder also checks quietly once a day, and the item then reads "Update to *version* available…".
 - **Report a Bug…** opens a new GitHub issue in your browser with the details filled in. GitHub issues are public, and nothing is sent until you submit it.
 - **Check System…** checks that your computer can describe photos, and says what to do if it can't.
-- **User Guide** opens this guide, and **Privacy Policy** opens the privacy policy.
+- **Mac only, for now:** User Guide opens this guide, and Privacy Policy opens the privacy policy.
 - **Windows only, for now:** Check AI Description… describes a sample photo to show describing works, and Open Log Folder opens the diagnostic log.
 
 ## Keyboard shortcut reference

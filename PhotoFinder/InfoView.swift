@@ -256,7 +256,7 @@ enum PhotoMetadata {
         return (fields, data)
     }
 
-    /// The place's name, only when Look up place names is on: finding it sends the coordinates to Apple (#105).
+    /// The place's name, only when Look Up Place Names is on: finding it sends the coordinates to Apple (#105).
     private static func placeName(for location: CLLocation) async -> String? {
         guard PlaceNames.isOn(in: .standard),
               let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }
