@@ -183,7 +183,7 @@ final class AutoDescriber {
         aheadID = nil
     }
 
-    /// Describe Photo or Describe Again spoke this photo's description, so coming back to the window doesn't say it
+    /// Describe Photo or Redescribe spoke this photo's description, so coming back to the window doesn't say it
     /// again.
     func spoken(_ id: String) { spokenID = id }
 

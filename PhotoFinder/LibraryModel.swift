@@ -176,11 +176,11 @@ final class LibraryModel {
     @ObservationIgnored private var backgroundDescriber: AnyObject?
     /// Describe Photo in progress; a newer one replaces it.
     @ObservationIgnored private var describeTask: Task<Void, Never>?
-    /// The photo Describe Photo is working on, so Describe Again on the same photo can supersede it.
+    /// The photo Describe Photo is working on, so Redescribe on the same photo can supersede it.
     @ObservationIgnored private var describeTaskID: String?
-    /// Describe Again in progress; a newer Describe Again replaces it, but Describe Photo doesn't.
+    /// Redescribe in progress; a newer Redescribe replaces it, but Describe Photo doesn't.
     @ObservationIgnored private var describeAgainTask: Task<Void, Never>?
-    /// Photos Describe Again is describing: an automatic description of one finishing meanwhile is older, so it's
+    /// Photos Redescribe is describing: an automatic description of one finishing meanwhile is older, so it's
     /// neither saved nor spoken.
     @ObservationIgnored private var describingAgain: [String: Int] = [:]
     @ObservationIgnored private var terminationObserver: NSObjectProtocol?
@@ -381,15 +381,15 @@ final class LibraryModel {
             // Not while another app, Get Info or a sheet is in front: you've moved on from the photo for now.
             guard let self, NSApplication.shared.isActive, NSApplication.shared.keyWindow?.isSheet == false,
                   self.infoTarget == nil, self.captionTarget == nil, !self.columnsSheetShown else { return false }
-            // Describe Again is working on it: leave it alone, even if you arrow away and back, so the old
-            // description isn't spoken first (as on Windows). Describe Again speaks the new one.
+            // Redescribe is working on it: leave it alone, even if you arrow away and back, so the old
+            // description isn't spoken first (as on Windows). Redescribe speaks the new one.
             guard (self.describingAgain[id] ?? 0) == 0 else { return false }
             return self.autoDescribeCandidate == id
         }
         describer.speak = { [weak self] text in self?.announce(text, queued: true) }
         describer.nextPhoto = { [weak self] id, step in self?.photoAhead(of: id, step: step) }
         describer.describeAhead = { [weak self] id in
-            // Not downloaded from iCloud, and not saved if Describe Again took the photo meanwhile.
+            // Not downloaded from iCloud, and not saved if Redescribe took the photo meanwhile.
             _ = await self?.describeAndRemember(id, allowNetwork: false) { [weak self] in
                 (self?.describingAgain[id] ?? 0) == 0
             }
@@ -1004,7 +1004,7 @@ final class LibraryModel {
         }
     }
 
-    /// View > Refresh (Command-R): reads the added folders and the place showing again, as Windows' Refresh (F5).
+    /// View > Refresh (Shift-Command-R): reads the added folders and the place showing again, as Windows' Refresh (F5).
     func refresh() {
         announceNextLoad = true
         loadSelectedSource(keepSelection: true)
@@ -1948,9 +1948,9 @@ final class LibraryModel {
             announce("Videos can't be described")
             return
         }
-        // Describe Again is replacing this one: the saved description is the old one, so wait for the new (#58).
+        // Redescribe is replacing this one: the saved description is the old one, so wait for the new (#58).
         if (describingAgain[row.id] ?? 0) > 0 {
-            announce("Describing \(row.name) again")
+            announce("Redescribing \(row.name)")
             return
         }
         if let saved = descriptions.description(forKey: key) {
@@ -1977,7 +1977,7 @@ final class LibraryModel {
         }
     }
 
-    /// Photo > Describe Again (Shift-Option-Command-D): describes the photo you're on afresh, replaces its saved
+    /// Photo > Redescribe (Command-R): describes the photo you're on afresh, replaces its saved
     /// description, and speaks the new one. For a saved description that's poor, or from before the photo was edited
     /// or the prompt changed.
     func describeFocusedPhotoAgain() {
@@ -2000,18 +2000,18 @@ final class LibraryModel {
             let alert = NSAlert()
             alert.messageText = "Replace the description you edited?"
             alert.informativeText = "\(row.name) will be described again, and the new description replaces yours."
-            alert.addButton(withTitle: "Describe Again")
+            alert.addButton(withTitle: "Redescribe")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
         let id = row.id
         autoDescriber.describingManually(id)
         describingAgain[id, default: 0] += 1
-        // Its own task: Describe Photo on another photo doesn't cut it short (#58); only a newer Describe Again does.
+        // Its own task: Describe Photo on another photo doesn't cut it short (#58); only a newer Redescribe does.
         describeAgainTask?.cancel()
         // A Describe Photo still running on this photo would save and speak an older description after this one.
         if describeTaskID == id { describeTask?.cancel() }
-        announce("Describing \(row.name) again")
+        announce("Redescribing \(row.name)")
         describeAgainTask = Task { [weak self] in
             let text = await self?.describeAndRemember(id, allowNetwork: true, replacingEdit: agreed)
             self?.describingAgain[id, default: 1] -= 1
@@ -2309,7 +2309,7 @@ final class LibraryModel {
     /// or why there isn't one; nil for a row that isn't a photo. Nil too, saying nothing, when the photo is only in
     /// iCloud and `allowNetwork` is false, or when a newer request replaced this one. A file in an added folder is
     /// read from disk and saved under its file key (#36).
-    /// `replacingEdit` is the correction the person agreed Describe Again may replace; any other correction (one made
+    /// `replacingEdit` is the correction the person agreed Redescribe may replace; any other correction (one made
     /// meanwhile in the Description panel) is kept.
     private func describeAndRemember(_ id: String, allowNetwork: Bool, replacingEdit: String? = nil,
                                      keep: @MainActor () -> Bool = { true }) async -> String? {

@@ -104,8 +104,9 @@ struct PhotoCommands: Commands {
                 }
             }
             // Windows' Refresh (F5): reads added folders again, and the place showing.
+            // Shift-Command-R: Command-R is Redescribe (Kelly, 13 Oct).
             Button("Refresh") { model.refresh() }
-                .keyboardShortcut("r")
+                .keyboardShortcut("r", modifiers: [.command, .shift])
             Divider()
         }
         // Help: the same items as on Windows (#32, #33), plus macOS's own Help search. About stays in the app menu,
@@ -183,13 +184,14 @@ struct PhotoCommands: Commands {
                 set: { model.chooseSaveInPhotos($0) }
             ))
             Divider()
-            // Command-D describes (Kelly, 13 Oct); Shift-Command-D goes to the description and back (Go menu).
-            // Describe Again keeps Option-Shift-Command-D: Option-Command-D is macOS's own Dock shortcut.
+            // Command-D describes and Command-R describes again (Kelly, 13 Oct); Shift-Command-D goes to the description
+            // and back (Go menu).
             Button("Describe Photo") { model.describeFocusedPhoto() }
                 .keyboardShortcut("d", modifiers: .command)
                 .disabled(!model.canStepPhotos)
-            Button("Describe Again") { model.describeFocusedPhotoAgain() }
-                .keyboardShortcut("d", modifiers: [.command, .shift, .option])
+            Button("Redescribe") { model.describeFocusedPhotoAgain() }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(!model.canStepPhotos)
             Toggle("Describe Photos Automatically", isOn: Binding(
                 get: { model.describeAutomatically },
                 set: { model.setDescribeAutomatically($0) }
