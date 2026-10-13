@@ -203,7 +203,13 @@ final class LibraryModel {
     var describeAutomatically: Bool {
         didSet { defaults.set(describeAutomatically, forKey: "describeAutomatically") }
     }
-    @ObservationIgnored private lazy var autoDescriber = makeAutoDescriber()
+    /// Not private, so tests can see what automatic describing would do.
+    @ObservationIgnored lazy var autoDescriber = makeAutoDescriber()
+    /// Whether the window is in front with no sheet over it, so a photo you're on is still being looked at. Tests
+    /// can say it is, since they run without the window in front.
+    @ObservationIgnored var isInFront: @MainActor () -> Bool = {
+        NSApplication.shared.isActive && NSApplication.shared.keyWindow?.isSheet == false
+    }
 
     /// Describe photos added to the Photos library behind the scenes, so their descriptions are ready in Get Info.
     var describeInBackground: Bool {
@@ -409,7 +415,7 @@ final class LibraryModel {
         }
         describer.isStillOn = { [weak self] id in
             // Not while another app, Get Info or a sheet is in front: you've moved on from the photo for now.
-            guard let self, NSApplication.shared.isActive, NSApplication.shared.keyWindow?.isSheet == false,
+            guard let self, self.isInFront(),
                   self.infoTarget == nil, self.captionTarget == nil, !self.labelsSheetShown else { return false }
             // Redescribe is working on it: leave it alone, even if you arrow away and back, so the old
             // description isn't spoken first (as on Windows). Redescribe speaks the new one.
