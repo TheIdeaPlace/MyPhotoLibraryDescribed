@@ -6,12 +6,14 @@ using Windows.Storage.Streams;
 namespace PhotoFinder.Services;
 
 /// <summary>
-/// A photo file's XMP caption (dc:description) and IPTC accessibility fields (#31, #62). JPEG, PNG and TIFF, as on the
-/// Mac; WIC can't write HEIC's metadata, so HEIC and other formats keep their caption in Explorer's Title (System.Title).
+/// A photo file's XMP caption (dc:description) and IPTC accessibility fields (#31, #62). JPEG, PNG, TIFF and HEIC, as on
+/// the Mac; other formats keep their caption in Explorer's Title (System.Title).
 ///
 /// - JPEG is changed segment by segment (<see cref="JpegMetadata"/>, #86): only the XMP is replaced, so EXIF (with its
 ///   thumbnail and MakerNote), the picture and anything after it (a motion photo's video) stay byte for byte.
 /// - PNG is changed chunk by chunk (<see cref="PngMetadata"/>, #82): only the XMP chunk is replaced.
+/// - HEIC is changed box by box (<see cref="HeifMetadata"/>, #31): only the photo's XMP item, added when there's none.
+///   Windows' own property handler, used before, rewrote the whole file to save a Title.
 /// - TIFF goes through WIC: its in-place encoder when the file has room, otherwise its transcoder, which rewrites the file
 ///   without decoding the picture.
 /// - Every way, the new file is written beside the photo, flushed, and swapped in whole, so a failure partway leaves the
@@ -23,7 +25,7 @@ public static class XmpFields
     /// so clearing one doesn't bring back the Title in its place.</summary>
     public sealed record Fields(string Caption, string AltText, string ExtendedDescription, bool HasCaption = false);
 
-    private static readonly HashSet<string> Writable = new(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".jpe", ".jfif", ".tif", ".tiff", ".png" };
+    private static readonly HashSet<string> Writable = new(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".jpe", ".jfif", ".tif", ".tiff", ".png", ".heic", ".heif", ".hif" };
 
     public static bool CanWrite(string path) => Writable.Contains(Path.GetExtension(path));
 
@@ -31,10 +33,13 @@ public static class XmpFields
 
     public static bool IsPng(string path) => Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase);
 
-    public static bool IsJpeg(string path) => CanWrite(path) && !IsTiff(path) && !IsPng(path);
+    public static bool IsHeif(string path) => Path.GetExtension(path).ToLowerInvariant() is ".heic" or ".heif" or ".hif";
 
-    /// <summary>Changed by editing the file's own structure, a whole <see cref="MetadataChanges"/> at once: JPEG and PNG.</summary>
-    public static bool EditsInPlace(string path) => IsJpeg(path) || IsPng(path);
+    public static bool IsJpeg(string path) => CanWrite(path) && !IsTiff(path) && !IsPng(path) && !IsHeif(path);
+
+    /// <summary>Changed by editing the file's own structure, a whole <see cref="MetadataChanges"/> at once: JPEG, PNG and
+    /// HEIC.</summary>
+    public static bool EditsInPlace(string path) => IsJpeg(path) || IsPng(path) || IsHeif(path);
 
     private static string Root(string path) => IsTiff(path) ? "/ifd/xmp" : "/xmp";
 
@@ -54,6 +59,20 @@ public static class XmpFields
             if (!PngMetadata.LooksLikePng(bytes)) throw new InvalidDataException("The file isn't the kind its name says.");
             var (caption, alt, extended) = PngMetadata.Fields(bytes);
             return new Fields(caption ?? "", alt ?? "", extended ?? "", caption is not null);
+        }
+        if (IsHeif(path))
+        {
+            // Read from the photo's XMP item: only the boxes up to the meta box, the meta box and the item are read, not
+            // the pictures. Off the window's thread, as a network share can be slow.
+            return await Task.Run(() =>
+            {
+                using var heic = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 14);
+                var head = new byte[Math.Min(heic.Length, 64)];
+                heic.ReadExactly(head);
+                if (!HeifMetadata.LooksLikeHeif(head)) throw new InvalidDataException("The file isn't the kind its name says.");
+                var (caption, alt, extended) = HeifMetadata.Fields(heic);
+                return new Fields(caption ?? "", alt ?? "", extended ?? "", caption is not null);
+            });
         }
         var file = await StorageFile.GetFileFromPathAsync(path);
         using var stream = await file.OpenAsync(FileAccessMode.Read);
@@ -87,9 +106,9 @@ public static class XmpFields
             ? WriteChangesAsync(path, new MetadataChanges { Caption = caption, AltText = altText, ExtendedDescription = extended })
             : WriteTiffAsync(path, caption, altText, extended);
 
-    /// <summary>Changes a JPEG's or PNG's metadata by editing its segments or chunks (<see cref="JpegMetadata"/>,
-    /// <see cref="PngMetadata"/>): the caption and accessibility fields, and the Title and rating when given. Read back for
-    /// the caption and accessibility fields.</summary>
+    /// <summary>Changes a JPEG's, PNG's or HEIC's metadata by editing its segments, chunks or boxes
+    /// (<see cref="JpegMetadata"/>, <see cref="PngMetadata"/>, <see cref="HeifMetadata"/>): the caption and accessibility
+    /// fields, and the Title and rating when given. Read back for the caption and accessibility fields.</summary>
     public static async Task WriteChangesAsync(string path, MetadataChanges changes)
     {
         PhotoChanges.Check();
@@ -100,11 +119,12 @@ public static class XmpFields
         var before = File.ReadAllBytes(path);
         byte[] after;
         var png = IsPng(path);
+        var heif = IsHeif(path);
         try
         {
-            after = png ? PngMetadata.Apply(before, changes) : JpegMetadata.Apply(before, changes);
+            after = png ? PngMetadata.Apply(before, changes) : heif ? HeifMetadata.Apply(before, changes) : JpegMetadata.Apply(before, changes);
         }
-        catch (MetadataRefusedException) when (png ? !PngMetadata.LooksLikePng(before) : !JpegMetadata.LooksLikeJpeg(before))
+        catch (MetadataRefusedException) when (png ? !PngMetadata.LooksLikePng(before) : heif ? !HeifMetadata.LooksLikeHeif(before) : !JpegMetadata.LooksLikeJpeg(before))
         {
             throw new InvalidDataException("The file isn't the kind its name says.");
         }

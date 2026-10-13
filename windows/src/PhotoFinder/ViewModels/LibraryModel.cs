@@ -582,7 +582,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         var saved = alreadyCaptioned;
         if (captions.Count > 0)
         {
-            // The caption, and for JPEG, PNG and TIFF files the accessibility fields too: choosing the command is the permission.
+            // The caption, and for JPEG, PNG, TIFF and HEIC files the accessibility fields too: choosing the command is the permission.
             var changes = captions.Select(c => MetadataWriter.FieldChanges.Replacing(c.Item, c.Caption)).ToList();
             var result = await WriteAsync("Saving caption…", captions.Select(c => c.Item).ToList(), _ => MetadataWriter.SetFieldsAsync(changes));
             saved += result.Succeeded;

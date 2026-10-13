@@ -329,13 +329,19 @@ public class MetadataCacheTests
         var jpeg = new MediaItem(@"C:\p\a.jpg", 100, date, date);
         var png = new MediaItem(@"C:\p\a.png", 100, date, date);
         var heic = new MediaItem(@"C:\p\a.heic", 100, date, date);
+        var gif = new MediaItem(@"C:\p\a.gif", 100, date, date);
         cache.Remember(jpeg, new MediaMetadata { Caption = "Old", Version = 1 });
         cache.Remember(png, new MediaMetadata { Caption = "Old", Version = 1 });
-        cache.Remember(heic, new MediaMetadata { Caption = "Old", Version = 1 });
-        // PNG captions are read from their XMP since #82: read again, once.
+        cache.Remember(heic, new MediaMetadata { Caption = "Old", Version = 2 });
+        cache.Remember(gif, new MediaMetadata { Caption = "Old", Version = 1 });
+        // PNG captions are read from their XMP since #82, and HEIC's since #31: read again, once.
         Assert.Null(cache.Lookup(jpeg));
         Assert.Null(cache.Lookup(png));
-        Assert.Equal("Old", cache.Lookup(heic)!.Caption);
+        Assert.Null(cache.Lookup(heic));
+        // A JPEG read by version 2 already has everything; a GIF has no such fields.
+        cache.Remember(jpeg, new MediaMetadata { Caption = "Old", Version = 2 });
+        Assert.Equal("Old", cache.Lookup(jpeg)!.Caption);
+        Assert.Equal("Old", cache.Lookup(gif)!.Caption);
     }
 
     [Fact]

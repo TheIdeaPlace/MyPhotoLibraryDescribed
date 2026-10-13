@@ -863,7 +863,9 @@ public sealed class FileFieldsTests : IDisposable
         Assert.True(XmpFields.CanWrite(@"C:\a.JPG"));
         Assert.True(XmpFields.CanWrite(@"C:\a.tiff"));
         Assert.True(XmpFields.CanWrite(@"C:\a.png"));
-        Assert.False(XmpFields.CanWrite(@"C:\a.heic"));
+        Assert.True(XmpFields.CanWrite(@"C:\a.heic"));
+        Assert.True(XmpFields.EditsInPlace(@"C:\a.HEIF"));
+        Assert.False(XmpFields.CanWrite(@"C:\a.gif"));
         Assert.False(XmpFields.CanWrite(@"C:\a.mp4"));
     }
 

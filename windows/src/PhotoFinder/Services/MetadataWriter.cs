@@ -28,10 +28,11 @@ public static class MetadataWriter
     }
 
     /// <summary>
-    /// The caption goes in the standard field, XMP's dc:description, in JPEG, PNG and TIFF files, with Explorer's Title kept in
-    /// step when it's empty or still holds the old caption (so a title someone wrote is left alone). Other formats keep
-    /// the caption in the Title, as before. The accessibility fields are written to JPEG, PNG and TIFF only. JPEGs and PNGs are changed
-    /// segment by segment, keeping EXIF, the picture and a motion photo's video byte for byte (#86).
+    /// The caption goes in the standard field, XMP's dc:description, in JPEG, PNG, TIFF and HEIC files, with Explorer's
+    /// Title kept in step when it's empty or still holds the old caption (so a title someone wrote is left alone). Other
+    /// formats keep the caption in the Title, as before. The accessibility fields are written to those four only. JPEGs,
+    /// PNGs and HEICs are changed segment, chunk or box at a time, keeping EXIF, the pictures and a motion photo's video
+    /// byte for byte (#86, #31).
     /// </summary>
     public static async Task<WriteResult> SetFieldsAsync(IReadOnlyList<FieldChanges> changes)
     {
@@ -55,8 +56,8 @@ public static class MetadataWriter
                     var follows = change.Caption is { } next && FileFields.TitleKeepsInStep(title!, oldCaption!) && title!.Trim() != next.Trim();
                     if (XmpFields.EditsInPlace(item.Path))
                     {
-                        // One change to the file: the caption, the accessibility fields, and the Title following the
-                        // caption in XMP, with an EXIF title that held the old caption emptied in place.
+                        // One change to the file (JPEG, PNG, HEIC): the caption, the accessibility fields, and the Title
+                        // following the caption in XMP, with an EXIF title that held the old caption emptied in place.
                         await XmpFields.WriteChangesAsync(item.Path, new MetadataChanges
                         {
                             Caption = change.Caption,
