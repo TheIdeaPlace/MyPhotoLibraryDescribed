@@ -8,6 +8,7 @@ The two apps work the same wherever the platform allows. Where they differ, this
 
 ## Contents
 
+- [Getting the app](#getting-the-app)
 - [What you need](#what-you-need)
 - [Layout](#layout)
 - [Hearing photos described](#hearing-photos-described)
@@ -24,6 +25,13 @@ The two apps work the same wherever the platform allows. Where they differ, this
 - [Privacy](#privacy)
 
 ---
+
+## Getting the app
+
+Both apps are on the [releases page](https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/latest), signed by Kelly Ford.
+
+- **Mac:** download the `My-Photo-Library-Described-<version>-mac.dmg` disk image, open it and drag the app to Applications. It's signed and notarized by Apple, so it opens without warnings.
+- **Windows:** download and open `PhotoFinder.appinstaller`. Windows' App Installer shows the app's name and publisher (kelly ford) with an Install button, and installs the Windows App Runtime it needs first if the PC doesn't have it. Windows then checks the same place for updates every few hours and installs them while the app isn't running; Help > Check for Updates checks now.
 
 ## What you need
 

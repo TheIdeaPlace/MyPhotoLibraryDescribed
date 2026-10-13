@@ -52,6 +52,9 @@ Sign the executables, then the bundle, with the kellyford-public certificate.
 param(
     [string]$Destination,
     [string]$BaseUri,
+    # The Windows App Runtime packages beside the bundle rather than in Dependencies\: a GitHub release's files can't
+    # be in folders.
+    [switch]$Flat,
     [ValidateSet('x64', 'arm64', 'both')]
     [string]$Arch = 'both',
     [int]$Revision = -1,
@@ -206,7 +209,7 @@ Invoke-Tool $makeappx @('bundle', '/d', $packed, '/p', $bundle, '/bv', $version,
 if ($Sign) { & (Join-Path $PSScriptRoot 'sign-files.ps1') -ExpectedSubject $certificateSubject $bundle }
 
 $dependencyXml = foreach ($r in $runtimes) {
-    "    <Package Name=`"$($r.Identity.Name)`" Publisher=`"$([Security.SecurityElement]::Escape($r.Identity.Publisher))`" Version=`"$($r.Identity.Version)`" ProcessorArchitecture=`"$($r.Arch)`" Uri=`"$BaseUri/Dependencies/$($r.File)`" />"
+    "    <Package Name=`"$($r.Identity.Name)`" Publisher=`"$([Security.SecurityElement]::Escape($r.Identity.Publisher))`" Version=`"$($r.Identity.Version)`" ProcessorArchitecture=`"$($r.Arch)`" Uri=`"$BaseUri/$(if ($Flat) { '' } else { 'Dependencies/' })$($r.File)`" />"
 }
 $appInstaller = @"
 <?xml version="1.0" encoding="utf-8"?>
@@ -229,7 +232,7 @@ $($dependencyXml -join "`r`n")
 
 # Into -Destination in an order that never leaves the .appinstaller pointing at a missing file: the new bundle and
 # runtimes first, then the .appinstaller, and the previous build's bundle last.
-$dependencies = Join-Path $Destination 'Dependencies'
+$dependencies = if ($Flat) { $Destination } else { Join-Path $Destination 'Dependencies' }
 New-Item -ItemType Directory -Force -Path $dependencies | Out-Null
 foreach ($r in $runtimes) { Copy-Item -LiteralPath $r.Source -Destination (Join-Path $dependencies $r.File) -Force }
 Copy-Item -LiteralPath $bundle -Destination $Destination -Force

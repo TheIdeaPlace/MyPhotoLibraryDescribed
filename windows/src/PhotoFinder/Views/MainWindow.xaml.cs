@@ -1273,7 +1273,7 @@ public partial class MainWindow : Window
         _update = Services.Updates.IsNewer(_update.Version, current) ? _update : (false, null);
         ShowUpdatesItem();
         var shown = Services.Updates.Shown(current, last!).Running;
-        // Release notes are per version (windows-v0.2.0); a build of the same version has none of its own, so the list.
+        // Release notes are per version (v0.2.0); a build of the same version has none of its own, so the list.
         var notes = Services.Updates.ShortVersion(current) == Services.Updates.ShortVersion(last!)
             ? AppInfo.ReleasesUrl
             : AppInfo.ReleaseNotesUrl(Services.Updates.ShortVersion(current));

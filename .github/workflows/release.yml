@@ -1,0 +1,116 @@
+name: Release
+
+# One tag releases both apps (Kelly, 13 Oct): pushing v<version> makes a draft GitHub release.
+#
+# - Windows is built, signed with Azure Artifact Signing and attached here: the .appinstaller, the bundle and the Windows
+#   App Runtime packages, all at the top level, since the .appinstaller finds them (and later updates) at
+#   https://github.com/<repo>/releases/latest/download/.
+# - The Mac is built by hand on Kelly's Mac, which has Xcode 27 (GitHub's runners don't, and without it the Mac app has
+#   no Apple Intelligence): scripts/release-mac.sh signs, notarizes and staples the DMG and attaches it to this draft.
+#
+# The draft is published when Kelly says go, once both are attached. Run by hand (workflow_dispatch), it builds the
+# Windows installer unsigned and keeps it as an artifact, to check the release build without making a release.
+on:
+  push:
+    tags: ['v*']
+  # A change to this workflow is tried, unsigned, on its pull request.
+  pull_request:
+    paths: ['.github/workflows/release.yml', 'windows/scripts/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: read
+        name: The tag, windows/VERSION and the Mac's MARKETING_VERSION agree
+        run: |
+          windows=$(tr -d '[:space:]' < windows/VERSION)
+          mac=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9.]*\)"\{0,1\}.*/\1/p' project.yml | head -1)
+          echo "windows/VERSION: $windows; project.yml MARKETING_VERSION: $mac"
+          if [ "$windows" != "$mac" ]; then echo "::error::windows/VERSION ($windows) and the Mac's MARKETING_VERSION ($mac) differ."; exit 1; fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$windows" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME doesn't match the version $windows (expected v$windows)."; exit 1
+          fi
+          echo "version=$windows" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Windows installer
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 45
+    # The signing app trusts OIDC tokens whose subject names this environment. It has no protection rules; only a tag
+    # signs.
+    environment: azure-signing
+    permissions:
+      contents: write
+      id-token: write
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The installer's fourth version number counts commits.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore PhotoFinder.sln
+
+      - name: Sign in to Azure
+        if: github.ref_type == 'tag'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get the Artifact Signing add-on
+        if: github.ref_type == 'tag'
+        run: |
+          nuget install Microsoft.Trusted.Signing.Client -OutputDirectory "$env:RUNNER_TEMP\signing" -ExcludeVersion -NonInteractive
+          $dlib = Get-ChildItem "$env:RUNNER_TEMP\signing" -Recurse -Filter Azure.CodeSigning.Dlib.dll | Where-Object { $_.Directory.Name -eq 'x64' } | Select-Object -First 1
+          if (-not $dlib) { throw "The Artifact Signing add-on wasn't in the NuGet package." }
+          "ARTIFACT_SIGNING_DLIB=$($dlib.FullName)" >> $env:GITHUB_ENV
+
+      - name: Build the installer
+        run: |
+          $base = "https://github.com/${{ github.repository }}/releases/latest/download"
+          $options = @{ Flat = $true; BaseUri = $base; Destination = "$env:RUNNER_TEMP\release" }
+          if ('${{ github.ref_type }}' -eq 'tag') { $options.Sign = $true }
+          .\scripts\build-msix.ps1 @options
+          Get-ChildItem "$env:RUNNER_TEMP\release" | Format-Table Name, Length
+
+      - name: Keep it as an artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer
+          path: ${{ runner.temp }}/release
+
+      - name: Attach to the draft release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --draft --title "My Photo Library Described ${{ needs.version.outputs.version }}" --generate-notes
+          }
+          gh release upload $tag (Get-ChildItem "$env:RUNNER_TEMP\release" -File).FullName --clobber

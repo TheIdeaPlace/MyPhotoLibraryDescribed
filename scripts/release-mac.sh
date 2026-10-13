@@ -1,8 +1,12 @@
 #!/bin/zsh
-# Builds a signed, notarized Mac release of the app and publishes it as a GitHub release (#22).
+# Builds a signed, notarized Mac release of the app and attaches it to the GitHub release (#22).
 #
 #   scripts/release-mac.sh            build, sign, notarize and staple; leaves the disk image in build/release
-#   scripts/release-mac.sh --publish  and then publishes it as the GitHub release mac-v<version>
+#   scripts/release-mac.sh --publish  and then attaches it to the draft release v<version>
+#
+# One tag releases both apps (Kelly, 13 Oct): pushing v<version> runs .github/workflows/release.yml, which builds and
+# signs the Windows installer and makes the draft release. This attaches the Mac's disk image to that draft (or makes
+# the draft, if the Mac is first). The draft is published when Kelly says go.
 #
 # Built here rather than in GitHub Actions: the Apple Intelligence code needs the macOS 27 SDK, and GitHub's runners
 # don't have Xcode 27 yet, so a release built there couldn't describe photos. It uses what's already on Kelly's Mac:
@@ -21,7 +25,7 @@ PUBLISH=${1:-}
 
 VERSION=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9.]*\)"\{0,1\}/\1/p' project.yml | head -1)
 NAME=$(sed -n 's/^ *CFBundleDisplayName: *//p' project.yml | head -1)
-TAG="mac-v$VERSION"
+TAG="v$VERSION"
 OUT=build/release
 FILE="${NAME// /-}-$VERSION-mac.dmg"
 [ -n "$VERSION" ] && [ -n "$NAME" ] || { echo "Couldn't read the version or name from project.yml"; exit 1; }
@@ -32,7 +36,8 @@ if [ "$PUBLISH" = "--publish" ]; then
   # Checked before ten minutes of notarizing, not after.
   gh auth status >/dev/null 2>&1 || { echo "Sign in to GitHub first: gh auth login"; exit 1; }
   if gh release view "$TAG" >/dev/null 2>&1; then
-    echo "$TAG is already released. Raise MARKETING_VERSION in project.yml first."; exit 1
+    [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true" ] || { echo "$TAG is already published. Raise MARKETING_VERSION in project.yml (and windows/VERSION) first."; exit 1; }
+    if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -q '[.]dmg$'; then echo "$TAG already has a Mac disk image."; exit 1; fi
   fi
   git fetch -q origin
   git merge-base --is-ancestor HEAD origin/main || { echo "Release from a commit that's on origin/main (pull, or merge first)."; exit 1; }
@@ -76,9 +81,10 @@ spctl --assess --type open --context context:primary-signature -v "$OUT/$FILE"
 echo "Ready: $OUT/$FILE"
 
 if [ "$PUBLISH" = "--publish" ]; then
-  gh release create "$TAG" "$OUT/$FILE" --title "$NAME $VERSION for Mac" --target "$(git rev-parse HEAD)" --notes \
-"$NAME $VERSION for the Mac: signed and notarized by Apple. Runs on macOS 15 or later; describing photos needs macOS 27 and Apple silicon with Apple Intelligence.
-
-Open the disk image and drag $NAME to Applications. Help > Check for Updates finds newer versions."
-  echo "Published $TAG"
+  if gh release view "$TAG" >/dev/null 2>&1; then
+    gh release upload "$TAG" "$OUT/$FILE"
+  else
+    gh release create "$TAG" "$OUT/$FILE" --draft --title "$NAME $VERSION" --target "$(git rev-parse HEAD)" --generate-notes
+  fi
+  echo "Attached $FILE to the draft release $TAG. It's published when Kelly says go."
 fi

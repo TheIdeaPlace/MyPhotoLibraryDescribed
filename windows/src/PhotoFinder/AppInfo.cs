@@ -24,8 +24,8 @@ internal static class AppInfo
     /// <summary>Where Report a Bug files issues.</summary>
     public const string IssuesUrl = $"https://github.com/{Repository}/issues/new";
 
-    /// <summary>Windows releases are tagged windows-v&lt;version&gt;, as the Mac's are mac-v&lt;version&gt;.</summary>
-    public const string ReleaseTagPrefix = "windows-v";
+    /// <summary>One tag releases both apps (Kelly, 13 Oct): v&lt;version&gt;.</summary>
+    public const string ReleaseTagPrefix = "v";
 
     /// <summary>The user guide and privacy policy, shared by both apps (#105).</summary>
     public const string UserGuideUrl = $"https://github.com/{Repository}/blob/main/docs/user-guide.md";
