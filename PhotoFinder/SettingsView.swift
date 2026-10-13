@@ -11,10 +11,19 @@ struct SettingsView: View {
                 // A vertical text field rather than a text editor, so Tab still moves on and Return finishes.
                 // Empty means the standard prompt, shown as the placeholder, so improvements to it reach everyone
                 // who hasn't written their own.
-                TextField("Description prompt", text: $prompt, prompt: Text(DescriptionPrompt.standard), axis: .vertical)
-                    .lineLimit(4...10)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityHint("What Apple Intelligence is asked when it describes a photo. Leave it empty for the standard prompt.")
+                // The name above the field and the text from the left: a grouped form otherwise puts a field's text
+                // on the right, below an empty space as tall as the field. The field carries the name for VoiceOver.
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Description prompt")
+                        .accessibilityHidden(true)
+                    TextField("Description prompt", text: $prompt, prompt: Text(DescriptionPrompt.standard), axis: .vertical)
+                        .labelsHidden()
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(4...10)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Description prompt")
+                        .accessibilityHint("What Apple Intelligence is asked when it describes a photo. Leave it empty for the standard prompt.")
+                }
                 HStack {
                     Spacer()
                     Button("Use Standard Prompt") { prompt = "" }
@@ -56,7 +65,10 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520)
+        // A height of its own: a grouped form will take any height it's given, so without one the window could open
+        // too short to show the last sections (#35). This shows every section; the form scrolls when a longer prompt
+        // or larger text needs more.
+        .frame(width: 520, height: 590)
         .padding()
     }
 }

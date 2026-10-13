@@ -165,8 +165,10 @@ struct OrderListEditor: View {
                 }
             }
             .frame(minHeight: 220)
+            .background(TabControlResizer())
             // Always enabled, so the order you meet them in never changes; each says when there's nothing it can do.
-            HStack {
+            // They wrap onto a second row rather than shortening a name when the sheet is too narrow for one.
+            WrappingRow(spacing: 8) {
                 Button("Add") { say(editor.add()) }
                 Button("Remove") { say(editor.remove()) }
                 Button("Move Up") { say(editor.move(by: -1)) }
@@ -197,6 +199,79 @@ struct OrderListEditor: View {
     private func say(_ text: String) {
         AccessibilityNotification.Announcement(text).post()
     }
+}
+
+/// Views in a row, in order, moving on to another row when the next one wouldn't fit, so none is shortened.
+struct WrappingRow: Layout {
+    var spacing: CGFloat = 8
+
+    private func rows(_ sizes: [CGSize], width: CGFloat) -> [[Int]] {
+        var rows: [[Int]] = [[]]
+        var x: CGFloat = 0
+        for (index, size) in sizes.enumerated() {
+            if !rows[rows.count - 1].isEmpty, x + spacing + size.width > width {
+                rows.append([])
+                x = 0
+            }
+            x += (rows[rows.count - 1].isEmpty ? 0 : spacing) + size.width
+            rows[rows.count - 1].append(index)
+        }
+        return rows
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let width = proposal.width ?? .infinity
+        let rows = rows(sizes, width: width)
+        let rowWidths = rows.map { row in row.map { sizes[$0].width }.reduce(0, +) + spacing * CGFloat(max(row.count - 1, 0)) }
+        let heights = rows.map { row in row.map { sizes[$0].height }.max() ?? 0 }
+        return CGSize(width: proposal.width ?? (rowWidths.max() ?? 0),
+                      height: heights.reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        var y = bounds.minY
+        for row in rows(sizes, width: bounds.width) {
+            var x = bounds.minX
+            let height = row.map { sizes[$0].height }.max() ?? 0
+            for index in row {
+                subviews[index].place(at: CGPoint(x: x, y: y + (height - sizes[index].height) / 2),
+                                      proposal: ProposedViewSize(sizes[index]))
+                x += sizes[index].width + spacing
+            }
+            y += height + spacing
+        }
+    }
+}
+
+/// Makes the Labels sheet's tab control as wide as its names. On macOS 26 and later, a TabView in a sheet can size its
+/// tab control before the second tab's name is set and not again, so it read "List | G…". Setting the names again,
+/// once the sheet is showing, sizes it to them. The tabs stay the system's own, so VoiceOver reads them as tabs.
+private struct TabControlResizer: NSViewRepresentable {
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil else { return }
+            DispatchQueue.main.async { [weak self] in self?.resizeTabControl() }
+        }
+
+        private func resizeTabControl() {
+            var view = superview
+            while let current = view, !(current is NSTabView) { view = current.superview }
+            guard let tabs = view as? NSTabView else { return }
+            if let control = tabs.subviews.first(where: { $0 is NSSegmentedControl }),
+               control.frame.width >= control.intrinsicContentSize.width - 0.5 { return }
+            for item in tabs.tabViewItems {
+                let label = item.label
+                item.label = ""
+                item.label = label
+            }
+        }
+    }
+
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ nsView: Probe, context: Context) {}
 }
 
 /// What one tab of the Labels sheet chooses from: the list's columns, or what the gallery reads.

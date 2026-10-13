@@ -64,6 +64,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !testing else { return }
         CrashCheck.uncleanLaunch = CrashCheck.begin()
+        // A restart or shut-down may end the app without applicationWillTerminate: clear the flag as the Mac powers
+        // off, so it isn't taken for a crash (#146's review). The boot-time check covers power loss.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willPowerOffNotification, object: nil,
+                                                          queue: .main) { _ in CrashCheck.end() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -174,8 +174,10 @@ enum BugReportRelay {
 }
 
 /// Whether the app quit cleanly last time (#33), as the app kit asks: a flag file in the data folder, written at
-/// launch and removed when the app quits normally. If it's still there at the next launch, the app crashed, was
-/// force-quit, or the Mac lost power, and the app offers once to report it.
+/// launch and removed when the app quits normally. If it's still there at the next launch, the app crashed or was
+/// force-quit, and the app offers once to report it. A Mac restarted or shut down with the app open leaves the flag
+/// too, so when the Mac has started since the flag was written, that's taken for a restart, not a crash, unless macOS
+/// wrote a crash report for the app in between.
 enum CrashCheck {
     static var dataFolder: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -186,10 +188,13 @@ enum CrashCheck {
 
     /// Called at launch: when the last run didn't quit cleanly, when it started (the flag's date), otherwise nil.
     /// Then writes the flag for this run.
+    /// `bootTime` is when the Mac last started; `crashReport` finds macOS's crash report for the app since a date.
     @discardableResult
     static func begin(folder: URL = dataFolder, now: Date = Date(),
                       isRunning: (Int32) -> Bool = { kill($0, 0) == 0 },
-                      pid: Int32 = ProcessInfo.processInfo.processIdentifier) -> Date? {
+                      pid: Int32 = ProcessInfo.processInfo.processIdentifier,
+                      bootTime: Date? = systemBootTime(),
+                      crashReport: (Date) -> URL? = { newestCrashReport(since: $0) }) -> Date? {
         let flag = flagURL(in: folder)
         let fm = FileManager.default
         var previous: Date?
@@ -198,12 +203,28 @@ enum CrashCheck {
             // Debug build beside the installed one), it didn't crash, so there's nothing to offer (#137's review).
             let owner = (try? String(contentsOf: flag, encoding: .utf8)).flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
             if let owner, owner != pid, isRunning(owner) { return nil }
-            previous = (try? fm.attributesOfItem(atPath: flag.path)[.modificationDate] as? Date) ?? .distantPast
+            let started = (try? fm.attributesOfItem(atPath: flag.path)[.modificationDate] as? Date) ?? .distantPast
+            // The Mac has started since that run began: the app was most likely open when the Mac restarted or shut
+            // down, which isn't a crash. It's offered only if macOS wrote a crash report for the app since then.
+            if let bootTime, bootTime > started, crashReport(started) == nil {
+                previous = nil
+            } else {
+                previous = started
+            }
         }
         try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
         try? Data(String(pid).utf8).write(to: flag)
         try? fm.setAttributes([.modificationDate: now], ofItemAtPath: flag.path)
         return previous
+    }
+
+    /// When the Mac last started (`sysctl kern.boottime`), or nil if it can't be read.
+    static func systemBootTime() -> Date? {
+        var boot = timeval()
+        var size = MemoryLayout<timeval>.size
+        var mib: [Int32] = [CTL_KERN, KERN_BOOTTIME]
+        guard sysctl(&mib, 2, &boot, &size, nil, 0) == 0, boot.tv_sec > 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(boot.tv_sec) + TimeInterval(boot.tv_usec) / 1_000_000)
     }
 
     /// Called as the app quits normally.
