@@ -14,7 +14,8 @@ public static class Server
     /// whatever failed, and serving carries on.
     /// </summary>
     public static async Task RunAsync(TextReader input, TextWriter output,
-        Func<Protocol.DescribeRequest, Task<string>> describe, Action? onUnexpectedFailure = null)
+        Func<Protocol.DescribeRequest, Task<string>> describe, Action? onUnexpectedFailure = null,
+        Func<Protocol.AskRequest, Task<string>>? ask = null)
     {
         var reader = new LineReader(input, Protocol.MaxLineChars);
         while (true)
@@ -27,7 +28,7 @@ public static class Server
                 response = Protocol.Failure(0, Codes.TooLarge,
                     $"The request is too large; a picture can be at most {Protocol.MaxImageBytes / (1024 * 1024)} MB.");
             }
-            else if (line!.Trim().Length == 0)
+            else if (line!.TrimStart('﻿').Trim().Length == 0)
             {
                 continue;
             }
@@ -37,10 +38,22 @@ public static class Server
                 var id = 0;
                 try
                 {
-                    var request = Protocol.ParseRequest(line);
-                    id = request.Id;
-                    var text = await describe(request);
-                    response = Protocol.Success(id, request.Kind, text, (DateTime.UtcNow - started).TotalSeconds);
+                    // A byte-order mark some shells put at the start of what they pipe in is not part of the request.
+                    switch (Protocol.ParseAnyRequest(line.TrimStart('﻿')))
+                    {
+                        case Protocol.AskRequest question:
+                            id = question.Id;
+                            if (ask is null) throw new ProtocolException(id, Codes.NotSupported, "This helper doesn't answer questions.");
+                            response = Protocol.Answer(id, await ask(question), (DateTime.UtcNow - started).TotalSeconds);
+                            break;
+                        case Protocol.DescribeRequest request:
+                            id = request.Id;
+                            var text = await describe(request);
+                            response = Protocol.Success(id, request.Kind, text, (DateTime.UtcNow - started).TotalSeconds);
+                            break;
+                        default:
+                            throw new ProtocolException(0, Codes.BadRequest, "The request couldn't be read.");
+                    }
                 }
                 catch (ProtocolException ex)
                 {

@@ -65,6 +65,7 @@ public partial class InfoWindow : Window
                 DescriptionBox.Visibility = Visibility.Collapsed;
                 UseAsCaptionButton.Visibility = Visibility.Collapsed;
                 DescriptionBox.Text = "";
+                StartConversation("");
             }
             UpdateDescribeButton();
         };
@@ -279,6 +280,7 @@ public partial class InfoWindow : Window
             if (text.Length > 0)
             {
                 UseAsCaptionButton.Visibility = _useAsCaption is null ? Visibility.Collapsed : Visibility.Visible;
+                StartConversation(text);
                 _store?.Put(_item, kind, text);
                 _row.Description = text;
                 UpdateDescribeButtonLater();
@@ -313,6 +315,97 @@ public partial class InfoWindow : Window
         DescriptionBox.Visibility = Visibility.Visible;
         DescriptionBox.Text = text;
         UseAsCaptionButton.Visibility = _useAsCaption is null ? Visibility.Collapsed : Visibility.Visible;
+        StartConversation(text);
+    }
+
+    // MARK: Follow-up questions (#24)
+
+    /// <summary>Whether the question box is offered: <see cref="AppInfo.FollowUpQuestions"/>, replaceable in tests.</summary>
+    internal static bool FollowUpQuestionsShown { get; set; } = AppInfo.FollowUpQuestions;
+
+    /// <summary>Asks Windows' text model; replaceable in tests.</summary>
+    internal static Func<string, string, string, IReadOnlyList<(string Question, string Answer)>, CancellationToken, Task<string>> AskQuestion { get; set; } =
+        (description, text, question, history, cancel) => App.WindowsAI.AskAsync(description, text, question, history, cancel);
+
+    /// <summary>The description the questions are about, and what's been asked so far. A new description starts over.</summary>
+    private string _conversationAbout = "";
+    private readonly List<(string Question, string Answer)> _exchanges = [];
+    private bool _asking;
+
+    private void StartConversation(string description)
+    {
+        if (description == _conversationAbout) return;
+        _conversationAbout = description;
+        _exchanges.Clear();
+        AnswersBox.Text = "";
+        AnswersLabel.Visibility = Visibility.Collapsed;
+        AnswersBox.Visibility = Visibility.Collapsed;
+        AskStatus.Visibility = Visibility.Collapsed;
+        AskPanel.Visibility = description.Length > 0 && FollowUpQuestionsShown ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void Ask_Click(object sender, RoutedEventArgs e) => await AskAsync();
+
+    private async void QuestionBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None) return;
+        e.Handled = true;
+        await AskAsync();
+    }
+
+    /// <summary>Asks the question in the box about the description showing. The answer is spoken whole and added to the
+    /// answers, and the box is cleared for the next question, with focus left there.</summary>
+    internal async Task AskAsync()
+    {
+        var question = QuestionBox.Text.Trim();
+        if (question.Length == 0)
+        {
+            Announcer.Announce("Type a question first");
+            return;
+        }
+        if (_asking)
+        {
+            Announcer.Announce("Still answering");
+            return;
+        }
+        var description = _conversationAbout;
+        var text = OcrBox.Visibility == Visibility.Visible && OcrBox.Text != "No text found" ? OcrBox.Text : "";
+        _asking = true;
+        AskStatus.Visibility = Visibility.Visible;
+        AskStatus.Text = "Asking Windows…";
+        Announcer.Announce("Asking");
+        try
+        {
+            var answer = await AskQuestion(description, text, question, _exchanges.ToList(), _closing.Token);
+            if (description != _conversationAbout) return;  // described again meanwhile: about a different description
+            if (answer.Length == 0) answer = "Windows returned an empty answer.";
+            else _exchanges.Add((question, answer));
+            AskStatus.Visibility = Visibility.Collapsed;
+            AnswersLabel.Visibility = Visibility.Visible;
+            AnswersBox.Visibility = Visibility.Visible;
+            AnswersBox.AppendText((AnswersBox.Text.Length > 0 ? Environment.NewLine + Environment.NewLine : "") + $"You asked: {question}{Environment.NewLine}Answer: {answer}");
+            AnswersBox.ScrollToEnd();
+            QuestionBox.Clear();
+            Announcer.Announce(answer, interrupt: true);
+        }
+        catch (OperationCanceledException)
+        {
+            // The window closed.
+        }
+        catch (DescriptionException ex)
+        {
+            AskStatus.Text = ex.Message;
+            Announcer.Announce(ex.Message, interrupt: true);
+        }
+        catch (Exception ex)
+        {
+            AskStatus.Text = $"Windows couldn't answer: {ex.Message}";
+            Announcer.Announce(AskStatus.Text, interrupt: true);
+        }
+        finally
+        {
+            _asking = false;
+        }
     }
 
     /// <summary>Use as Caption: the saved description of the chosen type becomes the photo's caption, the same as

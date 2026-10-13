@@ -14,6 +14,45 @@ namespace PhotoFinderAI;
 public sealed class Describer : IDisposable
 {
     private ImageDescriptionGenerator? _generator;
+    private LanguageModel? _language;
+
+    /// <summary>Answers a follow-up question from the photo's description (#24), with Phi Silica. Throws
+    /// <see cref="ProtocolException"/> with the code to answer with.</summary>
+    public async Task<string> AskAsync(Protocol.AskRequest request)
+    {
+        if (_language is null)
+        {
+            try
+            {
+                _language = await StartLanguageModelAsync(request);
+            }
+            catch (UnauthorizedAccessException ex) when (ex.Message.Contains("Limited Access Feature", StringComparison.OrdinalIgnoreCase))
+            {
+                // Phi Silica is a Limited Access Feature: an app needs Microsoft's token to use it (#24).
+                throw new ProtocolException(request.Id, Codes.NotSupported,
+                    "Follow-up questions need Microsoft's permission for this app to use Windows' text model, which it doesn't have yet.");
+            }
+        }
+        using var context = _language.CreateContext(Protocol.AskSystemPrompt);
+        var result = await _language.GenerateResponseAsync(context, Protocol.AskPrompt(request), new LanguageModelOptions());
+        var status = result.Status.ToString();
+        if (Protocol.CodeForAnswerStatus(status) is { } code) throw new ProtocolException(request.Id, code, Protocol.MessageForAnswerStatus(status));
+        return result.Text.Trim();
+    }
+
+    private static async Task<LanguageModel> StartLanguageModelAsync(Protocol.AskRequest request)
+    {
+        var state = LanguageModel.GetReadyState();
+        if (Protocol.ForTextReadyState(state.ToString()) is { } unavailable) throw new ProtocolException(request.Id, unavailable.Code, unavailable.Message);
+        if (state != AIFeatureReadyState.Ready)
+        {
+            var ready = await LanguageModel.EnsureReadyAsync();
+            if (ready.Status != AIFeatureReadyResultState.Success)
+                throw new ProtocolException(request.Id, Codes.NotReady,
+                    "Windows couldn't get its text model ready" + (ready.ExtendedError is { } e ? $": {e.Message.Trim()}" : ". It may still be downloading; try again in a few minutes."));
+        }
+        return await LanguageModel.CreateAsync();
+    }
 
     public static string ReadyState() => ImageDescriptionGenerator.GetReadyState().ToString();
 

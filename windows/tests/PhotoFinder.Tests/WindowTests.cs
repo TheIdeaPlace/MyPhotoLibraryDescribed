@@ -137,6 +137,67 @@ public sealed class WindowTests : IDisposable
         }
     }
 
+    [WpfFact]
+    public async Task InfoWindow_AnswersFollowUpQuestions_FromTheDescription_WithHistory_AndStartsOverForANewDescription()
+    {
+        var announced = new List<string>();
+        Announcer.Observer = announced.Add;
+        var path = _lib.AddJpeg("a.jpg");
+        var row = RowFor(path);
+        var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
+        store.Put(row.Item!, "accessible", "A dog on a beach.");
+        store.Put(row.Item!, "brief", "A dog.");
+        var asked = new List<(string Description, string Question, int History)>();
+        var original = InfoWindow.AskQuestion;
+        InfoWindow.FollowUpQuestionsShown = true;
+        InfoWindow.AskQuestion = (description, text, question, history, _) =>
+        {
+            asked.Add((description, question, history.Count));
+            return Task.FromResult($"Answer {asked.Count}.");
+        };
+        var window = new InfoWindow(row, new Settings { DescriptionKind = "accessible" }, () => { }, describeNow: false, store) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.Equal(Visibility.Visible, window.AskPanel.Visibility);
+            await window.AskAsync();
+            Assert.Contains("Type a question first", announced);
+            Assert.Empty(asked);
+
+            window.QuestionBox.Text = "What colour is the dog?";
+            await window.AskAsync();
+            window.QuestionBox.Text = "Is it sunny?";
+            await window.AskAsync();
+            Assert.Equal([("A dog on a beach.", "What colour is the dog?", 0), ("A dog on a beach.", "Is it sunny?", 1)], asked);
+            Assert.Contains("You asked: Is it sunny?", window.AnswersBox.Text);
+            Assert.Contains("Answer: Answer 2.", window.AnswersBox.Text);
+            Assert.Equal("", window.QuestionBox.Text);
+            Assert.Contains("Answer 2.", announced);
+
+            // Another description: the questions start over.
+            window.KindBox.SelectedValue = "brief";
+            Assert.Equal(Visibility.Collapsed, window.AnswersBox.Visibility);
+            window.QuestionBox.Text = "Where is it?";
+            await window.AskAsync();
+            Assert.Equal(("A dog.", 0), (asked[^1].Description, asked[^1].History));
+        }
+        finally
+        {
+            InfoWindow.AskQuestion = original;
+            InfoWindow.FollowUpQuestionsShown = AppInfo.FollowUpQuestions;
+            Announcer.Observer = null;
+            window.Close();
+        }
+    }
+
+    [Fact]
+    public void AnAskRequest_CarriesTheDescriptionTextQuestionAndHistory()
+    {
+        var json = System.Text.Json.Nodes.JsonNode.Parse(WindowsAI.BuildAskRequest(7, "A dog.", "SIGN", "Why?", [("Who?", "A dog.")]))!;
+        Assert.Equal(("ask", "A dog.", "SIGN", "Why?"), ((string)json["op"]!, (string)json["description"]!, (string)json["text"]!, (string)json["question"]!));
+        Assert.Equal("Who?", (string)json["history"]![0]!["question"]!);
+    }
+
     /// <summary>Describe Image, end to end through the window, the helper and Windows' model. Runs only where
     /// the helper is installed and the model is ready.</summary>
     [WpfFact]
