@@ -45,36 +45,62 @@ public sealed class HeicFieldsTests : IDisposable
     private static byte[] U16(uint v) => [(byte)(v >> 8), (byte)v];
     private static byte[] U32(uint v) => [(byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v];
 
-    /// <summary>A HEIF file of <paramref name="items"/>: ftyp, meta (hdlr, pitm 1, iinf, iref, iloc version 1 with 4-byte
-    /// offsets and lengths), then one mdat holding every item's bytes in order.</summary>
-    private static byte[] Heif(Item[] items, Func<byte[], byte[]>? afterMdat = null, int extentsForXmp = 1, int methodForXmp = 0)
+    /// <summary>How the meta box is written: iloc's version and field sizes (a base offset, when there is one, is the
+    /// start of the mdat's contents, with each extent counted from it), an 'idat' item (7, its bytes in the meta box), a
+    /// group whose id comes after the items', no 'iref', and the data reference of item 1.</summary>
+    private sealed record Layout(int IlocVersion = 1, int OffsetSize = 4, int BaseSize = 0, bool Idat = false, uint? Group = null, bool NoIref = false, int Reference = 0);
+
+    private static byte[] UInt(ulong v, int size) => size switch
     {
+        0 => [],
+        2 => U16((uint)v),
+        4 => U32((uint)v),
+        _ => [.. U32((uint)(v >> 32)), .. U32((uint)v)],
+    };
+
+    /// <summary>A HEIF file of <paramref name="items"/>: ftyp, meta (hdlr, pitm 1, iinf, iref, grpl, idat, iloc), then
+    /// one mdat holding every item's bytes in order. iloc is version 1 with 4-byte offsets and lengths unless
+    /// <paramref name="layout"/> says otherwise.</summary>
+    private static byte[] Heif(Item[] items, Func<byte[], byte[]>? afterMdat = null, int extentsForXmp = 1, int methodForXmp = 0, Layout? layout = null)
+    {
+        var l = layout ?? new Layout();
         var ftyp = Box("ftyp", "heic"u8.ToArray(), U32(0), "mif1"u8.ToArray(), "heic"u8.ToArray());
+        var idatBytes = "PARAMETERS IN IDAT"u8.ToArray();
+        var all = l.Idat ? [.. items, new Item(7, "hvcC", idatBytes)] : items;
         byte[] Meta(uint dataStart)
         {
             var hdlr = Box("hdlr", U32(0), U32(0), "pict"u8.ToArray(), new byte[12], [0]);
             var pitm = Box("pitm", U32(0), U16(1));
-            var infes = items.Select(i => Box("infe", [2, 0, 0, 0], U16(i.Id), U16(0), Encoding.ASCII.GetBytes(i.Type), [0],
+            var infes = all.Select(i => Box("infe", [2, 0, 0, 0], U16(i.Id), U16(0), Encoding.ASCII.GetBytes(i.Type), [0],
                 i.Type == "mime" ? [.. Encoding.ASCII.GetBytes(i.ContentType), 0, .. Encoding.ASCII.GetBytes(i.Encoding), .. i.Encoding.Length > 0 ? new byte[] { 0 } : []] : [])).ToArray();
-            var iinf = Box("iinf", [U32(0), U16((uint)items.Length), .. infes]);
+            var iinf = Box("iinf", [U32(0), U16((uint)all.Length), .. infes]);
             var refs = items.Where(i => i.Describes is not null).Select(i => Box("cdsc", [U16(i.Id), U16((uint)i.Describes!.Length), .. i.Describes.Select(U16)])).ToArray();
             var iref = Box("iref", [U32(0), .. refs]);
+            byte[] grpl = l.Group is { } g ? Box("grpl", Box("altr", U32(0), U32(g), U32(2), U32(1), U32(5))) : [];
+            byte[] idat = l.Idat ? Box("idat", idatBytes) : [];
+            var idWidth = l.IlocVersion < 2 ? 2 : 4;
             var entries = new List<byte[]>();
             var at = dataStart;
-            foreach (var i in items)
+            foreach (var i in all)
             {
-                var isXmp = i.Type == "mime";
-                var method = isXmp ? methodForXmp : 0;
-                if (isXmp && extentsForXmp == 2)
-                {
-                    var half = (uint)i.Data.Length / 2;
-                    entries.Add([.. U16(i.Id), .. U16((uint)method), .. U16(0), .. U16(2), .. U32(at), .. U32(half), .. U32(at + half), .. U32((uint)i.Data.Length - half)]);
-                }
-                else entries.Add([.. U16(i.Id), .. U16((uint)method), .. U16(0), .. U16(1), .. U32(at), .. U32((uint)i.Data.Length)]);
-                at += (uint)i.Data.Length;
+                var inIdat = i.Id == 7 && l.Idat;
+                var method = inIdat ? 1 : i.Type == "mime" ? methodForXmp : 0;
+                var reference = i.Id == 1 ? l.Reference : 0;
+                var head = new List<byte>(UInt(i.Id, idWidth));
+                if (l.IlocVersion > 0) head.AddRange(U16((uint)method));
+                head.AddRange(U16((uint)reference));
+                var baseOffset = l.BaseSize > 0 && !inIdat ? dataStart : 0;
+                head.AddRange(UInt(baseOffset, l.BaseSize));
+                (ulong Offset, ulong Length)[] extents = inIdat ? [(0, (ulong)idatBytes.Length)]
+                    : i.Type == "mime" && extentsForXmp == 2 ? [(at - baseOffset, (ulong)i.Data.Length / 2), (at - baseOffset + (ulong)i.Data.Length / 2, (ulong)i.Data.Length - (ulong)i.Data.Length / 2)]
+                    : [(at - baseOffset, (ulong)i.Data.Length)];
+                head.AddRange(U16((uint)extents.Length));
+                foreach (var e in extents) head.AddRange([.. UInt(e.Offset, l.OffsetSize), .. UInt(e.Length, 4)]);
+                entries.Add([.. head]);
+                if (!inIdat) at += (uint)i.Data.Length;
             }
-            var iloc = Box("iloc", [[1, 0, 0, 0], [0x44, 0x00], U16((uint)items.Length), .. entries]);
-            return Box("meta", U32(0), hdlr, pitm, iinf, iref, iloc);
+            var iloc = Box("iloc", [[(byte)l.IlocVersion, 0, 0, 0], [(byte)((l.OffsetSize << 4) | 4), (byte)(l.BaseSize << 4)], UInt((ulong)all.Length, idWidth), .. entries]);
+            return l.NoIref ? Box("meta", U32(0), hdlr, pitm, iinf, grpl, idat, iloc) : Box("meta", U32(0), hdlr, pitm, iinf, iref, grpl, idat, iloc);
         }
         var size = Meta(0).Length;
         var meta = Meta((uint)(ftyp.Length + size + 8));
@@ -83,31 +109,8 @@ public sealed class HeicFieldsTests : IDisposable
         return afterMdat is null ? file : afterMdat(file);
     }
 
-    /// <summary>Each item's bytes, by reading the file's iloc (version 1, 4-byte offsets and lengths, as Heif writes it).</summary>
-    private static Dictionary<uint, byte[]> ItemBytes(byte[] file)
-    {
-        var at = file.AsSpan().IndexOf("iloc"u8) - 4;
-        var p = at + 8 + 4 + 2;
-        var count = BinaryPrimitives.ReadUInt16BigEndian(file.AsSpan(p));
-        p += 2;
-        var items = new Dictionary<uint, byte[]>();
-        for (var i = 0; i < count; i++)
-        {
-            var id = BinaryPrimitives.ReadUInt16BigEndian(file.AsSpan(p));
-            var extents = BinaryPrimitives.ReadUInt16BigEndian(file.AsSpan(p + 6));
-            p += 8;
-            var bytes = new List<byte>();
-            for (var e = 0; e < extents; e++)
-            {
-                var offset = (int)BinaryPrimitives.ReadUInt32BigEndian(file.AsSpan(p));
-                var length = (int)BinaryPrimitives.ReadUInt32BigEndian(file.AsSpan(p + 4));
-                bytes.AddRange(file[offset..(offset + length)]);
-                p += 8;
-            }
-            items[id] = [.. bytes];
-        }
-        return items;
-    }
+    /// <summary>Each item's bytes, as the file's own iloc places them.</summary>
+    private static Dictionary<uint, byte[]> ItemBytes(byte[] file) => HeifMetadata.Items(file);
 
     private static (string? Caption, string? AltText, string? ExtendedDescription) Read(byte[] file)
     {
@@ -222,7 +225,104 @@ public sealed class HeicFieldsTests : IDisposable
     [Fact]
     public void OnlyHeicDetails_AreReadAgain_NotTheWholeLibrarys()
     {
-        Assert.Equal(3, MediaMetadata.VersionNeeded(@"C:\photos\IMG_1.HEIC"));
-        Assert.Equal(2, MediaMetadata.VersionNeeded(@"C:\photos\IMG_1.JPG"));
+        Assert.Equal(3, MetadataCache.VersionNeeded(@"C:\photos\IMG_1.HEIC"));
+        Assert.Equal(2, MetadataCache.VersionNeeded(@"C:\photos\IMG_1.JPG"));
+    }
+    public static TheoryData<int, int, int, bool, bool> Layouts() => new()
+    {
+        { 0, 4, 0, false, false },
+        { 1, 8, 0, true, false },
+        { 1, 4, 4, true, false },
+        { 2, 4, 0, false, true },
+        { 2, 8, 4, true, true },
+    };
+
+    [Theory]
+    [MemberData(nameof(Layouts))]
+    public void AnXmpIsAdded_InEveryWayIlocCanBeWritten(int version, int offsetSize, int baseSize, bool idat, bool noIref)
+    {
+        var layout = new Layout(version, offsetSize, baseSize, idat, NoIref: noIref);
+        var before = Heif(IPhoneItems(), layout: layout);
+        var after = HeifMetadata.Apply(before, new MetadataChanges { Caption = "A dog.", AltText = "A dog." });
+        if (noIref)
+        {
+            // With no iref, nothing describes the photo yet: the new XMP describes it alone.
+            Assert.True(after.AsSpan().IndexOf(Box("cdsc", U16(idat ? 8u : 6u), U16(1), U16(1))) > 0);
+        }
+        Assert.Equal(("A dog.", "A dog.", null), Read(after));
+        var was = ItemBytes(before);
+        var now = ItemBytes(after);
+        foreach (var (id, bytes) in was) Assert.Equal(bytes, now[id]);
+        Assert.Equal(was.Count + 1, now.Count);
+    }
+
+    [Fact]
+    public void TheNewItemsId_ComesAfterGroupsToo_AndItsHidden()
+    {
+        // HEIF numbers groups and items together: a group 9 after items 1 to 5 means the XMP is 10.
+        var after = HeifMetadata.Apply(Heif(IPhoneItems(), layout: new Layout(Group: 9)), new MetadataChanges { Caption = "A dog." });
+        Assert.True(ItemBytes(after).ContainsKey(10));
+        // infe version 2, flags 1 (hidden), id 10.
+        Assert.True(after.AsSpan().IndexOf((byte[])[.. "infe"u8.ToArray(), 2, 0, 0, 1, 0, 10]) > 0);
+    }
+
+    [Fact]
+    public void ItemsInAnotherFile_AreRefused()
+    {
+        var file = Heif(IPhoneItems(), layout: new Layout(Reference: 1));
+        Assert.Throws<MetadataRefusedException>(() => HeifMetadata.Apply(file, new MetadataChanges { Caption = "A dog." }));
+    }
+
+    /// <summary>A TIFF block as EXIF holds it, with ImageDescription (ASCII) and XPTitle (UTF-16) both
+    /// <paramref name="text"/>, as Windows' property handler writes a HEIC's Title, after the HEIF Exif item's 4-byte
+    /// offset to it.</summary>
+    private static byte[] ExifWith(string text)
+    {
+        var ascii = Encoding.ASCII.GetBytes(text + "\0");
+        var utf16 = Encoding.Unicode.GetBytes(text + "\0");
+        var tiff = new List<byte> { 0x49, 0x49, 0x2A, 0, 8, 0, 0, 0, 2, 0 };
+        var data = 8 + 2 + 2 * 12 + 4;
+        void Entry(ushort tag, ushort type, int count, int offset) =>
+            tiff.AddRange([(byte)tag, (byte)(tag >> 8), (byte)type, (byte)(type >> 8), (byte)count, (byte)(count >> 8), 0, 0, (byte)offset, (byte)(offset >> 8), 0, 0]);
+        Entry(0x010E, 2, ascii.Length, data);
+        Entry(0x9C9B, 1, utf16.Length, data + ascii.Length);
+        tiff.AddRange([0, 0, 0, 0]);
+        tiff.AddRange(ascii);
+        tiff.AddRange(utf16);
+        return [0, 0, 0, 0, .. tiff];
+    }
+
+    [Fact]
+    public void AnOldCaptionInExif_IsEmptiedInPlace_SoTheMacDoesntReadItAheadOfTheNewOne()
+    {
+        var items = IPhoneItems(photoXmp: true);
+        items[1] = items[1] with { Data = ExifWith("Windows title") };
+        var before = Heif(items);
+        var after = HeifMetadata.Apply(before, new MetadataChanges { Caption = "A dog.", Title = "A dog.", ClearOwnTitle = "Windows title" });
+        var exif = ItemBytes(after)[2];
+        Assert.Equal(ItemBytes(before)[2].Length, exif.Length);
+        Assert.Equal(-1, exif.AsSpan().IndexOf("Windows title"u8));
+        Assert.Equal(-1, exif.AsSpan().IndexOf(Encoding.Unicode.GetBytes("Windows title")));
+        Assert.Equal(("A dog.", null, null), Read(after));
+    }
+
+    [Fact]
+    public void AnXmpAloneAtTheEnd_IsRewrittenThere_RatherThanAnotherBoxAdded()
+    {
+        var first = HeifMetadata.Apply(Heif(IPhoneItems()), new MetadataChanges { Caption = "A dog." });
+        var boxes = CountOf(first, "mdat");
+        var long_ = string.Concat(Enumerable.Repeat("A dog runs along the beach at sunset. ", 120)).Trim();
+        var grown = HeifMetadata.Apply(first, new MetadataChanges { Caption = long_ });
+        Assert.Equal(boxes, CountOf(grown, "mdat"));
+        Assert.Equal((long_, null, null), Read(grown));
+        Assert.Equal(ItemBytes(first).Where(i => i.Key != 6), ItemBytes(grown).Where(i => i.Key != 6));
+    }
+
+    [Fact]
+    public void ReadingStopsAtTheMetaBox_SoTrailingBytesItDoesntNeedDontMatter()
+    {
+        var after = HeifMetadata.Apply(Heif(IPhoneItems()), new MetadataChanges { Caption = "A dog." });
+        byte[] trailing = [.. after, 1, 2, 3];
+        Assert.Equal(("A dog.", null, null), Read(trailing));
     }
 }

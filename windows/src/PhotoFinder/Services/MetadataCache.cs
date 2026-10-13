@@ -38,10 +38,14 @@ public sealed class MetadataCache
                    // Read by an older version without dc:description (or, for HEIC, before its XMP was read): read
                    // again, once. Not online-only files, which aren't read until they're downloaded: their older
                    // details are better than none.
-                   && (e.Metadata.Version >= MediaMetadata.VersionNeeded(item.Path) || !XmpFields.CanWrite(item.Path) || item.IsOnlineOnly)
+                   && (e.Metadata.Version >= VersionNeeded(item.Path) || !XmpFields.CanWrite(item.Path) || item.IsOnlineOnly)
                 ? e.Metadata : null;
         }
     }
+
+    /// <summary>The oldest reader whose details still hold for this file. HEIC's were read without their XMP before
+    /// version 3 (#31), so only they are read again, not the whole library; the rest need version 2 (dc:description).</summary>
+    public static int VersionNeeded(string path) => XmpFields.IsHeif(path) ? MediaMetadata.CurrentVersion : 2;
 
     public void Remember(MediaItem item, MediaMetadata metadata)
     {

@@ -1,4 +1,4 @@
-﻿using Windows.Foundation;
+using Windows.Foundation;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Streams;
@@ -62,13 +62,17 @@ public static class XmpFields
         }
         if (IsHeif(path))
         {
-            // Read from the photo's XMP item: only the meta box and the item are read, not the pictures.
-            await using var heic = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 14, useAsync: false);
-            var head = new byte[Math.Min(heic.Length, 64)];
-            heic.ReadExactly(head);
-            if (!HeifMetadata.LooksLikeHeif(head)) throw new InvalidDataException("The file isn't the kind its name says.");
-            var (caption, alt, extended) = HeifMetadata.Fields(heic);
-            return new Fields(caption ?? "", alt ?? "", extended ?? "", caption is not null);
+            // Read from the photo's XMP item: only the boxes up to the meta box, the meta box and the item are read, not
+            // the pictures. Off the window's thread, as a network share can be slow.
+            return await Task.Run(() =>
+            {
+                using var heic = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 14);
+                var head = new byte[Math.Min(heic.Length, 64)];
+                heic.ReadExactly(head);
+                if (!HeifMetadata.LooksLikeHeif(head)) throw new InvalidDataException("The file isn't the kind its name says.");
+                var (caption, alt, extended) = HeifMetadata.Fields(heic);
+                return new Fields(caption ?? "", alt ?? "", extended ?? "", caption is not null);
+            });
         }
         var file = await StorageFile.GetFileFromPathAsync(path);
         using var stream = await file.OpenAsync(FileAccessMode.Read);

@@ -10,14 +10,19 @@ namespace PhotoFinder.Services;
 /// it's left alone; Windows' own property handler adds one for the photo the first time a Title is saved.
 ///
 /// - With an XMP item for the photo, the new XMP goes where the old one was when it fits (the packet keeps its padding),
-///   so the file keeps its size; otherwise it goes in a new 'mdat' box at the end, only that item's place and length in
-///   'iloc' are patched, and the old bytes are blanked, so an old caption doesn't linger.
-/// - Without one, an item is added: an entry in 'iinf', a 'cdsc' reference to the photo (and to anything the EXIF item
-///   describes alongside it, such as the gain map's tone map, as Windows does), and a place in 'iloc', with the XMP in a
-///   new 'mdat' box at the end. The meta box grows, so every item stored after it has its place moved by that much.
-/// - The pictures, the EXIF item, the gain map and depth map stay byte for byte. Anything it can't follow (an image
-///   sequence, an XMP stored inside the meta box, compressed or in pieces, a box it can't read) is refused with
-///   <see cref="MetadataRefusedException"/>, before anything is written.
+///   so the file keeps its size. Otherwise it goes at the end: in place of the last 'mdat' box when that holds only this
+///   XMP (as it does once this has moved it), or else in a new 'mdat' box with the old bytes blanked, so an old caption
+///   doesn't linger; only the item's place and length in 'iloc' change.
+/// - Without one, an item is added, hidden as Windows' is: an entry in 'iinf', a 'cdsc' reference to the photo (and to
+///   anything the EXIF item describes alongside it, such as the gain map's tone map, as Windows does), and a place in
+///   'iloc', with the XMP in a new 'mdat' box at the end. The meta box grows, so every item stored after it has its place
+///   moved by that much.
+/// - The EXIF item's title, description and rating are patched in place, as for JPEG and PNG: Windows' property handler
+///   wrote the caption there too, and ImageIO reads EXIF's description ahead of the XMP.
+/// - Before it's returned, the new file is read back: every item but these two must hold exactly the bytes it held.
+/// - The pictures, the gain map and depth map stay byte for byte. Anything it can't follow (a burst or animation, an
+///   item in another file, an XMP stored inside the meta box, compressed or in pieces, a box it can't read) is refused
+///   with <see cref="MetadataRefusedException"/>, before anything is written.
 /// </summary>
 public static class HeifMetadata
 {
@@ -34,80 +39,139 @@ public static class HeifMetadata
         return false;
     }
 
-    /// <summary>The caption and accessibility fields from the photo's XMP item, reading only the meta box and the item;
-    /// nulls when it has none.</summary>
+    /// <summary>The caption and accessibility fields from the photo's XMP item, reading only the boxes up to the meta
+    /// box, the meta box, and the item; nulls when it has none.</summary>
     public static (string? Caption, string? AltText, string? ExtendedDescription) Fields(Stream file)
     {
         var head = new byte[Math.Min(file.Length, 64)];
         file.Position = 0;
         file.ReadExactly(head);
         if (!LooksLikeHeif(head)) throw Unfollowable();
-        var top = TopBoxes(file);
-        var metaBox = top.FirstOrDefault(x => x.Type == "meta");
+        var metaBox = TopBoxes(file, untilMeta: true).FirstOrDefault(x => x.Type == "meta");
         if (metaBox.Type is null) throw Unfollowable();
-        if (metaBox.Size > 16 << 20) throw new MetadataRefusedException("Its metadata is too large to follow.");
+        if (metaBox.Size > 16 << 20) throw new MetadataRefusedException("Its metadata is too large to read.");
         var bytes = new byte[metaBox.Size];
         file.Position = metaBox.At;
         file.ReadExactly(bytes);
         var meta = Meta.Parse(bytes, metaBox.At, file.Length);
         if (meta.PhotoXmp() is not { } item) return (null, null, null);
         var (at, length) = meta.Place(item);
-        if (length > 4 << 20) throw new MetadataRefusedException("Its XMP is too large to follow.");
+        if (length > 4 << 20) throw new MetadataRefusedException("Its metadata is too large to read.");
         var packet = new byte[length];
         file.Position = at;
         file.ReadExactly(packet);
         return XmpPacket.Fields(XmpPacket.Parse(packet));
     }
 
-    /// <summary>The file with the changes made to the photo's XMP. Throws <see cref="MetadataRefusedException"/> for a
-    /// file it can't safely change.</summary>
+    /// <summary>The file with the changes made to the photo's XMP (and EXIF, in place). Throws
+    /// <see cref="MetadataRefusedException"/> for a file it can't safely change.</summary>
     public static byte[] Apply(byte[] heif, MetadataChanges changes)
     {
         if (!LooksLikeHeif(heif)) throw Unfollowable();
         using var stream = new MemoryStream(heif, writable: false);
-        var top = TopBoxes(stream);
-        if (top.Any(x => x.Type == "moov")) throw new MetadataRefusedException("It's a sequence of pictures, which isn't changed.");
-        if (top[^1].RunsToEnd) throw new MetadataRefusedException("Its last part runs to the end of the file, so nothing can be added after it.");
+        var top = TopBoxes(stream, untilMeta: false);
+        if (top.Any(x => x.Type == "moov")) throw new MetadataRefusedException("It's a burst or animation, which isn't changed.");
         var metaBox = top.FirstOrDefault(x => x.Type == "meta");
         if (metaBox.Type is null || metaBox.LargeSize) throw Unfollowable();
         var meta = Meta.Parse(heif.AsSpan((int)metaBox.At, (int)metaBox.Size), metaBox.At, heif.Length);
+        meta.RefuseOtherFiles();
 
+        // EXIF's own title, description and rating, in place: the same size, nothing moved.
+        var working = (byte[])heif.Clone();
+        var exif = meta.PhotoExif();
+        if (exif is { } exifId && meta.TryPlace(exifId) is { } exifPlace && exifPlace.Length >= 4)
+        {
+            var tiff = exifPlace.At + 4 + BinaryPrimitives.ReadUInt32BigEndian(working.AsSpan((int)exifPlace.At));
+            if (tiff + 8 <= exifPlace.At + exifPlace.Length)
+                XmpPacket.PatchExif(working, (int)tiff, (int)(exifPlace.At + exifPlace.Length), changes, clearDescription: changes.Caption is not null);
+        }
+
+        byte[] output;
+        uint xmpId;
         if (meta.PhotoXmp() is { } item)
         {
+            xmpId = item;
             var (at, length) = meta.Place(item);
-            var document = XmpPacket.Parse(heif.AsSpan((int)at, (int)length));
+            var document = XmpPacket.Parse(working.AsSpan((int)at, (int)length));
             XmpPacket.Edit(document, changes);
             var packet = XmpPacket.Serialize(document, (int)length);
             if (packet.Length == length)
             {
-                var same = (byte[])heif.Clone();
-                packet.CopyTo(same, (int)at);
-                return same;
+                packet.CopyTo(working, (int)at);
+                output = working;
             }
-            // At the end, in a box of its own; only this item's offset and length change, in place.
-            var start = (long)heif.Length + 8;
-            var moved = meta.Moved(item, start, packet.Length);
-            var result = new byte[heif.Length + 8 + packet.Length];
-            heif.CopyTo(result, 0);
-            moved.CopyTo(result, (int)metaBox.At);
-            WriteMdat(result, heif.Length, packet);
-            // The old XMP, now unused, as XMP padding: spaces.
-            result.AsSpan((int)at, (int)length).Fill((byte)' ');
-            return result;
+            else if (top[^1] is { Type: "mdat", LargeSize: false } last && last.At + 8 == at && last.End == at + length && last.End == working.Length)
+            {
+                // Already alone at the end (moved there before): that box is rewritten, rather than another added.
+                var moved = meta.Moved(item, at, packet.Length);
+                output = new byte[last.At + 8 + packet.Length];
+                working.AsSpan(0, (int)last.At).CopyTo(output);
+                moved.CopyTo(output, (int)metaBox.At);
+                WriteMdat(output, (int)last.At, packet);
+            }
+            else
+            {
+                if (top[^1].RunsToEnd) throw new MetadataRefusedException("Its layout leaves no room to add to it safely.");
+                // At the end, in a box of its own; only this item's offset and length change, in place.
+                var moved = meta.Moved(item, working.Length + 8, packet.Length);
+                output = new byte[working.Length + 8 + packet.Length];
+                working.CopyTo(output, 0);
+                moved.CopyTo(output, (int)metaBox.At);
+                WriteMdat(output, working.Length, packet);
+                // The old XMP, now unused, as XMP padding: spaces.
+                output.AsSpan((int)at, (int)length).Fill((byte)' ');
+            }
+        }
+        else
+        {
+            if (top[^1].RunsToEnd) throw new MetadataRefusedException("Its layout leaves no room to add to it safely.");
+            // No XMP for the photo yet: one is added, with room to grow.
+            var fresh = XmpPacket.New();
+            XmpPacket.Edit(fresh, changes);
+            var xmp = XmpPacket.Serialize(fresh, 1);
+            var (grown, id) = meta.WithXmpItem(working.Length, xmp.Length);
+            xmpId = id;
+            var delta = grown.Length - (int)metaBox.Size;
+            output = new byte[working.Length + delta + 8 + xmp.Length];
+            working.AsSpan(0, (int)metaBox.At).CopyTo(output);
+            grown.CopyTo(output, (int)metaBox.At);
+            working.AsSpan((int)metaBox.End).CopyTo(output.AsSpan((int)metaBox.At + grown.Length));
+            WriteMdat(output, working.Length + delta, xmp);
         }
 
-        // No XMP for the photo yet: one is added, with room to grow.
-        var fresh = XmpPacket.New();
-        XmpPacket.Edit(fresh, changes);
-        var xmp = XmpPacket.Serialize(fresh, 1);
-        var grown = meta.WithXmpItem(heif.Length, xmp.Length);
-        var delta = grown.Length - (int)metaBox.Size;
-        var output = new byte[heif.Length + delta + 8 + xmp.Length];
-        heif.AsSpan(0, (int)metaBox.At).CopyTo(output);
-        grown.CopyTo(output, (int)metaBox.At);
-        heif.AsSpan((int)metaBox.End).CopyTo(output.AsSpan((int)metaBox.At + grown.Length));
-        WriteMdat(output, heif.Length + delta, xmp);
+        Check(heif, output, xmpId, exif);
         return output;
+    }
+
+    /// <summary>The new file read back: the same items (and one more at most, the XMP), each but the XMP and EXIF
+    /// holding exactly the bytes it held, and the XMP readable. Anything else and nothing is written.</summary>
+    private static void Check(byte[] before, byte[] after, uint xmpId, uint? exifId)
+    {
+        try
+        {
+            var was = Items(before);
+            var now = Items(after);
+            if (!was.Keys.All(now.ContainsKey) || now.Count - was.Count is < 0 or > 1 || !now.ContainsKey(xmpId)) throw Unfollowable();
+            foreach (var (id, bytes) in was)
+            {
+                if (id == xmpId) continue;
+                if (id == exifId ? bytes.Length != now[id].Length : !bytes.AsSpan().SequenceEqual(now[id])) throw Unfollowable();
+            }
+            XmpPacket.Parse(now[xmpId]);
+        }
+        catch (Exception ex) when (ex is not MetadataRefusedException)
+        {
+            throw new MetadataRefusedException("The change couldn't be checked, so it wasn't made.");
+        }
+    }
+
+    /// <summary>Every item's bytes, by its id: stored in the file (method 0) or in the meta box's 'idat' (method 1).
+    /// Items made from other items (method 2) aren't listed.</summary>
+    internal static Dictionary<uint, byte[]> Items(byte[] heif)
+    {
+        using var stream = new MemoryStream(heif, writable: false);
+        var metaBox = TopBoxes(stream, untilMeta: false).First(x => x.Type == "meta");
+        return Meta.Parse(heif.AsSpan((int)metaBox.At, (int)metaBox.Size), metaBox.At, heif.Length).ItemBytes(heif);
     }
 
     private static void WriteMdat(byte[] b, int at, byte[] payload)
@@ -124,15 +188,15 @@ public static class HeifMetadata
         public long End => At + Size;
     }
 
-    /// <summary>The file's top-level boxes, which must cover it exactly.</summary>
-    private static List<TopBox> TopBoxes(Stream file)
+    /// <summary>The file's top-level boxes, which must cover it exactly; or, reading, only those up to the meta box.</summary>
+    private static List<TopBox> TopBoxes(Stream file, bool untilMeta)
     {
         var list = new List<TopBox>();
         var header = new byte[16];
         long at = 0;
         while (at < file.Length)
         {
-            if (at + 8 > file.Length) throw Unfollowable();
+            if (file.Length - at < 8) throw Unfollowable();
             file.Position = at;
             file.ReadExactly(header, 0, 8);
             long size = BinaryPrimitives.ReadUInt32BigEndian(header);
@@ -140,10 +204,10 @@ public static class HeifMetadata
             var toEnd = false;
             if (size == 1)
             {
-                if (at + 16 > file.Length) throw Unfollowable();
+                if (file.Length - at < 16) throw Unfollowable();
                 file.ReadExactly(header, 8, 8);
                 var big = BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(8));
-                if (big > long.MaxValue) throw Unfollowable();
+                if (big > (ulong)(file.Length - at)) throw Unfollowable();
                 size = (long)big;
                 large = true;
             }
@@ -152,8 +216,10 @@ public static class HeifMetadata
                 size = file.Length - at;
                 toEnd = true;
             }
-            if (size < 8 || at + size > file.Length) throw Unfollowable();
-            list.Add(new TopBox(Encoding.ASCII.GetString(header, 4, 4), at, size, large, toEnd));
+            if (size < 8 || size > file.Length - at) throw Unfollowable();
+            var box = new TopBox(Encoding.ASCII.GetString(header, 4, 4), at, size, large, toEnd);
+            list.Add(box);
+            if (untilMeta && box.Type == "meta") return list;
             at += size;
         }
         if (list.Count == 0) throw Unfollowable();
@@ -169,10 +235,10 @@ public static class HeifMetadata
         var at = start;
         while (at < end)
         {
-            if (at + 8 > end) throw Unfollowable();
+            if (end - at < 8) throw Unfollowable();
             long size = BinaryPrimitives.ReadUInt32BigEndian(b[at..]);
             // Boxes inside the meta box are small: a large or open-ended size there isn't followed.
-            if (size < 8 || at + size > end) throw Unfollowable();
+            if (size < 8 || size > end - at) throw Unfollowable();
             list.Add(new Box(Encoding.ASCII.GetString(b.Slice(at + 4, 4)), at, at + 8, (int)(at + size)));
             at += (int)size;
         }
@@ -183,7 +249,7 @@ public static class HeifMetadata
     private sealed record Location(uint Id, int Method, int Reference, ulong Base, List<(ulong Index, ulong Offset, ulong Length)> Extents);
 
     /// <summary>The meta box, read: the boxes it holds, the photo's item, the item types and descriptions ('iinf',
-    /// 'iref') and places ('iloc').</summary>
+    /// 'iref'), the groups ('grpl', whose ids share the items' numbering) and places ('iloc').</summary>
     private sealed class Meta
     {
         private byte[] _bytes = [];
@@ -194,6 +260,7 @@ public static class HeifMetadata
         private uint _primary;
         private readonly Dictionary<uint, (string Type, string ContentType, string Encoding)> _items = [];
         private readonly List<(string Type, uint From, List<uint> To)> _references = [];
+        private readonly List<uint> _groups = [];
         private int _ilocVersion, _offsetSize, _lengthSize, _baseSize, _indexSize;
         private readonly List<Location> _locations = [];
         private int _referenceWidth;
@@ -208,6 +275,7 @@ public static class HeifMetadata
             meta.ReadPrimary(bytes);
             meta.ReadItems(bytes);
             meta.ReadReferences(bytes);
+            meta.ReadGroups(bytes);
             meta.ReadLocations(bytes);
             return meta;
         }
@@ -272,6 +340,18 @@ public static class HeifMetadata
             }
         }
 
+        private void ReadGroups(ReadOnlySpan<byte> b)
+        {
+            foreach (var grpl in _boxes.Where(x => x.Type == "grpl"))
+                foreach (var group in Children(b, grpl.Body, grpl.End))
+                {
+                    // An EntityToGroupBox: a full box, then its group_id.
+                    var p = new Reader(b, group.Body, group.End);
+                    p.Skip(4);
+                    _groups.Add(p.U32());
+                }
+        }
+
         private void ReadLocations(ReadOnlySpan<byte> b)
         {
             var iloc = Find("iloc");
@@ -294,20 +374,33 @@ public static class HeifMetadata
                 var extents = new List<(ulong, ulong, ulong)>();
                 var n = p.U16();
                 for (var e = 0; e < n; e++) extents.Add((p.UInt(_indexSize), p.UInt(_offsetSize), p.UInt(_lengthSize)));
+                if (baseOffset > long.MaxValue / 4 || extents.Any(x => x.Item2 > long.MaxValue / 4 || x.Item3 > long.MaxValue / 4)) throw Unfollowable();
                 _locations.Add(new Location(id, method, reference, baseOffset, extents));
             }
             if (p.At != iloc.End) throw Unfollowable();
         }
 
-        /// <summary>The XMP item describing the photo, if there is one.</summary>
-        public uint? PhotoXmp()
+        /// <summary>Items whose bytes are in another file (a data reference other than this one) aren't moved, so a
+        /// file with any isn't changed.</summary>
+        public void RefuseOtherFiles()
         {
-            var xmp = _references.Where(r => r.Type == "cdsc" && r.To.Contains(_primary) && IsXmp(r.From)).Select(r => r.From).Distinct().ToList();
-            return xmp.Count switch
+            if (_locations.Any(l => l.Reference != 0)) throw new MetadataRefusedException("Part of it is stored in a way that isn't changed.");
+        }
+
+        /// <summary>The XMP item describing the photo, if there is one.</summary>
+        public uint? PhotoXmp() => Describing(IsXmp, "It has more than one XMP for the photo, which isn't changed.");
+
+        /// <summary>The EXIF item describing the photo, if there is one.</summary>
+        public uint? PhotoExif() => Describing(id => _items.TryGetValue(id, out var i) && i.Type == "Exif", "It has more than one EXIF for the photo, which isn't changed.");
+
+        private uint? Describing(Func<uint, bool> kind, string twice)
+        {
+            var found = _references.Where(r => r.Type == "cdsc" && r.To.Contains(_primary) && kind(r.From)).Select(r => r.From).Distinct().ToList();
+            return found.Count switch
             {
                 0 => null,
-                1 => xmp[0],
-                _ => throw new MetadataRefusedException("It has more than one XMP for the photo, which isn't changed."),
+                1 => found[0],
+                _ => throw new MetadataRefusedException(twice),
             };
         }
 
@@ -318,23 +411,60 @@ public static class HeifMetadata
         public (long At, long Length) Place(uint id)
         {
             if (_items[id].Encoding.Length > 0) throw new MetadataRefusedException("Its XMP is compressed, which isn't changed.");
+            return TryPlace(id) ?? throw new MetadataRefusedException("Its XMP is stored in a way that isn't changed.");
+        }
+
+        /// <summary>Where an item's bytes are, when they're one extent stored in this file, outside the meta box, and
+        /// shared with no other item; null when they're stored another way.</summary>
+        public (long At, long Length)? TryPlace(uint id)
+        {
             var location = _locations.Where(l => l.Id == id).ToList();
             if (location.Count != 1) throw Unfollowable();
             var l = location[0];
-            if (l.Method != 0 || l.Reference != 0 || l.Extents.Count != 1 || _offsetSize == 0 || _lengthSize == 0)
-                throw new MetadataRefusedException("Its XMP is stored in a way that isn't changed.");
-            if (l.Base > long.MaxValue / 2 || l.Extents[0].Offset > long.MaxValue / 2 || l.Extents[0].Length > long.MaxValue / 2) throw Unfollowable();
+            if (l.Method != 0 || l.Reference != 0 || l.Extents.Count != 1 || _offsetSize == 0 || _lengthSize == 0) return null;
             var at = (long)(l.Base + l.Extents[0].Offset);
             var length = (long)l.Extents[0].Length;
             if (length <= 0 || at + length > _fileLength || (at < _at + _bytes.Length && _at < at + length)) throw Unfollowable();
-            // Its bytes are its own, so blanking them when it moves touches nothing else.
-            foreach (var other in _locations.Where(o => o.Id != id && o.Method == 0 && o.Reference == 0))
+            foreach (var other in _locations.Where(o => o.Id != id && o.Method == 0))
                 foreach (var e in other.Extents)
                 {
                     var from = (long)(other.Base + e.Offset);
                     if (from < at + length && at < from + (long)e.Length) throw Unfollowable();
                 }
             return (at, length);
+        }
+
+        /// <summary>Each item's bytes, for checking a change (see <see cref="Items"/>).</summary>
+        public Dictionary<uint, byte[]> ItemBytes(byte[] file)
+        {
+            var idat = _boxes.FirstOrDefault(x => x.Type == "idat");
+            var items = new Dictionary<uint, byte[]>();
+            foreach (var l in _locations)
+            {
+                if (l.Method == 2) continue;
+                var bytes = new List<byte>();
+                foreach (var e in l.Extents)
+                {
+                    var start = (long)(l.Base + e.Offset);
+                    var length = (long)e.Length;
+                    if (l.Method == 0)
+                    {
+                        if (length == 0) length = file.Length - start;
+                        if (start < 0 || length < 0 || start + length > file.Length) throw Unfollowable();
+                        bytes.AddRange(file.AsSpan((int)start, (int)length));
+                    }
+                    else
+                    {
+                        if (idat.Type is null) throw Unfollowable();
+                        var size = idat.End - idat.Body;
+                        if (length == 0) length = size - start;
+                        if (start < 0 || length < 0 || start + length > size) throw Unfollowable();
+                        bytes.AddRange(_bytes.AsSpan(idat.Body + (int)start, (int)length));
+                    }
+                }
+                if (!items.TryAdd(l.Id, [.. bytes])) throw Unfollowable();
+            }
+            return items;
         }
 
         /// <summary>The meta box's bytes with item <paramref name="id"/> now at <paramref name="at"/>, length
@@ -350,13 +480,15 @@ public static class HeifMetadata
             return bytes;
         }
 
-        /// <summary>The meta box's bytes with an XMP item added for the photo, its bytes to go at the end of a file now
-        /// <paramref name="fileLength"/> long, in a new 'mdat' box; every item after the meta box moved by its growth.</summary>
-        public byte[] WithXmpItem(long fileLength, int xmpLength)
+        /// <summary>The meta box's bytes with an XMP item added for the photo, and its id. Its bytes go at the end of a
+        /// file now <paramref name="fileLength"/> long, in a new 'mdat' box; every item after the meta box is moved by
+        /// the meta box's growth.</summary>
+        public (byte[] Bytes, uint Id) WithXmpItem(long fileLength, int xmpLength)
         {
-            if (_offsetSize == 0 || _lengthSize == 0) throw new MetadataRefusedException("Its layout has no room to add an XMP.");
-            var id = _items.Keys.Max() + 1;
-            if (id > ushort.MaxValue && (_ilocVersion < 2 || _referenceWidth == 2)) throw new MetadataRefusedException("It has too many parts to add an XMP.");
+            if (_offsetSize == 0 || _lengthSize == 0) throw new MetadataRefusedException("Its layout leaves no room to add to it safely.");
+            // Group ids share the items' numbering.
+            var id = Math.Max(_items.Keys.Max(), _groups.DefaultIfEmpty(0u).Max()) + 1;
+            if (id > ushort.MaxValue && (_ilocVersion < 2 || _referenceWidth == 2)) throw new MetadataRefusedException("Its layout leaves no room to add to it safely.");
             // As Windows does: the XMP describes what the EXIF item describes (the photo, and its gain map's tone map),
             // or the photo alone.
             var exif = _references.FirstOrDefault(r => r.Type == "cdsc" && r.To.Contains(_primary) && _items.TryGetValue(r.From, out var i) && i.Type == "Exif");
@@ -371,11 +503,11 @@ public static class HeifMetadata
             var moved = new List<Location>();
             foreach (var l in _locations)
             {
-                if (l.Method != 0 || l.Reference != 0) { moved.Add(l); continue; }
+                if (l.Method != 0) { moved.Add(l); continue; }
                 // A base offset past the meta box moves; otherwise each extent past it does.
                 var baseMoves = _baseSize > 0 && (long)l.Base >= end;
                 var baseOffset = baseMoves ? l.Base + delta : l.Base;
-                if (!Fits((long)baseOffset, _baseSize)) throw new MetadataRefusedException("It's too large to add an XMP.");
+                if (!Fits((long)baseOffset, _baseSize)) throw new MetadataRefusedException("It's too large to add an XMP to.");
                 var extents = new List<(ulong, ulong, ulong)>();
                 foreach (var e in l.Extents)
                 {
@@ -383,30 +515,34 @@ public static class HeifMetadata
                     // Something stored inside the meta box itself would move in a way this doesn't follow.
                     if (abs >= _at && abs < end) throw Unfollowable();
                     var offset = !baseMoves && abs >= end ? e.Offset + delta : e.Offset;
-                    if (!Fits((long)offset, _offsetSize)) throw new MetadataRefusedException("It's too large to add an XMP.");
+                    if (!Fits((long)offset, _offsetSize)) throw new MetadataRefusedException("It's too large to add an XMP to.");
                     extents.Add((e.Index, offset, e.Length));
                 }
                 moved.Add(l with { Base = baseOffset, Extents = extents });
             }
             var xmpAt = fileLength + (long)delta + 8;
-            if (!Fits(xmpAt, _offsetSize) || !Fits(xmpLength, _lengthSize)) throw new MetadataRefusedException("It's too large to add an XMP.");
+            if (!Fits(xmpAt, _offsetSize) || !Fits(xmpLength, _lengthSize)) throw new MetadataRefusedException("It's too large to add an XMP to.");
             var bytes = Rebuilt(moved, (id, (ulong)xmpAt, (ulong)xmpLength), (infe, reference));
             if (bytes.Length != draft.Length) throw Unfollowable();
-            return bytes;
+            return (bytes, id);
         }
 
-        private static byte[] Infe(uint id)
+        /// <summary>The new item's entry: version 2 (or 3 for a large id), hidden (flags 1) as Windows' and Apple's
+        /// metadata items are, type 'mime', no name, application/rdf+xml.</summary>
+        private static List<byte> InfeBody(uint id)
         {
             var v3 = id > ushort.MaxValue;
-            var body = new List<byte> { (byte)(v3 ? 3 : 2), 0, 0, 0 };
+            var body = new List<byte> { (byte)(v3 ? 3 : 2), 0, 0, 1 };
             body.AddRange(BigEndian(id, v3 ? 4 : 2));
             body.AddRange([0, 0]);
             body.AddRange("mime"u8.ToArray());
-            body.Add(0);  // no name
+            body.Add(0);
             body.AddRange(Encoding.ASCII.GetBytes(XmpType));
             body.Add(0);
-            return Boxed("infe", body);
+            return body;
         }
+
+        private static byte[] Infe(uint id) => Boxed("infe", InfeBody(id));
 
         private byte[] Reference(uint id, List<uint> to)
         {
@@ -435,7 +571,7 @@ public static class HeifMetadata
                         var contents = b[box.Body..box.End].ToList();
                         var countWidth = version == 0 ? 2 : 4;
                         var count = (ulong)_items.Count + 1;
-                        if (version == 0 && count > ushort.MaxValue) throw new MetadataRefusedException("It has too many parts to add an XMP.");
+                        if (version == 0 && count > ushort.MaxValue) throw new MetadataRefusedException("Its layout leaves no room to add to it safely.");
                         var countBytes = BigEndian(count, countWidth);
                         for (var i = 0; i < countWidth; i++) contents[4 + i] = countBytes[i];
                         contents.AddRange(a.Infe);
@@ -461,7 +597,7 @@ public static class HeifMetadata
             var iloc = Find("iloc");
             var body = new List<byte> { (byte)_ilocVersion, _bytes[iloc.Body + 1], _bytes[iloc.Body + 2], _bytes[iloc.Body + 3],
                 (byte)((_offsetSize << 4) | _lengthSize), (byte)((_baseSize << 4) | _indexSize) };
-            if (_ilocVersion < 2 && all.Count > ushort.MaxValue) throw new MetadataRefusedException("It has too many parts to add an XMP.");
+            if (_ilocVersion < 2 && all.Count > ushort.MaxValue) throw new MetadataRefusedException("Its layout leaves no room to add to it safely.");
             body.AddRange(BigEndian((ulong)all.Count, _ilocVersion < 2 ? 2 : 4));
             foreach (var l in all)
             {
@@ -507,7 +643,8 @@ public static class HeifMetadata
         _ => true,
     };
 
-    private static MetadataRefusedException Unfollowable() => new("It isn't a HEIC file that can be followed.");
+    /// <summary>Said as "IMG_1234.HEIC: … It was left as it is."</summary>
+    private static MetadataRefusedException Unfollowable() => new("Its layout isn't one that can be changed safely.");
 
     /// <summary>Reads big-endian values within a box's bounds, refusing anything past them.</summary>
     private ref struct Reader(ReadOnlySpan<byte> b, int at, int end)

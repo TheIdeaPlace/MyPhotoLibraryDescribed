@@ -20,10 +20,6 @@ public sealed record MediaMetadata
 
     /// <summary>2: PNG captions are read from their XMP too (#82). 3: so are HEIC's (#31).</summary>
     public const int CurrentVersion = 3;
-
-    /// <summary>The oldest reader whose details still hold for this file: HEIC's were read without their XMP before 3,
-    /// so only they are read again, not the whole library.</summary>
-    public static int VersionNeeded(string path) => Services.XmpFields.IsHeif(path) ? 3 : 2;
     public string Keywords { get; init; } = "";
     /// <summary>0 to 5 stars.</summary>
     public int Rating { get; init; }
