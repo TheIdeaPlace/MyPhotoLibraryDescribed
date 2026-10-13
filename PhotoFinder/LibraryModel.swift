@@ -1777,7 +1777,8 @@ final class LibraryModel {
             let outcome = await writeFiles(items)
             activity = nil
             let text = FileWriteSummary.text(done: outcome.written.isEmpty ? nil : done(outcome.written.count),
-                                             skipped: outcome.skipped, notDescribed: notDescribed)
+                                             skipped: outcome.skipped, secondPicture: outcome.secondPicture,
+                                             notDescribed: notDescribed)
             if !text.isEmpty { announce(text) }
             if let failure = outcome.failed.first {
                 errorMessage = outcome.failed.count == 1 ? "\(failure.name) couldn't be saved. \(failure.reason)"
@@ -1790,6 +1791,8 @@ final class LibraryModel {
     private struct FileWriteOutcome {
         var written: [MediaFile] = []
         var skipped: [(name: String, format: String)] = []
+        /// Photos holding a second picture (an HDR map) whose index couldn't be kept right (#90).
+        var secondPicture: [String] = []
         var failed: [(name: String, reason: String)] = []
     }
 
@@ -1826,7 +1829,7 @@ final class LibraryModel {
             case .failure(FileMetadataWriteError.unsupportedFormat(let format)):
                 outcome.skipped.append((file.name, format))
             case .failure(FileMetadataWriteError.multiPicture):
-                outcome.skipped.append((file.name, "Multi-picture JPEG"))
+                outcome.secondPicture.append(file.name)
             case .failure(let error):
                 Self.log.error("Couldn't write into \(file.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 DiagnosticLog.write("save", "Couldn't write into \(file.name): \(Self.describe(error))")
