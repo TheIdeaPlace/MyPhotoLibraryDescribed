@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// View > Labels (#38): what's read for each photo, in two tabs.
+/// View > Labels (#38): what's read for each photo, in two parts, List and Gallery, chosen at the top of the sheet.
 /// - **List:** which columns the list shows and in what order, which is also the order VoiceOver reads each row's
 ///   cells in (it was View > Columns).
 /// - **Gallery:** what's said, in order, when you move to a photo in the gallery. Position only by default.
 ///
-/// Both tabs are the same editor (`OrderListEditor`), the same design as the Windows app's (and The Chat Place's):
+/// Both parts are the same editor (`OrderListEditor`), the same design as the Windows app's (and The Chat Place's):
 /// the items not shown, the ones shown in the order they're read, Add, Remove, Move Up, Move Down, Move to Top,
-/// Move to Bottom and Reset to Default, and a preview of how the selected photo reads. OK keeps both tabs' choices;
+/// Move to Bottom and Reset to Default, and a preview of how the selected photo reads. OK keeps both parts' choices;
 /// Cancel (or Escape) leaves them.
 struct LabelsSheet: View {
     enum Tab: Hashable { case list, gallery }
@@ -58,10 +58,10 @@ struct LabelsSheet: View {
                 switch tab {
                 case .list:
                     OrderListEditor(editor: $columns, text: .columns, preview: listPreview, focus: $focus,
-                                    available: .listAvailable, shown: .listShown, isActive: true)
+                                    available: .listAvailable, shown: .listShown)
                 case .gallery:
                     OrderListEditor(editor: $gallery, text: .gallery, preview: galleryPreview, focus: $focus,
-                                    available: .galleryAvailable, shown: .galleryShown, isActive: true)
+                                    available: .galleryAvailable, shown: .galleryShown)
                 }
             }
             .padding()
@@ -87,6 +87,7 @@ struct LabelsSheet: View {
         .defaultFocus($focus, tab == .gallery ? .galleryShown : .listShown)
         .task {
             try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
             focus = tab == .gallery ? .galleryShown : .listShown
         }
     }
@@ -95,7 +96,7 @@ struct LabelsSheet: View {
 /// Which list has focus in the Labels sheet.
 enum OrderField: Hashable { case listAvailable, listShown, galleryAvailable, galleryShown }
 
-/// The words one tab of the Labels sheet uses.
+/// The words one part of the Labels sheet uses.
 struct OrderListText {
     let explanation: String
     /// The lists' names, read by VoiceOver and shown above them with a colon.
@@ -125,7 +126,7 @@ struct OrderListText {
         previewTitle: "Preview of how the selected photo reads in the gallery")
 }
 
-/// Available and Shown lists with Add, Remove, the Move buttons, Reset to Default and a preview: one tab of the Labels
+/// Available and Shown lists with Add, Remove, the Move buttons, Reset to Default and a preview: one part of the Labels
 /// sheet.
 ///
 /// Keys: Return (or a double-click) in Available adds, and in Shown removes; Delete in Shown removes.
@@ -140,8 +141,6 @@ struct OrderListEditor: View {
     var focus: FocusState<OrderField?>.Binding
     let available: OrderField
     let shown: OrderField
-    /// Whether this is the tab showing.
-    let isActive: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -206,9 +205,9 @@ struct OrderListEditor: View {
         }
     }
 
-    /// Option with the key, only on the tab showing, so a tab that's out of sight can never take the key instead.
+    /// Option with the key. Only the part showing is in the sheet, so a hidden one can't take the key.
     private func shortcut(_ key: KeyEquivalent) -> KeyboardShortcut? {
-        isActive ? KeyboardShortcut(key, modifiers: .option) : nil
+        KeyboardShortcut(key, modifiers: .option)
     }
 
     private func say(_ text: String) {
@@ -260,7 +259,7 @@ struct WrappingRow: Layout {
     }
 }
 
-/// What one tab of the Labels sheet chooses from: the list's columns, or what the gallery reads.
+/// What one part of the Labels sheet chooses from: the list's columns, or what the gallery reads.
 struct OrderChoice {
     /// Every item, in its original order.
     let all: [String]

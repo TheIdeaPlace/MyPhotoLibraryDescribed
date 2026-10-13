@@ -87,7 +87,7 @@ On the Mac, a photo in your Photos library gets a Photos caption, which syncs wi
 
 ## Columns, labels and sorting
 
-**View > Labels…** chooses what's read for each photo, in two tabs.
+**View > Labels…** chooses what's read for each photo, in two parts, List and Gallery: tabs on Windows, and a List/Gallery choice at the top of the sheet on the Mac, which opens on the Shown list.
 
 - **List** chooses which columns the list shows and in what order. The order is also the order a screen reader reads each row in, so putting Caption first means hearing it before the name.
 - **Gallery** (Mac) chooses what's said, and in what order, when you move to a photo in the gallery: Position ("12 of 400"), Name, Kind, Date Taken, Dimensions, Caption, Keywords, Rating and Place Taken. The default is Position only. The description isn't one of them: it follows after a pause when Describe Photos Automatically is on. The details under the photo stay the same whatever you choose.
