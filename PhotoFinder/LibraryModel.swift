@@ -552,6 +552,8 @@ final class LibraryModel {
         let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         guard status == .authorized || status == .limited else { return }
         DiagnosticLog.write("start", "Photos access given while running: \(status == .limited ? "limited" : "full")")
+        // Set now, not in the task: a second return to the app before it runs mustn't start the library twice.
+        authState = .authorized
         Task { await startPhotos(afterNoAccess: true) }
     }
 

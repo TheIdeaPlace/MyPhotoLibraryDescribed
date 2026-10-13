@@ -142,7 +142,8 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         // Return or a double-click on "Photos library: no access" opens Privacy Settings (#47); other rows are
         // unchanged.
-        .contextMenu(forSelectionType: String.self) { ids in
+        // `String?`, the rows' tag type (the selection is optional): a plain `String` never matches them (#142's review).
+        .contextMenu(forSelectionType: String?.self) { ids in
             if ids.contains(SidebarID.photosNoAccess) {
                 Button("Open Privacy Settings") { model.openPhotosPrivacySettings() }
             }
