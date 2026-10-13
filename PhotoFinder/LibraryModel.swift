@@ -1434,6 +1434,18 @@ final class LibraryModel {
     var captionPolicy: CaptionPolicy { saveInPhotos ? .whenEmpty : .never }
 
     /// Turns Save Descriptions in Photos on, after asking, or off. Asking is the permission to change people's photos.
+    /// Save Descriptions in Photos, as the Photo menu and Settings show it: paused, and unchecked, while read-only.
+    var saveInPhotosTitle: String {
+        readOnly && saveInPhotos ? "Save Descriptions in Photos (Paused While Read-Only)" : "Save Descriptions in Photos"
+    }
+
+    var saveInPhotosShownOn: Bool { saveInPhotos && !readOnly }
+
+    /// Chosen from the menu or Settings. While it's paused, choosing it turns it off, so it can always be turned off.
+    func chooseSaveInPhotos(_ on: Bool) {
+        setSaveInPhotos(readOnly && saveInPhotos ? false : on)
+    }
+
     func setSaveInPhotos(_ on: Bool) {
         if on, readOnly {
             announce(PhotoChanges.readOnlyMessage)

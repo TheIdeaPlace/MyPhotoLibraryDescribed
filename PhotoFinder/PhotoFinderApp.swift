@@ -81,12 +81,12 @@ struct PhotoCommands: Commands {
             ))
             .keyboardShortcut("4")
             Button("Columns…") { model.columnsSheetShown = true }
-            // The Description panel (#50); Option-Command-I, as Finder's Show Inspector.
             // The status bar from anywhere (#84), as on Windows: Control-F9 reads it, Control-Shift-F9 goes to it.
             Button("Read Status Bar") { model.readStatusBar() }
                 .keyboardShortcut(Self.f9, modifiers: .control)
             Button("Go to Status Bar") { model.goToStatusBar() }
                 .keyboardShortcut(Self.f9, modifiers: [.control, .shift])
+            // The Description panel (#50); Option-Command-I, as Finder's Show Inspector.
             Toggle("Show Description", isOn: Binding(
                 get: { model.showDescriptionPanel },
                 set: { model.showDescriptionPanel = $0 }
@@ -148,10 +148,9 @@ struct PhotoCommands: Commands {
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             Button("Use Description as Caption") { model.useDescriptionAsCaption() }
             // Paused, and shown unchecked, while read-only (as on Windows).
-            Toggle(model.readOnly && model.saveInPhotos ? "Save Descriptions in Photos (Paused While Read-Only)"
-                                                         : "Save Descriptions in Photos", isOn: Binding(
-                get: { model.saveInPhotos && !model.readOnly },
-                set: { model.setSaveInPhotos($0) }
+            Toggle(model.saveInPhotosTitle, isOn: Binding(
+                get: { model.saveInPhotosShownOn },
+                set: { model.chooseSaveInPhotos($0) }
             ))
             Divider()
             Button("Describe Photo") { model.describeFocusedPhoto() }
