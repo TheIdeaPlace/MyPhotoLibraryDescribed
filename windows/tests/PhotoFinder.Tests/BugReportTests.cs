@@ -74,15 +74,28 @@ public sealed class BugReportTests : IDisposable
         report.Attachments[0] = report.Attachments[0] with { Text = new string('y', 600) };
         report.Happened = "";
         report.IncludeAttachments = false;
-        // About 150 characters left: room for the note, not for the 600-character line.
+        // About 130 characters of room: enough for the note, not for the 600-character line.
         report.Happened = new string('x', BugReport.LongestBody - report.Body.Length - 150);
         report.IncludeAttachments = true;
         Assert.EndsWith("**Diagnostic log, PhotoFinder-2026-10-13.log (last 40 lines)**\n" + BugReport.DidntFit, report.Body);
         Assert.True(report.Body.Length <= BugReport.LongestBody);
-        // With no room even for that, it's left out without a word, and the body still fits (#154).
+        // With no room even for that, it's left out without a word (#154). (The answers alone are over the limit here.)
         report.Happened = new string('x', BugReport.LongestBody);
         Assert.DoesNotContain(BugReport.DidntFit, report.Body);
         Assert.DoesNotContain("Diagnostic log", report.Body);
+    }
+
+    [Fact]
+    public void SeveralAttachmentsLeftOut_StayWithinTheLimit()
+    {
+        // As the Mac's testAttachmentsLeftOutStayWithinTheLimit (#152): four attachments with long headings, none of
+        // whose text fits, and answers that leave room for some of their notes but not all.
+        var report = Report();
+        report.Happened = new string('x', 6700);
+        for (var i = 0; i < 4; i++)
+            report.Attachments.Add(new("the log", $"Diagnostic log number {i}, with a long heading to use up the room left {new string('h', 150)}", new string('y', 2000)));
+        Assert.True(report.Body.Length <= BugReport.LongestBody, $"{report.Body.Length}");
+        Assert.Contains(BugReport.DidntFit, report.Body);
     }
 
     [Fact]
