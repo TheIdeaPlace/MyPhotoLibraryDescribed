@@ -2152,6 +2152,46 @@ final class LibraryModel {
     var systemCheckRequest = 0
 
     /// Help > Check System.
+    /// How many of the library's photos are described, for Check System; nil until counted.
+    private(set) var libraryCoverage: (described: Int, total: Int)?
+    @ObservationIgnored private var coverageCount: Task<Void, Never>?
+
+    /// Counts the library's photos and how many are described, off the main actor: the Photos library's photos and
+    /// the added folders' (videos aren't described). Each file's description is keyed by its size and date, so
+    /// each is looked at.
+    func countLibraryCoverage() {
+        coverageCount?.cancel()
+        // Counting again: "Counting…" until it's done, rather than the last count.
+        libraryCoverage = nil
+        let cache = descriptions
+        let files = folderMediaPaths.values.flatMap { $0 }.filter { !MediaFiles.isVideo(($0 as NSString).lastPathComponent) }
+        let photosAllowed = authState == .authorized
+        coverageCount = Task {
+            let work = Task.detached(priority: .utility) { () -> (Int, Int)? in
+                var described = 0, total = 0
+                if photosAllowed {
+                    let photos = PHAsset.fetchAssets(with: .image, options: nil)
+                    total += photos.count
+                    photos.enumerateObjects { asset, _, stop in
+                        if Task.isCancelled { stop.pointee = true }
+                        if cache.description(forKey: asset.localIdentifier) != nil { described += 1 }
+                    }
+                }
+                for path in Set(files) {
+                    if Task.isCancelled { return nil }
+                    guard let file = FolderScanner.file(at: path) else { continue }
+                    total += 1
+                    if cache.description(forKey: file.descriptionKey) != nil { described += 1 }
+                }
+                return Task.isCancelled ? nil : (described, total)
+            }
+            // A detached task doesn't hear its caller's cancellation, so it's passed on.
+            let result = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+            guard !Task.isCancelled, let result else { return }
+            libraryCoverage = (result.0, result.1)
+        }
+    }
+
     func systemCheck() -> SystemCheck {
 #if arch(arm64)
         let appleSilicon = true
@@ -2172,7 +2212,7 @@ final class LibraryModel {
             osVersion: ProcessInfo.processInfo.operatingSystemVersion, appleSilicon: appleSilicon,
             aiUnavailableReason: describeUnavailableReason,
             photosAccess: PHPhotoLibrary.authorizationStatus(for: .readWrite),
-            savedDescriptions: descriptions.count,
+            savedDescriptions: descriptions.count, libraryCoverage: libraryCoverage,
             describeAutomatically: describeAutomatically, describeInBackground: describeInBackground,
             osBuild: SystemDetails.osBuild, chip: SystemDetails.chip, memory: SystemDetails.memory(),
             power: SystemDetails.power(), aiModelState: aiModelState, aiLanguage: aiLanguage,
@@ -2351,6 +2391,30 @@ final class LibraryModel {
         guard !rows.isEmpty else { NSSound.beep(); return }
         select(at: last ? rows.count - 1 : 0, in: rows)
     }
+
+    /// Go > Next Photo (Command-Right Arrow) and Previous Photo (Command-Left), in the list or gallery: the next photo
+    /// or video, past folders, without moving focus. So you can stay in the Description panel (reading with a braille
+    /// display, say) and step from photo to photo; its description follows (Kelly, 13 Oct).
+    func stepPhoto(by direction: Int) {
+        let rows = visibleRows
+        guard !rows.isEmpty else { NSSound.beep(); return }
+        let current = rows.firstIndex { selection.contains($0.id) }
+        var index = current.map { $0 + direction } ?? (direction > 0 ? 0 : rows.count - 1)
+        // Photos only: a folder or video would take the Description panel's text box away, and focus with it.
+        while rows.indices.contains(index), rows[index].isContainer || !isPhoto(rows[index].id) { index += direction }
+        guard rows.indices.contains(index) else {
+            announce(direction > 0 ? "No next photo" : "No previous photo")
+            return
+        }
+        select(at: index, in: rows)
+        scrollRequest = PaneScroll(id: rows[index].id, serial: scrollRequest.serial + 1)
+    }
+
+    /// Asks the list to scroll to a row chosen without it (Next Photo, Previous Photo).
+    private(set) var scrollRequest = PaneScroll()
+
+    /// Whether Next Photo and Previous Photo apply: not while Get Info, a caption or Columns is in front.
+    var canStepPhotos: Bool { infoTarget == nil && captionTarget == nil && !columnsSheetShown }
 
     func moveSelection(by delta: Int) {
         let rows = visibleRows

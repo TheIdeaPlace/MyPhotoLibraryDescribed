@@ -54,7 +54,7 @@ How photos are described: on the Mac, Settings has the prompt Apple Intelligence
 
 ## The Description panel
 
-**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Describe Again, Use as Caption and Copy, and the photo's caption with Edit Caption.
+**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Describe Again, Use as Caption and Copy, and the photo's caption with Edit Caption. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow on the Mac) and Previous Photo (Command-Left): the photo changes and focus stays where it is.
 
 ## Read-only, and changing your photos
 
@@ -115,6 +115,7 @@ On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save
 | Edit Caption | Shift-Command-E | F2 or Ctrl+Shift+E |
 | List / Gallery | Command-2 / Command-4 | Ctrl+2 / Ctrl+4 |
 | Search | Command-F | Ctrl+F or F3 |
+| Next / previous photo, leaving focus where it is (in the Description panel, say) | Command-Right / Command-Left Arrow | Coming |
 | Next / previous pane | F6 / Shift-F6 | F6 / Shift+F6 |
 | Show or hide the Description panel | Option-Command-I | Ctrl+Shift+I |
 | Read the status bar / go to it | Control-F9 / Control-Shift-F9 | Ctrl+F9 / Ctrl+Shift+F9 |

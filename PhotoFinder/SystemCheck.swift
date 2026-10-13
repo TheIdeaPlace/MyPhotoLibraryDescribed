@@ -66,6 +66,9 @@ struct SystemCheck: Equatable {
         var aiUnavailableReason: String?
         var photosAccess: PHAuthorizationStatus
         var savedDescriptions: Int
+        /// How many of the library's photos (Photos and added folders, not videos) are described, and how many there
+        /// are; nil while they're still being counted.
+        var libraryCoverage: (described: Int, total: Int)? = nil
         var describeAutomatically: Bool
         var describeInBackground: Bool
 
@@ -132,9 +135,10 @@ struct SystemCheck: Equatable {
             items.append(Item(name: "Photos library", status: .problem, detail:
                 "No access. Turn it on in System Settings, Privacy & Security, Photos."))
         }
-        let saved = facts.savedDescriptions
+        // How much of the library is described (Kelly, 13 Oct): "40% described, 159 of 400 photos."
         items.append(Item(name: "Saved descriptions", status: .info, detail:
-            saved == 0 ? "None yet." : saved == 1 ? "1 photo described." : "\(saved.formatted()) photos described."))
+            facts.libraryCoverage.map { Self.coverageText(described: $0.described, total: $0.total) }
+                ?? "Counting the library's photos…"))
         items.append(Item(name: "Describe Photos Automatically", status: .info,
                           detail: facts.describeAutomatically ? "On." : "Off. Turn it on in the Photo menu."))
         items.append(Item(name: "Describe Photos in the Background", status: .info,
@@ -167,6 +171,15 @@ struct SystemCheck: Equatable {
 
 extension SystemCheck {
     /// The body of a new bug report: the questions the app kit's Report a Bug form asks, then the system check.
+    /// "40% described, 159 of 400 photos." Rounded down, so 100% means every photo.
+    static func coverageText(described: Int, total: Int) -> String {
+        guard total > 0 else { return "No photos in the library yet." }
+        let described = min(described, total)
+        let percent = described * 100 / total
+        let photos = total == 1 ? "photo" : "photos"
+        return "\(percent)% described, \(described.formatted()) of \(total.formatted()) \(photos)."
+    }
+
     static func bugReportTemplate(systemText: String) -> String {
         """
         **What happened**
