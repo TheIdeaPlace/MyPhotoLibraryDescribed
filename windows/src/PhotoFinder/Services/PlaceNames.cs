@@ -58,7 +58,7 @@ public sealed class PlaceNames
     private readonly object _cacheGate = new();
     private Dictionary<string, string>? _cache;
     private DateTime _lastRequest = DateTime.MinValue;
-    /// <summary>Nominatim said no (too many requests, or blocked): nothing more is asked until Photo Finder starts again.</summary>
+    /// <summary>Nominatim said no (too many requests, or blocked): nothing more is asked until My Photo Library Described starts again.</summary>
     private bool _refused;
 
     /// <param name="get">Fetches a URL; tests stand in for Nominatim.</param>
@@ -124,7 +124,7 @@ public sealed class PlaceNames
         {
             // Nominatim's way of saying stop: respected for the rest of the session.
             _refused = true;
-            Log.Error("places", "Nominatim refused place-name lookups; none more until Photo Finder starts again", ex);
+            Log.Error("places", "Nominatim refused place-name lookups; none more until My Photo Library Described starts again", ex);
             return null;
         }
         catch (Exception ex)
@@ -190,7 +190,7 @@ public sealed class PlaceNames
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-                // A temporary name of its own, so two copies of Photo Finder can't write over each other's.
+                // A temporary name of its own, so two copies of My Photo Library Described can't write over each other's.
                 var temp = $"{_path}.{Environment.ProcessId}.tmp";
                 File.WriteAllText(temp, JsonSerializer.Serialize(_cache));
                 File.Move(temp, _path, overwrite: true);

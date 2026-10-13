@@ -7,8 +7,8 @@ using Windows.Management.Deployment;
 namespace PhotoFinder.Services;
 
 /// <summary>
-/// Updates for Photo Finder as installed from PhotoFinder.appinstaller. Windows also checks in the background every
-/// few hours and installs an update while Photo Finder isn't running; this is Help > Check for Updates, for now.
+/// Updates for My Photo Library Described as installed from PhotoFinder.appinstaller. Windows also checks in the background every
+/// few hours and installs an update while My Photo Library Described isn't running; this is Help > Check for Updates, for now.
 /// (Checking at every launch, the .appinstaller's OnLaunch setting, stopped the AI helper's alias from starting, so
 /// the package doesn't use it.) Installing follows Microsoft's "Update non-Store published apps from your code".
 /// </summary>
@@ -18,7 +18,7 @@ public static class Updates
 
     public sealed record Result(State State, string? Message = null, Uri? Source = null);
 
-    /// <summary>The installed package's version, or null when Photo Finder isn't running from its package.</summary>
+    /// <summary>The installed package's version, or null when My Photo Library Described isn't running from its package.</summary>
     public static string? PackageVersion
     {
         get
@@ -36,7 +36,7 @@ public static class Updates
         }
     }
 
-    /// <summary>The installed package's version, or the build's when Photo Finder isn't running from its package.</summary>
+    /// <summary>The installed package's version, or the build's when My Photo Library Described isn't running from its package.</summary>
     public static string AppVersion =>
         PackageVersion ?? typeof(Updates).Assembly.GetName().Version?.ToString(3) ?? "unknown";
 
@@ -96,7 +96,7 @@ public static class Updates
         _ => new Result(State.Failed, string.IsNullOrWhiteSpace(error) ? "The place updates come from couldn't be reached." : error, source),
     };
 
-    /// <summary>Downloads and installs the update. When it's ready, Windows closes Photo Finder to install it, and
+    /// <summary>Downloads and installs the update. When it's ready, Windows closes My Photo Library Described to install it, and
     /// opens it again (it's registered for restart). Returns why it failed, or null.</summary>
     public static async Task<string?> InstallAsync(Uri source)
     {

@@ -1,4 +1,4 @@
-# Photo Finder
+# My Photo Library Described
 
 A Mac app for browsing your Photos library as if it were folders in Finder. It is built to work well with VoiceOver: the sidebar and a sortable list view replace the Photos app's image grid.
 
@@ -13,7 +13,7 @@ There's also a separate native Windows version, built for JAWS, NVDA and Narrato
 - **Edit Caption** (macOS 27 and later) writes the caption to your Photos library, where it syncs with iCloud Photos. PhotoKit can't rename a photo's original file, so the app offers captions instead.
 - Folders, years and albums also appear as rows in the list, so you can move through the library like Finder.
 - **Get Info** shows the date, location, camera, lens and exposure details. Its *Describe Image* button uses on-device Vision to list what is in the photo and read any text it contains.
-- **Describe Photo** (Command-D, macOS 27): describes the photo you're on with Apple Intelligence and speaks it, in the list or gallery. A saved description is spoken at once. **Photo Finder > Settings** (Command-,) has the prompt Apple Intelligence is given, for people who want different descriptions; Use Standard Prompt puts it back.
+- **Describe Photo** (Command-D, macOS 27): describes the photo you're on with Apple Intelligence and speaks it, in the list or gallery. A saved description is spoken at once. **My Photo Library Described > Settings** (Command-,) has the prompt Apple Intelligence is given, for people who want different descriptions; Use Standard Prompt puts it back.
 - **Saved descriptions** (macOS 27): Apple Intelligence descriptions are saved, so Get Info shows a photo's description at once the next time, and follow-up questions still work. **Photo > Describe Photos in the Background** describes the library's photos behind the scenes, so their descriptions are ready; the status bar shows progress, and Photo > Stop Background Describing stops a run. Photos only in iCloud aren't downloaded for this.
 - **Open, Quick Look, Copy, Export and drag to Finder** work on the current version of each item (including edits), and download originals from iCloud when needed.
 - VoiceOver announces the results of navigation, exports, copies and favorite changes.
@@ -47,7 +47,7 @@ Requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew inst
 ```bash
 xcodegen generate
 xcodebuild -project PhotoFinder.xcodeproj -scheme PhotoFinder -configuration Debug -derivedDataPath build build
-open "build/Build/Products/Debug/Photo Finder.app"
+open "build/Build/Products/Debug/My Photo Library Described.app"
 ```
 
 The app is signed with an Apple Development certificate. Don't switch it to ad hoc signing: macOS can't remember Photos permission for ad hoc apps and will prompt over and over.

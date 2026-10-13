@@ -1,7 +1,7 @@
 namespace PhotoFinder.Services;
 
 /// <summary>
-/// A plain-text diagnostic log, one file a day in the data folder's Logs folder, kept for two weeks: what Photo Finder
+/// A plain-text diagnostic log, one file a day in the data folder's Logs folder, kept for two weeks: what My Photo Library Described
 /// started with, and what went wrong (the AI helper, describing, saving, crashes). For finding out what happened when
 /// something goes wrong; it stays on this PC unless the person sends it. Help > Open Log Folder shows it. Never throws.
 /// </summary>

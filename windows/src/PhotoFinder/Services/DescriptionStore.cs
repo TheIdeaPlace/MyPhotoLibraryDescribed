@@ -105,7 +105,7 @@ public sealed class DescriptionStore
     /// <summary>How long after a change it's saved. Short in tests.</summary>
     internal TimeSpan SaveDelay { get; init; } = TimeSpan.FromSeconds(2);
 
-    /// <summary>Keeps a file's descriptions when Photo Finder itself changes the file (a caption, rating or
+    /// <summary>Keeps a file's descriptions when My Photo Library Described itself changes the file (a caption, rating or
     /// favorite), which changes its size and date but not the picture.</summary>
     public void Rekey(string path, long oldSize, DateTime oldModified, MediaItem now)
     {

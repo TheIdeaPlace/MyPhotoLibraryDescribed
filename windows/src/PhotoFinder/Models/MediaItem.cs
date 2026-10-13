@@ -67,7 +67,7 @@ public sealed class MediaItem
 
     public bool IsFavorite => (Metadata?.Rating ?? 0) == MediaTypes.FavoriteRating;
 
-    /// <summary>Picks up the file's new size and date after Photo Finder writes to it.</summary>
+    /// <summary>Picks up the file's new size and date after My Photo Library Described writes to it.</summary>
     public void RefreshFileInfo()
     {
         var info = new FileInfo(Path);

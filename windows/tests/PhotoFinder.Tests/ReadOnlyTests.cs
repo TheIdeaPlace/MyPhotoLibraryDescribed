@@ -100,13 +100,13 @@ public sealed class ReadOnlyTests : IDisposable
         var original = QuestionDialog.AskSafely;
         try
         {
-            Assert.EndsWith("Photo Finder - Read-Only Mode", window.Title);
+            Assert.EndsWith("My Photo Library Described - Read-Only Mode", window.Title);
             Assert.True(window.ReadOnlyItem.IsChecked);
 
             var asked = new List<string>();
             QuestionDialog.AskSafely = (_, _, question, _, yes, keep) => { asked.Add($"{question} [{yes}] [{keep}]"); return false; };
             window.SetReadOnly(false);
-            Assert.Equal(["Let Photo Finder change your photos? [Allow Changes] [Keep Read-Only Mode]"], asked);
+            Assert.Equal(["Let My Photo Library Described change your photos? [Allow Changes] [Keep Read-Only Mode]"], asked);
             Assert.True(model.IsReadOnly);
             Assert.False(PhotoChanges.Allowed);
             Assert.True(window.ReadOnlyItem.IsChecked);
@@ -115,7 +115,7 @@ public sealed class ReadOnlyTests : IDisposable
             window.SetReadOnly(false);
             Assert.False(model.IsReadOnly);
             Assert.True(PhotoChanges.Allowed);
-            Assert.EndsWith("Photo Finder - Editing Mode", window.Title);
+            Assert.EndsWith("My Photo Library Described - Editing Mode", window.Title);
             // Not remembered: the next launch is read-only again.
             Assert.True(Settings.Load(_lib.PathOf(@"data\Settings.json")).ReadOnly);
             Assert.Contains("Editing Mode. Photos can be changed", _announced);
@@ -125,7 +125,7 @@ public sealed class ReadOnlyTests : IDisposable
             window.SetReadOnly(true);
             Assert.True(model.IsReadOnly);
             Assert.False(PhotoChanges.Allowed);
-            Assert.EndsWith("Photo Finder - Read-Only Mode", window.Title);
+            Assert.EndsWith("My Photo Library Described - Read-Only Mode", window.Title);
 
             // And off again asks again.
             asked.Clear();

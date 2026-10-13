@@ -771,7 +771,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     /// wait here for a quiet caption write to finish; they're never refused because of one.</summary>
     private readonly SemaphoreSlim _writeGate = new(1, 1);
 
-    /// <summary>Files being written quietly, and until when changes to them are Photo Finder's own. Only those files are
+    /// <summary>Files being written quietly, and until when changes to them are My Photo Library Described's own. Only those files are
     /// ignored, so the watcher still notices everything else while captions are written in the background.</summary>
     private readonly Dictionary<string, DateTime> _ownChanges = new(StringComparer.OrdinalIgnoreCase);
     private bool _missedDiskChange;
@@ -901,7 +901,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    /// <summary>Files Photo Finder changed, so the view can drop their old thumbnails.</summary>
+    /// <summary>Files My Photo Library Described changed, so the view can drop their old thumbnails.</summary>
     public event Action<IReadOnlyList<string>>? FilesChanged;
 
     // MARK: Folders
@@ -944,7 +944,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         OnStatusChanged();
     }
 
-    /// <summary>Takes a folder out of Photo Finder's library. Nothing on disk changes.</summary>
+    /// <summary>Takes a folder out of My Photo Library Described's library. Nothing on disk changes.</summary>
     public async Task RemoveFolderAsync(string root)
     {
         if (_settings.ExtraFolders.RemoveAll(f => f.Equals(root, StringComparison.OrdinalIgnoreCase)) == 0)
@@ -1023,7 +1023,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         _ui ??= SynchronizationContext.Current;
         _ui?.Post(_ =>
         {
-            // A caption Photo Finder is writing from a description: its own change, not an outside edit.
+            // A caption My Photo Library Described is writing from a description: its own change, not an outside edit.
             if (_ownChanges.TryGetValue(e.FullPath, out var until))
             {
                 if (DateTime.UtcNow < until) return;
@@ -1136,7 +1136,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     public void SaveSettings() => _settings.Save(_settingsPath);
 
-    /// <summary>Saves the photo details and descriptions now, as closing does: before an update closes Photo Finder.</summary>
+    /// <summary>Saves the photo details and descriptions now, as closing does: before an update closes My Photo Library Described.</summary>
     public void SaveCaches()
     {
         _cache.Save();

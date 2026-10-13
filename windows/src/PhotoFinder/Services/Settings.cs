@@ -33,7 +33,7 @@ public sealed class Settings
     /// to OpenStreetMap's Nominatim. Off until the person agrees once.</summary>
     public bool LookUpPlaceNames { get; set; }
     /// <summary>File > Read-Only (#83): nothing changes a photo file while it's on. Every launch starts read-only (Kelly,
-    /// 12 Oct): allowing changes lasts until Photo Finder quits, so it's never saved.</summary>
+    /// 12 Oct): allowing changes lasts until My Photo Library Described quits, so it's never saved.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public bool ReadOnly { get; set; } = true;
 

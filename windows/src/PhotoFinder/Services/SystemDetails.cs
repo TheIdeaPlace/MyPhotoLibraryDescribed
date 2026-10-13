@@ -111,7 +111,7 @@ public static class SystemDetails
         return text;
     }
 
-    /// <summary>Photo Finder's own package, as Windows names it, when it's installed as one.</summary>
+    /// <summary>My Photo Library Described's own package, as Windows names it, when it's installed as one.</summary>
     public static string? PackageName()
     {
         try { return Package.Current.Id.FullName; }

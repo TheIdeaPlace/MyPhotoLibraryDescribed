@@ -87,7 +87,7 @@ public sealed class KeysAndWordingTests : IDisposable
                 AppCommands.PrivacyPolicy.Execute(null, window);
                 Assert.Equal([$"https://github.com/{AppInfo.Repository}/blob/main/docs/user-guide.md",
                     $"https://github.com/{AppInfo.Repository}/blob/main/docs/PRIVACY.md"], opened);
-                Assert.Equal("Photo Finder User _Guide", AppCommands.UserGuide.Text.Replace(AppInfo.Name, "Photo Finder"));
+                Assert.Equal("My Photo Library Described User _Guide", AppCommands.UserGuide.Text.Replace(AppInfo.Name, "My Photo Library Described"));
             }
             finally
             {

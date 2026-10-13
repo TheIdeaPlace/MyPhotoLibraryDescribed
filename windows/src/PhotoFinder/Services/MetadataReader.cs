@@ -64,7 +64,7 @@ public static class MetadataReader
             // Not readable now: the Title is all there is, and it's read again next time (an older Version).
             return metadata;
         }
-        // The standard caption field first, then the Title, where older files (and Photo Finder before #62) keep it. A
+        // The standard caption field first, then the Title, where older files (and My Photo Library Described before #62) keep it. A
         // caption cleared in dc:description stays cleared, even when the Title holds something else.
         return metadata with
         {
