@@ -247,9 +247,10 @@ public sealed class FileFieldsTests : IDisposable
     }
 
     [Fact]
-    public async Task AMultiPictureFile_IsChangedOnlyWhenItKeepsItsSize()
+    public async Task AMultiPictureFile_WithAnIndexItCantFollow_IsChangedOnlyWhenItKeepsItsSize()
     {
-        // An MPF index (Ultra HDR, MPO) records the main picture's size, so the file can't grow.
+        // An MPF index (Ultra HDR, MPO) records the main picture's size; one that can't be read can't be patched, so
+        // the file mustn't grow.
         byte[] mpf = [(byte)'M', (byte)'P', (byte)'F', 0, 0x49, 0x49, 0x2A, 0x00];
         var path = _lib.AddJpeg("hdr.jpg");
         File.WriteAllBytes(path, [.. WithSegment(WithoutRoom(File.ReadAllBytes(path)), 0xE2, mpf), .. "the gain map"u8.ToArray()]);
@@ -272,6 +273,128 @@ public sealed class FileFieldsTests : IDisposable
         Assert.Equal(size, new FileInfo(roomy).Length);
         Assert.Equal("Second.", (await XmpFields.ReadAsync(roomy)).Caption);
         Assert.EndsWith("the gain map", File.ReadAllText(roomy));
+    }
+
+    /// <summary>A multi-picture file as Ultra HDR and MPO cameras write it: the main JPEG with an MPF index (CIPA
+    /// DC-007) at <paramref name="mpfAt"/> among its segments, then a second JPEG. Its two MP Entries give the main
+    /// picture's size and where the second starts, counted from the index's header.</summary>
+    private static byte[] MultiPicture(byte[] main, byte[] second, bool bigEndian, int mpfAt = 0)
+    {
+        var mpf = new byte[4 + 8 + 42 + 32];
+        "MPF\0"u8.CopyTo(mpf);
+        void U16(int at, int v) { if (bigEndian) { mpf[at] = (byte)(v >> 8); mpf[at + 1] = (byte)v; } else { mpf[at] = (byte)v; mpf[at + 1] = (byte)(v >> 8); } }
+        void U32(int at, uint v) { for (var i = 0; i < 4; i++) mpf[at + i] = (byte)(v >> (bigEndian ? 8 * (3 - i) : 8 * i)); }
+        (bigEndian ? "MM\0*"u8 : "II*\0"u8).CopyTo(mpf.AsSpan(4));
+        U32(8, 8);
+        U16(12, 3);
+        // MPFVersion "0100", NumberOfImages 2, MPEntry: 32 bytes at 50.
+        U16(14, 0xB000); U16(16, 7); U32(18, 4); "0100"u8.CopyTo(mpf.AsSpan(22));
+        U16(26, 0xB001); U16(28, 4); U32(30, 1); U32(34, 2);
+        U16(38, 0xB002); U16(40, 7); U32(42, 32); U32(46, 50);
+        // The segment goes in among the main picture's segments, after mpfAt of them.
+        var segments = Segments(main);
+        var at = mpfAt == 0 ? 2 : segments[mpfAt - 1].Offset + segments[mpfAt - 1].Length;
+        var length = mpf.Length + 2;
+        byte[] withIndex = [.. main[..at], 0xFF, 0xE2, (byte)(length >> 8), (byte)length, .. mpf, .. main[at..]];
+        var header = at + 4 + 4;
+        var entries = header + 50;
+        void Put(int where, uint v) { for (var i = 0; i < 4; i++) withIndex[where + i] = (byte)(v >> (bigEndian ? 8 * (3 - i) : 8 * i)); }
+        Put(entries, 0x030000);
+        Put(entries + 4, (uint)withIndex.Length);
+        Put(entries + 8, 0);
+        Put(entries + 16 + 4, (uint)second.Length);
+        Put(entries + 16 + 8, (uint)(withIndex.Length - header));
+        return [.. withIndex, .. second];
+    }
+
+    /// <summary>The main picture's size and the second's start, from a file's MP Entries.</summary>
+    private static (uint Size, int Second) Index(byte[] b)
+    {
+        var s = Segments(b).First(x => x.Marker == 0xE2 && b.AsSpan(x.Offset + 4).StartsWith("MPF\0"u8));
+        var header = s.Offset + 8;
+        var big = b[header] == (byte)'M';
+        uint U32(int at) => big ? (uint)((b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3]) : (uint)(b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24));
+        var entries = header + 50;
+        return (U32(entries + 4), header + (int)U32(entries + 16 + 8));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnUltraHdrPhoto_IsCaptioned_WithItsIndexStillPointingAtBothPictures(bool bigEndian)
+    {
+        // #90: the change grows the file, and the index's record of the main picture's size grows with it.
+        var gainMap = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("gainmap.jpg")));
+        var path = _lib.AddJpeg("hdr.jpg");
+        File.WriteAllBytes(path, MultiPicture(WithoutRoom(File.ReadAllBytes(path)), gainMap, bigEndian));
+        var before = File.ReadAllBytes(path);
+        Assert.Equal((uint)(before.Length - gainMap.Length), Index(before).Size);
+
+        Assert.Equal(1, (await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog on a beach.")).Succeeded);
+        var after = File.ReadAllBytes(path);
+        Assert.True(after.Length > before.Length);
+        var (size, second) = Index(after);
+        Assert.Equal((uint)(after.Length - gainMap.Length), size);
+        Assert.Equal([0xFF, 0xD9], after[(int)(size - 2)..(int)size]);
+        Assert.Equal(gainMap, after[second..]);
+        Assert.Equal("A dog on a beach.", (await XmpFields.ReadAsync(path)).Caption);
+        // Everything but the XMP and the index's size field is as it was.
+        var diff = WithoutXmp(before).Zip(WithoutXmp(after)).Count(p => p.First != p.Second);
+        Assert.InRange(diff, 1, 4);
+    }
+
+    [Fact]
+    public void AnAppleHdrPhoto_WhoseMainSizeRunsLong_IsCaptionedToo()
+    {
+        // Apple's HDR photos record the main picture 70 bytes too long, into the gain map (libultrahdr's
+        // apple_gainmap_new.jpg: 44891 for a picture ending at 44821). The gain map's start is exact, so that's what
+        // counts; the size is kept in step.
+        var gainMap = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("gainmap.jpg")));
+        var jpeg = MultiPicture(WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg"))), gainMap, bigEndian: true);
+        var sizeAt = Segments(jpeg).First(x => x.Marker == 0xE2).Offset + 8 + 50 + 4;
+        jpeg[sizeAt + 3] += 70;
+        var before = Index(jpeg);
+
+        var changed = JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = "A dog on a beach.", AltText = "A dog." });
+        var after = Index(changed);
+        Assert.Equal(before.Size + (uint)(changed.Length - jpeg.Length), after.Size);
+        Assert.Equal(gainMap, changed[after.Second..]);
+    }
+
+    [Fact]
+    public void AnIndexBeforeTheXmp_HasTheSecondPicturesStartMovedToo()
+    {
+        // When the XMP comes after the index, the index stays put and the second picture moves away from it.
+        var gainMap = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("gainmap.jpg")));
+        var xmp = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\"/></rdf:RDF></x:xmpmeta>";
+        var main = WithSegment(WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg"))), 0xE1, [.. XmpSignature, .. System.Text.Encoding.UTF8.GetBytes(xmp)]);
+        var jpeg = MultiPicture(main, gainMap, bigEndian: false, mpfAt: 0);
+        Assert.True(Segments(jpeg).FindIndex(x => x.Marker == 0xE2) < Segments(jpeg).FindIndex(x => IsXmp(jpeg, x)));
+        var before = Index(jpeg);
+
+        var changed = JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = "A dog on a beach.", AltText = "A dog." });
+        var delta = changed.Length - jpeg.Length;
+        Assert.True(delta > 0);
+        var after = Index(changed);
+        Assert.Equal(before.Size + (uint)delta, after.Size);
+        Assert.Equal(before.Second + delta, after.Second);
+        Assert.Equal(gainMap, changed[after.Second..]);
+    }
+
+    [Fact]
+    public async Task AnIndexThatDoesntPointAtTheSecondPicture_IsLeftAlone()
+    {
+        var gainMap = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("gainmap.jpg")));
+        var path = _lib.AddJpeg("hdr.jpg");
+        var jpeg = MultiPicture(WithoutRoom(File.ReadAllBytes(path)), gainMap, bigEndian: false);
+        // The second picture's start, one byte out.
+        var entries = Segments(jpeg).First(x => x.Marker == 0xE2).Offset + 8 + 50;
+        jpeg[entries + 16 + 8]++;
+        File.WriteAllBytes(path, jpeg);
+        var refused = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
+        Assert.Equal(0, refused.Succeeded);
+        Assert.Contains("second picture", refused.FailureSummary);
+        Assert.Equal(jpeg, File.ReadAllBytes(path));
     }
 
     [Fact]

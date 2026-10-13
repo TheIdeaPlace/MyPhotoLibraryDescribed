@@ -297,6 +297,6 @@ public static class XmpFields
 public sealed class PhotoOnlyInCopyException(string path, string copy) : IOException(
     $"Windows couldn't finish saving it. The photo is safe in the same folder as {Path.GetFileName(copy)}: in File Explorer, rename that to {Path.GetFileName(path)} to get it back.");
 
-/// <summary>A photo holding a second picture (an Ultra HDR gain map, an MPO's other view) whose index would no longer
-/// match if the change were made.</summary>
-public sealed class SecondPictureException() : Exception("It holds a second picture, such as an HDR map, and there's no room to make the change without breaking it.");
+/// <summary>A photo holding a second picture (an Ultra HDR gain map, an MPO's other view) whose index can't be followed,
+/// so it couldn't be kept right if the change were made (#90).</summary>
+public sealed class SecondPictureException() : Exception("It holds a second picture, such as an HDR map, whose index couldn't be followed, so the change would break it.");
