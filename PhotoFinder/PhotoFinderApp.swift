@@ -139,7 +139,7 @@ struct PhotoCommands: Commands {
                 set: { _ in model.viewMode = .gallery }
             ))
             .keyboardShortcut("4")
-            Button("Columns…") { model.columnsSheetShown = true }
+            Button("Labels…") { model.labelsSheetShown = true }
             // The Description panel (#50); Option-Command-I, as Finder's Show Inspector.
             Toggle("Show Description", isOn: Binding(
                 get: { model.showDescriptionPanel },
