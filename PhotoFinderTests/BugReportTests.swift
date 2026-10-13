@@ -195,6 +195,50 @@ final class BugReportTests: XCTestCase {
         XCTAssertNotNil(CrashCheck.begin(folder: folder, isRunning: { _ in false }, pid: 333))
     }
 
+    /// #35: a flag left by a Mac restarted with the app open isn't a crash.
+    func testAFlagFromBeforeTheMacRestartedIsNotACrash() throws {
+        let folder = try temporaryFolder()
+        let first = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertNil(CrashCheck.begin(folder: folder, now: first, bootTime: first.addingTimeInterval(-60)))
+        // The Mac restarted half an hour later; the app opens again after it.
+        var asked: Date?
+        XCTAssertNil(CrashCheck.begin(folder: folder, now: first.addingTimeInterval(3600),
+                                      isRunning: { _ in false }, pid: 2,
+                                      bootTime: first.addingTimeInterval(1800),
+                                      crashReport: { asked = $0; return nil }))
+        XCTAssertEqual(try XCTUnwrap(asked).timeIntervalSince1970, first.timeIntervalSince1970, accuracy: 1)
+    }
+
+    func testACrashReportBeforeTheMacRestartedIsStillOffered() throws {
+        let folder = try temporaryFolder()
+        let first = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertNil(CrashCheck.begin(folder: folder, now: first, bootTime: first.addingTimeInterval(-60)))
+        let previous = try XCTUnwrap(CrashCheck.begin(folder: folder, now: first.addingTimeInterval(3600),
+                                                      isRunning: { _ in false }, pid: 2,
+                                                      bootTime: first.addingTimeInterval(1800),
+                                                      crashReport: { _ in URL(fileURLWithPath: "/tmp/x.ips") }))
+        XCTAssertEqual(previous.timeIntervalSince1970, first.timeIntervalSince1970, accuracy: 1)
+    }
+
+    func testAFlagFromSinceTheMacStartedIsACrash() throws {
+        let folder = try temporaryFolder()
+        let first = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertNil(CrashCheck.begin(folder: folder, now: first, bootTime: first.addingTimeInterval(-60)))
+        // Same boot, no crash report (a force quit): offered, as before.
+        XCTAssertNotNil(CrashCheck.begin(folder: folder, now: first.addingTimeInterval(3600),
+                                         isRunning: { _ in false }, pid: 2,
+                                         bootTime: first.addingTimeInterval(-60), crashReport: { _ in nil }))
+        // A boot time that can't be read changes nothing either.
+        XCTAssertNotNil(CrashCheck.begin(folder: folder, now: first.addingTimeInterval(7200),
+                                         isRunning: { _ in false }, pid: 3, bootTime: nil, crashReport: { _ in nil }))
+    }
+
+    func testTheBootTimeIsReadAndInThePast() throws {
+        let boot = try XCTUnwrap(CrashCheck.systemBootTime())
+        XCTAssertLessThan(boot, Date())
+        XCTAssertGreaterThan(boot, Date(timeIntervalSince1970: 1_600_000_000))
+    }
+
     /// #137's review: only the useful part of a crash report, and nothing that identifies the Mac.
     func testACrashReportIsSummarisedWithoutIdentifiers() {
         let header = #"{"app_name":"My Photo Library Described","app_version":"0.2.0","build_version":"1","os_version":"macOS 27.2 (27C5)","incident_id":"ABC-123"}"#
