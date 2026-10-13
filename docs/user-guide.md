@@ -21,6 +21,7 @@ The two apps work the same wherever the platform allows. Where they differ, this
 - [Settings](#settings)
 - [Help menu](#help-menu)
 - [Keyboard shortcut reference](#keyboard-shortcut-reference)
+- [Removing the app](#removing-the-app)
 - [Privacy](#privacy)
 
 ---
@@ -124,6 +125,16 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 | Read the status bar / go to it | Control-F9 / Control-Shift-F9 | Ctrl+F9 / Ctrl+Shift+F9 |
 | Go to All Photos | Shift-Command-A | Ctrl+Shift+A |
 | Refresh | Shift-Command-R | F5 |
+
+## Removing the app
+
+- **Windows:** open Settings > Apps > Installed apps, find My Photo Library Described, choose More options, then Uninstall. Or find it in the Start menu, open its context menu (Shift+F10 or the Applications key) and choose Uninstall. It isn't in Control Panel's Programs and Features (appwiz.cpl): apps installed with App Installer, as packages, are listed only in Settings. Uninstalling removes the app and its AI helper together.
+- **Mac:** quit it and drag My Photo Library Described from Applications to the Trash.
+
+Your photos are never touched by removing the app, and descriptions saved into photos stay in them. The app's own files are left, so reinstalling picks up where you left off; to remove them too:
+
+- **Windows:** delete the folder `%LOCALAPPDATA%\PhotoFinder` (type it into File Explorer's address bar). It holds the descriptions, settings, place names already looked up and the log. If it isn't there, Windows kept it inside the app's package, and uninstalling removed it.
+- **Mac:** delete `~/Library/Application Support/PhotoFinder` (descriptions and the log) and `~/Library/Preferences/net.theideaplace.PhotoFinder.plist` (settings and the folders you added). In Finder, Go > Go to Folder reaches them.
 
 ## Privacy
 
