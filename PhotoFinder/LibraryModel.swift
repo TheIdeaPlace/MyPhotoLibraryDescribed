@@ -1795,6 +1795,7 @@ final class LibraryModel {
             announce("Photos can't be described in the background. \(reason)")
             return
         }
+        // Said once; the run's finish is said too, since the person started it.
         announce("Photos in the library will be described in the background")
         describeLibraryBacklog(announce: true)
     }
@@ -1807,18 +1808,26 @@ final class LibraryModel {
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         let fetch = PHAsset.fetchAssets(with: .image, options: options)
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        guard #available(macOS 27, *) else { return }
+        let describer = makeBackgroundDescriber()
+        // Stop Background Describing during the batches drops the rest, rather than starting again.
+        let generation = describer.generation
         Task {
             // In batches, so a big library doesn't hold up the window.
             var index = 0
-            while index < fetch.count, describeInBackground {
+            while index < fetch.count, describeInBackground, describer.generation == generation {
                 let end = min(index + 500, fetch.count)
-                let batch = fetch.objects(at: IndexSet(integersIn: index..<end))
-                describeLater(batch, announce: announce && index == 0 ? "Describing photos in the background" : nil)
+                describer.enqueue(fetch.objects(at: IndexSet(integersIn: index..<end)), sayFinish: announce,
+                                  since: generation)
                 index = end
                 await Task.yield()
             }
-            if describeInBackground, !folderPaths.isEmpty { describeFilesLater(folderPaths, first: false, announce: nil) }
+            if !folderPaths.isEmpty {
+                await describer.enqueue(filePaths: folderPaths, since: generation)
+            }
         }
+#endif
     }
 
     /// Why background describing can't work on this Mac, or nil when it can.
@@ -1873,6 +1882,7 @@ final class LibraryModel {
             if text != nil { self?.backgroundProblem = nil }
         }
         describer.stopped = { [weak self] message in self?.backgroundProblem = message }
+        describer.isOn = { [weak self] in self?.describeInBackground ?? false }
         // A photo whose folder was taken out of the library meanwhile isn't described.
         describer.isForegroundBusy = { [weak self] in
             guard let self else { return false }

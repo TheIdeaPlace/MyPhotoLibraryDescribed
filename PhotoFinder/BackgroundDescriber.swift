@@ -26,7 +26,11 @@ final class BackgroundDescriber {
     private let progress: @MainActor (String?) -> Void
     private var queue = BackgroundQueue()
     /// Changes when a run stops, so a run still finishing its last photo knows it's been superseded.
-    private var generation = 0
+    private(set) var generation = 0
+    /// Photos that couldn't be described this session, so a new run doesn't try them again; the next launch does.
+    private var failedIDs = Set<String>()
+    /// Whether this run was started by something the person did, so its finish is said (as on Windows).
+    private var announceFinish = false
     private var running = false
     /// Whether a file queued earlier should still be described: false once its folder leaves the library.
     var isWanted: @MainActor (String) -> Bool = { _ in true }
@@ -41,6 +45,8 @@ final class BackgroundDescriber {
         }
         return nil
     }
+    /// Whether Describe Photos in the Background is on.
+    var isOn: @MainActor () -> Bool = { true }
     /// The run stopped after too many failures in a row; says why, for the status bar.
     var stopped: @MainActor (String) -> Void = { _ in }
 
@@ -50,20 +56,25 @@ final class BackgroundDescriber {
     }
 
     /// Queues the photos (not videos) that haven't been described yet. `first` puts them ahead of the backlog.
-    /// `announce`, when given, is said as they're queued.
-    func enqueue(_ assets: [PHAsset], first: Bool = false, announce text: String? = nil) {
+    /// `announce`, when given, is said as they're queued; `sayFinish` says when the run is done. `since` is the
+    /// generation the work began in: stopped since then, they're dropped.
+    func enqueue(_ assets: [PHAsset], first: Bool = false, announce text: String? = nil, sayFinish: Bool = false,
+                 since: Int? = nil) {
         guard ImageConversation.unavailableReason == nil else { return }
         let ids = assets
             .filter { $0.mediaType == .image && cache.description(for: $0) == nil }
             .map(\.localIdentifier)
-        add(ids, first: first, announce: text)
+        add(ids, first: first, announce: text, sayFinish: sayFinish, generation: since ?? generation)
     }
 
     /// Queues photos in added folders (#47), by path, leaving out those already described. Each is looked up again
     /// when its turn comes, so a file deleted or described meanwhile is skipped and an edited one is described under
     /// its current key.
-    func enqueue(filePaths paths: [String], first: Bool = false, announce text: String? = nil) async {
+    func enqueue(filePaths paths: [String], first: Bool = false, announce text: String? = nil,
+                 since: Int? = nil) async {
         guard ImageConversation.unavailableReason == nil else { return }
+        // Stopped, or turned off, while the files were being looked at: they're dropped.
+        let generation = since ?? generation
         let cache = cache
         let todo = await Task.detached(priority: .utility) {
             paths.filter { path in
@@ -72,13 +83,19 @@ final class BackgroundDescriber {
                 return cache.description(forKey: file.descriptionKey) == nil
             }
         }.value
-        add(todo.map(FolderID.file), first: first, announce: text)
+        add(todo.map(FolderID.file), first: first, announce: text, sayFinish: false, generation: generation)
     }
 
-    private func add(_ ids: [String], first: Bool, announce text: String?) {
-        let added = queue.add(ids, first: first)
+    /// Queues the photos unless the describer was stopped since `generation` was read, or the setting is off.
+    private func add(_ ids: [String], first: Bool, announce text: String?, sayFinish: Bool, generation queuedIn: Int) {
+        guard queuedIn == generation, isOn() else { return }
+        let added = queue.add(ids.filter { !failedIDs.contains($0) }, first: first)
         guard added > 0 else { return }
-        if let text { announce(text.replacingOccurrences(of: "{count}", with: BackgroundQueue.plural(added))) }
+        if sayFinish { announceFinish = true }
+        if let text {
+            announce(text.replacingOccurrences(of: "{count}", with: BackgroundQueue.plural(added)))
+            announceFinish = true
+        }
         progress(queue.progress)
         guard !running else { return }
         running = true
@@ -92,11 +109,14 @@ final class BackgroundDescriber {
         let left = queue.stop()
         generation += 1
         running = false
+        announceFinish = false
         progress(nil)
         return left
     }
 
     private func run(_ run: Int) async {
+        // Apple Intelligence busy several times running: wait longer each time, up to five minutes.
+        var busyWaits = 0
         while run == generation, let id = queue.next() {
             progress(queue.progress)
             // The photo you're on first: wait while it's being described, up to a minute at a time.
@@ -117,13 +137,21 @@ final class BackgroundDescriber {
                 failure = await describeAsset(id, run: run)
             }
             guard run == generation else { return }
-            guard let failure else { continue }
+            guard let failure else {
+                busyWaits = 0
+                continue
+            }
             if Self.isBusy(failure) {
                 // Apple Intelligence limits apps that aren't in front: wait, then try the same photo again.
                 queue.putBack(id)
-                try? await Task.sleep(for: .seconds(30))
+                progress("Background describing waiting for Apple Intelligence")
+                let waits = [30, 60, 120, 300]
+                try? await Task.sleep(for: .seconds(waits[min(busyWaits, waits.count - 1)]))
+                busyWaits += 1
                 continue
             }
+            busyWaits = 0
+            failedIDs.insert(id)
             if Self.isAboutThisPhoto(failure) {
                 queue.finished(described: false)
                 continue
@@ -133,15 +161,18 @@ final class BackgroundDescriber {
                 generation += 1
                 running = false
                 progress(nil)
-                let message = BackgroundQueue.stoppedMessage(
-                    left: left, reason: "Apple Intelligence couldn't describe them: \(failure.localizedDescription)")
+                let reason = failure is BackgroundError ? failure.localizedDescription
+                    : "Apple Intelligence couldn't describe them: \(failure.localizedDescription)"
+                let message = BackgroundQueue.stoppedMessage(left: left, reason: reason)
+                announceFinish = false
                 stopped(message)
                 announce(message)
                 return
             }
         }
         guard run == generation else { return }
-        if let summary = queue.summary { announce(summary) }
+        if announceFinish, let summary = queue.summary { announce(summary) }
+        announceFinish = false
         queue.reset()
         running = false
         progress(nil)
@@ -181,7 +212,7 @@ final class BackgroundDescriber {
         }
         // Photos only in iCloud aren't downloaded for this.
         guard let data = await PhotoData.request(asset, allowNetwork: false)?.data else {
-            queue.skippedNotOnThisMac()
+            if run == generation { queue.skippedNotOnThisMac() }
             return nil
         }
         // Decoded off the main actor: a 2048-pixel decode for every photo would stall the window.
@@ -214,6 +245,7 @@ final class BackgroundDescriber {
             return nil
         }
         let file = await Task.detached(priority: .utility) { FolderScanner.file(at: path) }.value
+        guard run == generation else { return nil }
         guard let file, !file.isVideo, cache.description(forKey: file.descriptionKey) == nil,
               ImageConversation.unavailableReason == nil else {
             queue.finished(described: false)
@@ -223,7 +255,7 @@ final class BackgroundDescriber {
         // photos are.
         let url = file.url
         guard await Task.detached(priority: .utility, operation: { FileAvailability.isOnThisMac(url) }).value else {
-            queue.skippedNotOnThisMac()
+            if run == generation { queue.skippedNotOnThisMac() }
             return nil
         }
         let image = await Task.detached(priority: .utility) { () -> CGImage? in

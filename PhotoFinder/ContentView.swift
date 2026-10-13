@@ -447,7 +447,7 @@ private struct StatusBar: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            if model.isLoading || model.activity != nil || model.nameProgress != nil || model.backgroundStatus != nil {
+            if model.isLoading || model.activity != nil || model.nameProgress != nil || model.backgroundProgress != nil {
                 ProgressView().controlSize(.small)
                     .accessibilityHidden(true)
             }
