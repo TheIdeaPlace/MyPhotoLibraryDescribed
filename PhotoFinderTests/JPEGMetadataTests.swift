@@ -1,3 +1,4 @@
+import CoreVideo
 import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
@@ -622,7 +623,8 @@ final class JPEGMetadataTests: XCTestCase {
         try assertRefused(.init(caption: short), cut)
     }
 
-    func testAMultiPictureJPEGIsStillRefused() throws {
+    func testAMultiPictureJPEGWhoseIndexCantBeFollowedIsRefused() throws {
+        // An MPF segment with an empty directory: there's no MP Entry to patch, so the file mustn't change size.
         let body: [UInt8] = Array("MPF".utf8) + [0] + [0x4D, 0x4D, 0, 42, 0, 0, 0, 8, 0, 0]
         let url = try makeJPEG(extra: [segment(0xE2, body)])
         let before = try Data(contentsOf: url)
@@ -630,5 +632,247 @@ final class JPEGMetadataTests: XCTestCase {
             XCTAssertEqual(error as? FileMetadataWriteError, .multiPicture)
         }
         XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+
+    // MARK: - Multi-picture files (#90)
+
+    /// A multi-picture file as Ultra HDR and MPO cameras write it: `main` with an MPF index (CIPA DC-007) after `count`
+    /// of its segments, then `second`. Its two MP Entries give the main picture's size and where the second starts,
+    /// counted from the index's TIFF header. The same layout as the Windows app's tests (#150): "MPF\0" at 0 of the
+    /// segment's body, the header at 4, the IFD at 8 from the header, the MP Entries at 50 from it.
+    private func multiPicture(_ main: [UInt8], second: [UInt8], big: Bool, after count: Int) throws -> [UInt8] {
+        var tiff: [UInt8] = (big ? [0x4D, 0x4D, 0, 0x2A] : [0x49, 0x49, 0x2A, 0]) + u32(8, big) + u16(3, big)
+        tiff += entry(0xB000, 7, 4, Array("0100".utf8), big)  // MPFVersion
+        tiff += entry(0xB001, 4, 1, u32(2, big), big)  // NumberOfImages
+        tiff += entry(0xB002, 7, 32, u32(50, big), big)  // MPEntry: 32 bytes at 50
+        tiff += u32(0, big) + [UInt8](repeating: 0, count: 32)
+        let segments = try JPEGMetadata.segments(of: Data(main)).segments
+        let at = 2 + segments.prefix(count).reduce(0) { $0 + $1.raw.count }
+        var bytes = Array(main[..<at]) + segment(0xE2, MultiPictureIndex.signature + tiff) + Array(main[at...])
+        let header = at + 8, entries = header + 50
+        func put(_ offset: Int, _ value: Int) { bytes.replaceSubrange(offset..<(offset + 4), with: u32(value, big)) }
+        put(entries, 0x030000)  // the main picture: baseline, representative
+        put(entries + 4, bytes.count)
+        put(entries + 8, 0)
+        put(entries + 16 + 4, second.count)
+        put(entries + 16 + 8, bytes.count - header)
+        return bytes + second
+    }
+
+    /// The main picture's size and where the second starts in the file, from a file's MP Entries, read here
+    /// independently of MultiPictureIndex.
+    private func index(_ bytes: [UInt8]) throws -> (size: Int, second: Int) {
+        let header = try XCTUnwrap(offset(of: 0xE2, in: bytes)) + 8
+        let big = bytes[header] == 0x4D
+        func u32(_ at: Int) -> Int {
+            let b = bytes[at..<(at + 4)].map(Int.init)
+            return big ? b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3] : b[3] << 24 | b[2] << 16 | b[1] << 8 | b[0]
+        }
+        return (u32(header + 50 + 4), header + u32(header + 50 + 16 + 8))
+    }
+
+    /// A gain map: a small JPEG of its own.
+    private func gainMap() throws -> [UInt8] { try encoded(width: 8, height: 4) }
+
+    func testAnUltraHDRPhotoIsCaptionedWithItsIndexStillPointingAtBothPictures() throws {
+        // Apple's layout: JFIF, EXIF, then the index, and no XMP, so the new XMP goes in before the index, which moves
+        // with it; only the main picture's size changes.
+        for big in [false, true] {
+            let second = try gainMap()
+            let url = try makeJPEG("hdr-\(big).jpg", xmp: .none)
+            let before = try multiPicture([UInt8](Data(contentsOf: url)), second: second, big: big, after: 2)
+            try Data(before).write(to: url)
+            XCTAssertEqual(try index(before).size, before.count - second.count)
+
+            let read = try FileMetadataWriter.write(.init(caption: short, accessibilityDescription: short), to: url)
+            XCTAssertEqual(read.caption, short)
+            XCTAssertEqual(read.altText, short)
+            let after = [UInt8](try Data(contentsOf: url))
+            XCTAssertGreaterThan(after.count, before.count)
+            let (size, start) = try index(after)
+            XCTAssertEqual(size, after.count - second.count, "big-endian: \(big)")
+            XCTAssertEqual(Array(after[(size - 2)..<size]), [0xFF, 0xD9])
+            XCTAssertEqual(Array(after[start...]), second, "the gain map is byte for byte where the index says")
+            // The order kept: EXIF, the new XMP, then the index.
+            let markers = try segments(url).map { JPEGMetadata.isXMP($0) ? "XMP" : JPEGMetadata.isEXIF($0) ? "EXIF"
+                : MultiPictureIndex.isIndex($0) ? "MPF" : String(format: "%02X", $0.marker) }
+            XCTAssertEqual(Array(markers.prefix(4)), ["E0", "EXIF", "XMP", "MPF"])
+            // Only the size field in the index changed.
+            let old = try XCTUnwrap(JPEGMetadata.segments(of: Data(before)).segments.first(where: MultiPictureIndex.isIndex))
+            let new = try XCTUnwrap(segments(url).first(where: MultiPictureIndex.isIndex))
+            XCTAssertEqual(old.raw.count, new.raw.count)
+            XCTAssertLessThanOrEqual(zip(old.raw, new.raw).filter { $0 != $1 }.count, 4)
+        }
+    }
+
+    func testAnIndexBeforeTheXMPHasTheSecondPicturesStartMovedToo() throws {
+        // The index right after the start of the file, ahead of an XMP that grows: the index stays put, so the second
+        // picture moves away from it.
+        for big in [false, true] {
+            let second = try gainMap()
+            let main = [UInt8](try Data(contentsOf: makeJPEG("main-\(big).jpg")))
+            let jpeg = try multiPicture(main, second: second, big: big, after: 0)
+            let before = try index(jpeg)
+
+            let changed = [UInt8](try JPEGMetadata.rewrite(Data(jpeg), setting: [FileMetadataWriter.captionPath: short]))
+            let delta = changed.count - jpeg.count
+            XCTAssertGreaterThan(delta, 0)
+            let after = try index(changed)
+            XCTAssertEqual(after.size, before.size + delta)
+            XCTAssertEqual(after.second, before.second + delta)
+            XCTAssertEqual(Array(changed[after.second...]), second)
+        }
+    }
+
+    func testAnXMPThatShrinksAfterTheIndexMovesTheSecondPictureBack() throws {
+        // An XMP with a lot of padding, after the index, is written smaller: everything moves the other way.
+        let padded = exifToolXMP().replacingOccurrences(of: "<?xpacket end", with: String(repeating: " ", count: 8000) + "<?xpacket end")
+        let main = [UInt8](try Data(contentsOf: makeJPEG(xmp: .some(padded))))
+        let second = try gainMap()
+        let jpeg = try multiPicture(main, second: second, big: true, after: 0)
+        let before = try index(jpeg)
+        let changed = [UInt8](try JPEGMetadata.rewrite(Data(jpeg), setting: [FileMetadataWriter.captionPath: short]))
+        let delta = changed.count - jpeg.count
+        XCTAssertLessThan(delta, 0)
+        let after = try index(changed)
+        XCTAssertEqual(after.size, before.size + delta)
+        XCTAssertEqual(Array(changed[after.second...]), second)
+    }
+
+    func testAMainSizeRecordedLongOrShortIsKeptInStep() throws {
+        // libultrahdr's Apple sample records the main picture 70 bytes long, into the gain map; Pixel's photos record
+        // it about 300 bytes short. Where the gain map starts is exact, which is what readers use, so these are captioned
+        // and the size is kept in step.
+        for (big, off) in [(true, 70), (false, -256)] {
+            let second = try gainMap()
+            let main = [UInt8](try Data(contentsOf: makeJPEG("off-\(off).jpg", xmp: .none)))
+            var jpeg = try multiPicture(main, second: second, big: big, after: 2)
+            let sizeAt = try XCTUnwrap(offset(of: 0xE2, in: jpeg)) + 8 + 50 + 4
+            jpeg.replaceSubrange(sizeAt..<(sizeAt + 4), with: u32(try index(jpeg).size + off, big))
+            let before = try index(jpeg)
+
+            let changed = [UInt8](try JPEGMetadata.rewrite(Data(jpeg), setting: [FileMetadataWriter.captionPath: short]))
+            let after = try index(changed)
+            XCTAssertEqual(after.size, before.size + changed.count - jpeg.count)
+            XCTAssertEqual(Array(changed[after.second...]), second)
+        }
+    }
+
+    func testAnIndexThatCantBeFollowedIsRefusedWhenTheFileWouldGrow() throws {
+        // Offsets within the MPF segment's body ("MPF\0" at 0, the header at 4), little-endian, as multiPicture writes
+        // it; the same cases as the Windows app's tests (#150).
+        let cases: [(String, Int, [UInt8])] = [
+            ("type", 40, [4, 0]),
+            ("count of none", 42, [0, 0, 0, 0]),
+            ("count not a whole entry", 42, [33, 0, 0, 0]),
+            ("count too many", 42, [0, 8, 0, 0]),
+            ("entries past the segment", 46, [0, 1, 0, 0]),
+            ("IFD past the segment", 8, [0, 1, 0, 0]),
+            ("no MP Entry tag", 38, [0x05, 0xB0]),
+            ("main picture not at the start", 62, [1, 0, 0, 0]),
+            ("main size past the file", 58, [0xFF, 0xFF, 0xFF, 0x7F]),
+            ("second picture's start missing", 78, [0, 0, 0, 0]),
+            ("second picture's start one byte out", 78, []),
+            ("not a byte order", 4, [0x58, 0x58]),
+        ]
+        let second = try gainMap()
+        let main = [UInt8](try Data(contentsOf: makeJPEG(xmp: .none)))
+        let good = try multiPicture(main, second: second, big: false, after: 2)
+        XCTAssertNoThrow(try JPEGMetadata.rewrite(Data(good), setting: [FileMetadataWriter.captionPath: short]))
+        let body = try XCTUnwrap(offset(of: 0xE2, in: good)) + 4
+        for (what, at, value) in cases {
+            var jpeg = good
+            if value.isEmpty { jpeg[body + at] &+= 1 } else { jpeg.replaceSubrange((body + at)..<(body + at + value.count), with: value) }
+            XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(jpeg), setting: [FileMetadataWriter.captionPath: short]), what) { error in
+                XCTAssertEqual(error as? FileMetadataWriteError, .multiPicture, what)
+            }
+        }
+    }
+
+    func testAFileWithTwoIndexesIsntGrown() throws {
+        let main = [UInt8](try Data(contentsOf: makeJPEG(xmp: .none)))
+        let jpeg = try multiPicture(main, second: try gainMap(), big: false, after: 2)
+        let segment = try XCTUnwrap(JPEGMetadata.segments(of: Data(jpeg)).segments.first(where: MultiPictureIndex.isIndex))
+        let at = try XCTUnwrap(offset(of: 0xE2, in: jpeg))
+        let twice = Array(jpeg[..<at]) + segment.raw + Array(jpeg[at...])
+        XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(twice), setting: [FileMetadataWriter.captionPath: short])) { error in
+            XCTAssertEqual(error as? FileMetadataWriteError, .multiPicture)
+        }
+    }
+
+    func testAnIndexThatCantBeFollowedIsStillChangedWhenTheSizeStaysTheSame() throws {
+        // Written once, the XMP has the same size when the same caption is written again, so the index needn't change.
+        let url = try makeJPEG()
+        try FileMetadataWriter.write(.init(caption: short), to: url)
+        var bytes = [UInt8](try Data(contentsOf: url))
+        let body: [UInt8] = Array("MPF".utf8) + [0] + [0x4D, 0x4D, 0, 42, 0, 0, 0, 8, 0, 0]
+        bytes.insert(contentsOf: segment(0xE2, body), at: 2)
+        let changed = try JPEGMetadata.rewrite(Data(bytes), setting: [FileMetadataWriter.captionPath: short])
+        XCTAssertEqual(changed.count, bytes.count)
+    }
+
+    func testAnHDRPhotoImageIOWroteKeepsAGainMapImageIOStillFinds() throws {
+        // A JPEG with a gain map as the Mac writes one (its HDR photos' layout), captioned, then read back by ImageIO.
+        let url = temp.appendingPathComponent("apple-hdr.jpg")
+        let context = try XCTUnwrap(CGContext(data: nil, width: 64, height: 32, bitsPerComponent: 8, bytesPerRow: 0,
+                                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(red: 0.2, green: 0.5, blue: 0.8, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 64, height: 32))
+        let gain = (0..<(32 * 16)).map { UInt8($0 % 256) }
+        let description: [CFString: Any] = [kCGImagePropertyWidth: 32, kCGImagePropertyHeight: 16, kCGImagePropertyBytesPerRow: 32,
+                                            kCGImagePropertyPixelFormat: kCVPixelFormatType_OneComponent8]
+        let metadata = CGImageMetadataCreateMutable()
+        _ = CGImageMetadataRegisterNamespaceForPrefix(metadata, "http://ns.apple.com/HDRGainMap/1.0/" as CFString,
+                                                      "HDRGainMap" as CFString, nil)
+        _ = CGImageMetadataSetValueWithPath(metadata, nil, "HDRGainMap:HDRGainMapVersion" as CFString, 65536 as CFNumber)
+        let info: [CFString: Any] = [kCGImageAuxiliaryDataInfoData: Data(gain),
+                                     kCGImageAuxiliaryDataInfoDataDescription: description,
+                                     kCGImageAuxiliaryDataInfoMetadata: metadata]
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), nil)
+        CGImageDestinationAddAuxiliaryDataInfo(destination, kCGImageAuxiliaryDataTypeHDRGainMap, info as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        func gainMap() -> Data? {
+            CGImageSourceCreateWithURL(url as CFURL, nil)
+                .flatMap { CGImageSourceCopyAuxiliaryDataInfoAtIndex($0, 0, kCGImageAuxiliaryDataTypeHDRGainMap) as? [CFString: Any] }
+                .flatMap { $0[kCGImageAuxiliaryDataInfoData] as? Data }
+        }
+        let before = try Data(contentsOf: url)
+        guard JPEGLayout.hasMultiPicture(before), let map = gainMap() else {
+            throw XCTSkip("This macOS didn't write the gain map with a Multi-Picture index.")
+        }
+
+        let read = try FileMetadataWriter.write(.init(caption: short, accessibilityDescription: short), to: url)
+        XCTAssertEqual(read.caption, short)
+        XCTAssertGreaterThan(try Data(contentsOf: url).count, before.count)
+        XCTAssertEqual(gainMap(), map, "ImageIO still finds the same gain map through the patched index")
+        XCTAssertEqual(JPEGLayout.trailingData(try Data(contentsOf: url)), JPEGLayout.trailingData(before))
+
+        // The index's sizes and starts, before and after: the main picture grew by what the file did, and the gain map
+        // starts where it did relative to the picture's end.
+        func layout(_ bytes: Data) throws -> (index: MultiPictureIndex, end: Int) {
+            let list = try JPEGMetadata.segments(of: bytes).segments
+            let position = list.firstIndex(where: MultiPictureIndex.isIndex)!
+            let start = 2 + list[..<position].reduce(0) { $0 + $1.raw.count }
+            let header = start + list[position].bodyStart + MultiPictureIndex.signature.count
+            let index = try MultiPictureIndex.read([UInt8](bytes), header: header, segmentEnd: start + list[position].raw.count)
+            return (index, try XCTUnwrap(JPEGLayout.endOfPicture(bytes)))
+        }
+        let after = try Data(contentsOf: url)
+        let (old, oldEnd) = try layout(before), (new, newEnd) = try layout(after)
+        XCTAssertEqual(new.sizes[0] - old.sizes[0], after.count - before.count)
+        XCTAssertEqual(new.header + new.offsets[1] - newEnd, old.header + old.offsets[1] - oldEnd)
+    }
+
+    func testAnIndexThatDoesntPointAtTheSecondPictureIsLeftAlone() throws {
+        let url = try makeJPEG(xmp: .none)
+        var jpeg = try multiPicture([UInt8](Data(contentsOf: url)), second: try gainMap(), big: false, after: 2)
+        // The second picture's start, one byte out.
+        jpeg[try XCTUnwrap(offset(of: 0xE2, in: jpeg)) + 8 + 50 + 16 + 8] &+= 1
+        try Data(jpeg).write(to: url)
+        try assertRefused(.init(caption: short), url)
+        XCTAssertEqual(FileMetadataWriteError.multiPicture.errorDescription,
+                       "It holds a second picture, such as an HDR map, laid out in a way that can't be updated safely.")
     }
 }

@@ -16,8 +16,12 @@ import ImageIO
 /// following the Metadata Working Group's guidance take the XMP's caption ahead of the IPTC's, so the new caption is
 /// the one read; when the digest doesn't match, the IPTC wins, the caption doesn't read back, and the write is refused.
 ///
+/// A file with a Multi-Picture index (Ultra HDR, Apple's HDR photos, MPO) has the index patched to match (#90): see
+/// `MultiPictureIndex`.
+///
 /// Refused, leaving the file alone: anything that doesn't parse, XMP spread over several segments (Extended XMP) or in
-/// more than one segment, XMP that isn't valid UTF-8 or XML, and XMP too large for one segment.
+/// more than one segment, XMP that isn't valid UTF-8 or XML, XMP too large for one segment, and a change of size to a
+/// file with two Multi-Picture indexes or one that can't be followed.
 enum JPEGMetadata {
     typealias Failure = PNGMetadata.Failure
 
@@ -175,11 +179,34 @@ enum JPEGMetadata {
             output.insert(xmpSegment, at: output.firstIndex { !($0.marker == 0xE0 || isEXIF($0)) } ?? output.count)
         }
 
-        var result = Data([0xFF, 0xD8])
+        var result: [UInt8] = [0xFF, 0xD8]
         for segment in output { result.append(contentsOf: segment.raw) }
         result.append(contentsOf: picture)
-        try check(result, against: segments, picture)
-        return result
+        try keepMultiPictureIndex(in: &result, from: data, before: segments, after: output)
+        try check(Data(result), against: segments, picture)
+        return Data(result)
+    }
+
+    /// A file with a Multi-Picture index (Ultra HDR, Apple's HDR photos, MPO) whose size changed has the index patched
+    /// (#90): it records the first picture's size, and where the others start counted from the index itself. A file
+    /// with two indexes, or one that can't be followed, is refused unless it keeps its size.
+    private static func keepMultiPictureIndex(in result: inout [UInt8], from data: Data, before: [Segment],
+                                              after: [Segment]) throws {
+        let indexes = before.indices.filter { MultiPictureIndex.isIndex(before[$0]) }
+        guard let first = indexes.first, result.count != data.count else { return }
+        guard indexes.count == 1, let moved = after.firstIndex(where: MultiPictureIndex.isIndex) else {
+            throw FileMetadataWriteError.multiPicture
+        }
+        // Where the index's segment is in each file, and its TIFF header just after "MPF\0".
+        func start(of index: Int, in list: [Segment]) -> Int { 2 + list[..<index].reduce(0) { $0 + $1.raw.count } }
+        let old = start(of: first, in: before), new = start(of: moved, in: after)
+        let delta = result.count - data.count
+        // The change is either before the index, which moved with it, or after it, which stayed put.
+        guard new == old || new == old + delta else { throw FileMetadataWriteError.multiPicture }
+        let segment = before[first]
+        let header = old + segment.bodyStart + MultiPictureIndex.signature.count
+        let index = try MultiPictureIndex.read([UInt8](data), header: header, segmentEnd: old + segment.raw.count)
+        try index.patch(&result, delta: delta, moved: new != old)
     }
 
     /// The XMP segment's body: its header, then the packet in XMP's wrapper with room to grow, as much as fits.
@@ -194,14 +221,19 @@ enum JPEGMetadata {
         return xmpHeader + head + xmp + [UInt8(ascii: "\n")] + spaces + tail
     }
 
-    /// A last look before the file is written: the same segments in the same order but the XMP, the EXIF the same
-    /// size, everything else byte for byte, and the picture data and what follows it exactly as they were.
+    /// A last look before the file is written: the same segments in the same order but the XMP, the EXIF and the
+    /// Multi-Picture index the same size, everything else byte for byte, and the picture data and what follows it
+    /// exactly as they were.
     private static func check(_ result: Data, against before: [Segment], _ picture: [UInt8]) throws {
         let (after, newPicture) = try segments(of: result)
         func others(_ list: [Segment]) -> [Segment] { list.filter { !isXMP($0) } }
+        func inPlace(_ old: Segment, _ new: Segment) -> Bool {
+            old.raw.count == new.raw.count
+                && ((isEXIF(old) && isEXIF(new)) || (MultiPictureIndex.isIndex(old) && MultiPictureIndex.isIndex(new)))
+        }
         let a = others(before), b = others(after)
         guard newPicture == picture, a.count == b.count, after.filter(isXMP).count <= 1,
-              zip(a, b).allSatisfy({ old, new in old == new || (isEXIF(old) && isEXIF(new) && old.raw.count == new.raw.count) })
+              zip(a, b).allSatisfy({ old, new in old == new || inPlace(old, new) })
         else { throw Failure.malformed("The new copy didn't keep the rest of the file as it was.") }
     }
 }
