@@ -91,6 +91,13 @@ public class AppMenuItem : MenuItem
     }
 }
 
+/// <summary>A picture screen readers skip, because what it shows is said in words beside it: the Description panel's
+/// preview (#119), whose description is right below.</summary>
+public sealed class SilentImage : Image
+{
+    protected override AutomationPeer? OnCreateAutomationPeer() => null;
+}
+
 /// <summary>Shows an element only when its text isn't empty, so status bar sections with nothing to say are skipped.</summary>
 public sealed class TextVisibilityConverter : System.Windows.Data.IValueConverter
 {

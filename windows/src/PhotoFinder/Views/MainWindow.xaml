@@ -70,6 +70,8 @@
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.AllPhotos" />
                 <Separator />
+                <v:AppMenuItem Command="v:AppCommands.NextPhoto" />
+                <v:AppMenuItem Command="v:AppCommands.PreviousPhoto" />
                 <v:AppMenuItem Command="v:AppCommands.GoToDescription" />
             </v:AppMenuItem>
             <v:AppMenuItem Header="_Photo">

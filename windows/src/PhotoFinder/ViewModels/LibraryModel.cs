@@ -217,7 +217,12 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         var unchanged = CurrentSource is not null && scanned.Count == _items.Count
             && scanned.All(i => previous.TryGetValue(i.Path, out var old) && old.Size == i.Size && old.Modified == i.Modified
                 && old.IsOnlineOnly == i.IsOnlineOnly);
-        if (unchanged) return;
+        if (unchanged)
+        {
+            // A first scan that found what's already listed still finishes loading.
+            IsLoading = false;
+            return;
+        }
         _items = scanned;
         IsLoading = false;
         var before = CurrentSource;
@@ -1081,6 +1086,37 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         if (next < 0 || next >= Rows.Count) { Beep(); return; }
         SelectionRequested?.Invoke([Rows[next].Id], false);
         Announcer.Announce($"{Rows[next].Name}, {next + 1} of {Rows.Count}");
+    }
+
+    /// <summary>How much of the library is described (#119): its photos (not videos), and how many have a saved description
+    /// of the Description Type in use. Null while the library is still loading. In memory, so quick even for a large
+    /// library.</summary>
+    public (int Described, int Total)? DescriptionCoverage()
+    {
+        if (Descriptions is not { } store || IsLoading) return null;
+        var kind = _settings.DescriptionKind;
+        var photos = _items.Where(i => i.Kind == MediaKind.Image).ToList();
+        return (photos.Count(p => store.Get(p, kind) is not null), photos.Count);
+    }
+
+    /// <summary>Go > Next Photo and Previous Photo (#119): the next or previous photo in the list or gallery, past folders
+    /// and videos (either would take the Description panel's text box away, and focus with it), without moving focus. So
+    /// you can stay in the description box (reading with a braille display, say) and step from photo to photo: the box
+    /// shows each one's description, to read there (automatic describing speaks only from the list or gallery). Says
+    /// "name, n of N", or "No next photo" at the end, as on the Mac.</summary>
+    /// <param name="announce">False when focus is on the list, which says the new row itself.</param>
+    public void StepPhoto(int direction, bool announce = true)
+    {
+        if (Rows.Count == 0) { Beep(); return; }
+        var index = FocusedIndex < 0 ? (direction > 0 ? 0 : Rows.Count - 1) : FocusedIndex + direction;
+        while (index >= 0 && index < Rows.Count && Rows[index].Item is not { IsVideo: false }) index += direction;
+        if (index < 0 || index >= Rows.Count)
+        {
+            Announcer.Announce(direction > 0 ? "No next photo" : "No previous photo");
+            return;
+        }
+        SelectionRequested?.Invoke([Rows[index].Id], false);
+        if (announce) Announcer.Announce($"{Rows[index].Name}, {index + 1} of {Rows.Count}");
     }
 
     // MARK: Helpers
