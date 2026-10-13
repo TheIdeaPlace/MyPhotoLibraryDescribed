@@ -41,4 +41,6 @@ enum StatusSection: Int, CaseIterable, Hashable {
 struct PaneRequest: Equatable {
     var direction = 0
     var serial = 0
+    /// A pane to go straight to (Control-Shift-F9's status bar), instead of moving by `direction`.
+    var target: Pane?
 }

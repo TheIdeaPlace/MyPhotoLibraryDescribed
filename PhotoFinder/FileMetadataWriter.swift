@@ -106,6 +106,8 @@ enum FileMetadataWriter {
     /// a person would call an edit.
     @discardableResult
     static func write(_ changes: FileMetadataChanges, to url: URL) throws -> FileMetadata {
+        // Read-only (#84): nothing is written, whoever asks.
+        guard PhotoChanges.allowed else { throw PhotoChanges.ReadOnly() }
         let name = url.lastPathComponent
         guard canWrite(name: name), !MediaFiles.isRaw(name) else { throw FileMetadataWriteError.unsupportedFormat(formatName(of: name)) }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
