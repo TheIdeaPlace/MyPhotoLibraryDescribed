@@ -108,10 +108,12 @@ public partial class MainWindow : Window
             // Background describing picks up where it left off: the library's photos not described yet (#96).
             BackgroundDescriber?.Resume();
             // Once the library is showing and focus is on it: say so if this is the first launch after an update. Closing
-            // that puts focus back on the photo.
+            // that puts focus back on the photo. Otherwise, after a run that didn't quit cleanly (#33), offer once to
+            // report it; never over the update's message, and never for the update itself.
             _ = Dispatcher.BeginInvoke(() =>
             {
                 if (SayIfJustUpdated()) FocusContent();
+                else _ = Dispatcher.BeginInvoke(OfferCrashReport, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
             }, System.Windows.Threading.DispatcherPriority.Input);
         };
         model.FilesChanged += paths => { foreach (var p in paths) _thumbnails.Forget(p); };
@@ -1217,11 +1219,24 @@ public partial class MainWindow : Window
         if (answer == MessageBoxResult.OK) _model.Fire(_model.RemoveFolderAsync(root));
     }
 
+    /// <summary>Help > About (#33, as the app kit asks): what the app is for, its version, and links to the source, the
+    /// user guide and the privacy policy.</summary>
     private void ShowAbout()
     {
-        MessageBox.Show(this,
-            $"{AppInfo.Name} {Services.Updates.AppVersion}\n\nBrowse your Pictures library like folders in File Explorer, built to work well with screen readers.\n\nFolders in the library:\n{string.Join("\n", _model.Roots)}",
-            $"About {AppInfo.Name}", MessageBoxButton.OK, MessageBoxImage.Information);
+        new AboutWindow(OpenInBrowser) { Owner = this }.ShowDialog();
+        FocusContent();
+    }
+
+    /// <summary>At a start after a run that didn't quit cleanly (#33): asks once whether to report it. Report… opens the
+    /// form with the end of the log, for the person to read before sending.</summary>
+    private void OfferCrashReport()
+    {
+        if (App.UncleanLaunch is null) return;
+        App.UncleanLaunch = null;
+        if (!QuestionDialog.AskSafely(this, AppInfo.Name, $"{AppInfo.Name} quit unexpectedly last time. Report it?",
+                "The report opens in a form, where you can read and change it before it's sent. Reports are public.", "Report…", "Not Now"))
+            return;
+        ReportBugWith(null, null, App.CrashAttachments, "Quit unexpectedly");
     }
 
     private bool _updating;
@@ -1467,13 +1482,14 @@ public partial class MainWindow : Window
 
     private bool _reporting;
 
-    /// <summary>Help > Report a Bug…: a new GitHub issue in the browser, prefilled with the questions and the system
-    /// check, and the same text on the clipboard, as on the Mac. Until the app kit's relay is set up (#33). The report
-    /// leaves out folder paths, since an issue is public.</summary>
+    /// <summary>Help > Report a Bug… (#138), and Check System's button: the form, with the system check.</summary>
     private void ReportBug(Services.SystemCheck? check) => ReportBugWith(check, null);
 
+    /// <summary>Help > Report a Bug… (#138): the form, filled in with the system check and anything that came with it.</summary>
     /// <param name="aiCheck">Check AI Description's whole result, when the report starts there.</param>
-    private async void ReportBugWith(Services.SystemCheck? check, Services.AIDescriptionCheck? aiCheck)
+    /// <param name="attachments">The log after a crash.</param>
+    private async void ReportBugWith(Services.SystemCheck? check, Services.AIDescriptionCheck? aiCheck,
+        List<Services.BugReport.Attachment>? attachments = null, string title = "")
     {
         if (_reporting)
         {
@@ -1488,48 +1504,19 @@ public partial class MainWindow : Window
                 Services.Announcer.Announce("Preparing a bug report");
                 check = await RunSystemCheckAsync();
             }
-            var body = Services.BugReport.Body(check.ReportText +
-                (aiCheck is null ? "" : $"{Environment.NewLine}{Environment.NewLine}Check AI Description: {aiCheck.ReportText}"));
-            var copied = false;
-            try
-            {
-                Clipboard.SetText(body);
-                copied = true;
-            }
-            catch (System.Runtime.InteropServices.ExternalException)
-            {
-                // Another app holding the clipboard.
-            }
-            var uri = Services.BugReport.NewIssueUri(body, out var includesBody);
-            try
-            {
-                OpenUrl(uri.AbsoluteUri);
-                Services.Announcer.Announce(
-                    includesBody && copied ? "Opening a new bug report in your browser. The details are also on the clipboard."
-                    : includesBody ? "Opening a new bug report in your browser."
-                    : copied ? "Opening a new bug report in your browser. Paste the details from the clipboard into it."
-                    : "Opening a new bug report in your browser.");
-                if (!includesBody && !copied) ShowReport(body);
-            }
-            catch (Exception)
-            {
-                if (copied)
-                    ShowError($"The browser couldn't be opened. The bug report is on the clipboard: paste it into a new issue at {AppInfo.IssuesUrl}.");
-                else
-                    ShowReport(body);
-            }
+            var report = new Services.BugReport { Title = title, SystemText = check.ReportText.Replace("\r\n", "\n") };
+            if (aiCheck is not null)
+                report.Attachments.Add(new("the AI description check", "Check AI Description", aiCheck.ReportText.Replace("\r\n", "\n")));
+            if (attachments is not null) report.Attachments.AddRange(attachments);
+            var owner = ActiveWindow;
+            new BugReportWindow(report, Services.BugReportRelay.Key) { Owner = owner }.ShowDialog();
+            if (owner == this) FocusContent();
         }
         finally
         {
             _reporting = false;
         }
     }
-
-    /// <summary>When neither the browser nor the clipboard could take the report: shown, so it can still be copied.</summary>
-    private void ShowReport(string body) =>
-        MessageBox.Show(this,
-            $"Press Ctrl+C to copy this report, then paste it into a new issue at {AppInfo.IssuesUrl}.\n\n{body}",
-            "Report a Bug", MessageBoxButton.OK, MessageBoxImage.Information);
 
     /// <summary>Over the window in front (Get Info, say), so focus goes back there afterwards, not to this one behind it.</summary>
     private void ShowError(string message, Window? owner = null) =>

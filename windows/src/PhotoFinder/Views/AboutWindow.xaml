@@ -1,0 +1,16 @@
+<Window x:Class="PhotoFinder.Views.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="460" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <!-- Help > About (#33, #138): what the app is for, its version, and links, as on the Mac. -->
+    <StackPanel Margin="16">
+        <TextBlock x:Name="NameText" FontSize="16" FontWeight="SemiBold" AutomationProperties.HeadingLevel="Level1" />
+        <TextBlock x:Name="VersionText" Margin="0,4,0,0" />
+        <TextBlock x:Name="WhatText" TextWrapping="Wrap" Margin="0,10,0,14" />
+        <Button x:Name="SourceButton" Content="_Source code on GitHub" HorizontalAlignment="Left" Padding="10,3" Margin="0,0,0,6" Click="Source_Click" />
+        <Button Content="User _Guide" HorizontalAlignment="Left" Padding="10,3" Margin="0,0,0,6" Click="Guide_Click" />
+        <Button Content="_Privacy Policy" HorizontalAlignment="Left" Padding="10,3" Margin="0,0,0,12" Click="Privacy_Click" />
+        <Button x:Name="CloseButton" Content="Close" IsCancel="True" IsDefault="True" HorizontalAlignment="Right" MinWidth="80" Padding="10,3" />
+    </StackPanel>
+</Window>

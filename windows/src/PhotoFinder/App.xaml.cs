@@ -15,6 +15,10 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // Whether the last run quit cleanly (#33): offered as a report once the window is up, with the end of the log
+        // read now, before this run adds to it.
+        UncleanLaunch = CrashCheck.Begin();
+        if (UncleanLaunch is not null) CrashAttachments = CrashCheck.Attachments();
         Log.RemoveOld();
         Log.Write("start", $"{AppInfo.Name} {Updates.AppVersion} on Windows {Environment.OSVersion.Version}, {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}");
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
@@ -32,6 +36,7 @@ public partial class App : Application
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             args.Handled = true;
         };
+        if (UncleanLaunch is not null) Log.Write("start", "The last run didn't quit cleanly");
         var settings = Settings.Load(Settings.DefaultPath);
         // Every launch starts read-only (#83): nothing may change a photo until the person allows it.
         PhotoChanges.Allowed = !settings.ReadOnly;
@@ -79,8 +84,15 @@ public partial class App : Application
         }
     }
 
+    /// <summary>When the last run started, if it didn't quit cleanly; cleared once the offer to report it is made.</summary>
+    public static DateTime? UncleanLaunch { get; set; }
+
+    /// <summary>The end of the crashed run's log, for the crash report.</summary>
+    public static List<BugReport.Attachment> CrashAttachments { get; set; } = [];
+
     protected override void OnExit(ExitEventArgs e)
     {
+        CrashCheck.End();
         _windowsAI?.Dispose();
         base.OnExit(e);
     }
