@@ -30,9 +30,9 @@ struct SettingsView: View {
             }
             Section {
                 // The same switch as the Photo menu's, asking the same question before it turns on.
-                Toggle("Save descriptions in photos", isOn: Binding(
-                    get: { model.saveInPhotos },
-                    set: { model.setSaveInPhotos($0) }
+                Toggle(model.saveInPhotosTitle, isOn: Binding(
+                    get: { model.saveInPhotosShownOn },
+                    set: { model.chooseSaveInPhotos($0) }
                 ))
             } footer: {
                 Text("Off until you turn it on. Then each new description is also saved in the photo, as its caption when it has none (in Photos, which syncs with iCloud Photos, or in the file itself for added folders), and in a file's alt text when it has none. Nothing you or other apps wrote is replaced. Photo > Use Description as Caption does it for the photos you choose, and asks before replacing anything.")
