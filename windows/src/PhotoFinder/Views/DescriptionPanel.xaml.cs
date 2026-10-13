@@ -27,7 +27,83 @@ public partial class DescriptionPanel : UserControl
     /// <summary>The Description Type the box was filled with: a correction is saved as that type.</summary>
     private string _loadedKind = "";
 
-    public DescriptionPanel() => InitializeComponent();
+    public DescriptionPanel()
+    {
+        InitializeComponent();
+        SizeChanged += (_, _) => FitPreview();
+    }
+
+    // MARK: The preview (#119)
+
+    /// <summary>The preview's longest side as decoded: enough for 240 high on a high-DPI screen.</summary>
+    private const uint PreviewSize = 480;
+
+    /// <summary>What the rest of the panel needs below the preview; in a shorter window the preview shrinks, then goes.</summary>
+    private const double RoomForTheRest = 380;
+
+    private bool _showsPreview;
+    private int _previewRequest;
+
+    /// <summary>In list view the panel starts with the photo you're on. Not in the gallery, which shows it large.</summary>
+    public bool ShowsPreview
+    {
+        get => _showsPreview;
+        set
+        {
+            if (_showsPreview == value) return;
+            _showsPreview = value;
+            LoadPreview();
+        }
+    }
+
+    /// <summary>Whether the preview belongs here now: list view, the panel showing, and a photo.</summary>
+    private bool _previewWanted;
+
+    /// <summary>For tests: the preview's picture, while it's showing.</summary>
+    internal System.Windows.Media.ImageSource? Preview => PreviewArea.Visibility == Visibility.Visible ? PreviewImage.Source : null;
+
+    /// <summary>For tests: the placeholder is holding the preview's place.</summary>
+    internal bool ShowsPlaceholder => PreviewArea.Visibility == Visibility.Visible && PreviewPlaceholder.Visibility == Visibility.Visible;
+
+    /// <summary>Waits a moment, so arrowing quickly past photos doesn't decode each one. Meanwhile the last photo's picture
+    /// stays (or the placeholder holds the place), so what's below doesn't jump. Never downloads: an online-only file shows
+    /// its cloud provider's thumbnail only if there's one already, or the placeholder.</summary>
+    private async void LoadPreview()
+    {
+        var request = ++_previewRequest;
+        _previewWanted = _showsPreview && IsVisible && _row?.Item is { IsVideo: false };
+        if (!_previewWanted || _row?.Item is not { } item)
+        {
+            ShowPreview(null);
+            return;
+        }
+        if (PreviewImage.Source is null) ShowPreview(null);
+        await Task.Delay(PreviewDelay);
+        if (request != _previewRequest) return;
+        var image = item.IsOnlineOnly
+            ? await ImageDecoding.ThumbnailAsync(item.Path, PreviewSize, cachedOnly: true)
+            : await ImageDecoding.LoadForDisplayAsync(item.Path, isVideo: false, PreviewSize);
+        if (request != _previewRequest) return;
+        ShowPreview(image);
+    }
+
+    private void ShowPreview(System.Windows.Media.ImageSource? image)
+    {
+        PreviewImage.Source = image;
+        PreviewPlaceholder.Visibility = image is null ? Visibility.Visible : Visibility.Collapsed;
+        FitPreview();
+    }
+
+    /// <summary>How long arrowing has to pause before the preview loads. Tests shorten it.</summary>
+    internal static TimeSpan PreviewDelay { get; set; } = TimeSpan.FromMilliseconds(150);
+
+    private void FitPreview()
+    {
+        var room = ActualHeight - RoomForTheRest;
+        PreviewArea.MaxHeight = Math.Clamp(room, 0, 240);
+        PreviewPlaceholder.Height = Math.Clamp(room, 0, 160);
+        PreviewArea.Visibility = _previewWanted && room >= 60 ? Visibility.Visible : Visibility.Collapsed;
+    }
 
     /// <summary>Redescribe, Use as Caption and Edit Caption, which the window does.</summary>
     public Action? Redescribe { get; set; }
@@ -46,6 +122,8 @@ public partial class DescriptionPanel : UserControl
             // Hidden with Ctrl+Shift+I while typing: keep what was typed.
             if (e.NewValue is false) SaveIfChanged();
             else Show(model.FocusedRow);
+            // Not loaded while hidden.
+            LoadPreview();
         };
         Show(model.FocusedRow);
     }
@@ -82,6 +160,7 @@ public partial class DescriptionPanel : UserControl
                 _row.PropertyChanged -= Row_PropertyChanged;
                 _row = row;
                 row.PropertyChanged += Row_PropertyChanged;
+                LoadPreview();
             }
             UpdateStatus();
             return;
@@ -92,13 +171,18 @@ public partial class DescriptionPanel : UserControl
         _row = row;
         if (row is not null) row.PropertyChanged += Row_PropertyChanged;
         var describable = row?.Item is { IsVideo: false };
+        // On the note ("Videos and folders aren't described") and on to a photo (Next Photo, say): the note goes, so
+        // focus goes to the description box rather than dropping to the window.
+        var noteHadFocus = NothingText.IsKeyboardFocused;
         PhotoPart.Visibility = describable ? Visibility.Visible : Visibility.Collapsed;
         NothingText.Visibility = describable ? Visibility.Collapsed : Visibility.Visible;
         NothingText.Text = row is null ? "Select a photo to see its description." : "Videos and folders aren't described.";
+        LoadPreview();
         if (!describable) return;
         NameText.Text = row!.Name;
         ShowCaption(row);
         Load();
+        if (noteHadFocus) Dispatcher.BeginInvoke(() => DescriptionBox.Focus(), DispatcherPriority.Loaded);
     }
 
     private void ShowCaption(FileRow row) => CaptionBox.Text = row.Caption.Length > 0 ? row.Caption : "No caption";

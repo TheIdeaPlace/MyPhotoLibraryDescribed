@@ -40,6 +40,10 @@ public static class AppCommands
         new KeyGesture(Key.Down, ModifierKeys.Alt));
     public static readonly RoutedUICommand AllPhotos = Make("_All Photos", nameof(AllPhotos),
         new KeyGesture(Key.A, ModifierKeys.Control | ModifierKeys.Shift));
+    /// <summary>The next or previous photo, leaving focus where it is (#119). Alt+arrows, since Ctrl+arrows move by word in
+    /// a text box and these work from the description box. The Mac's are Command-Right and Command-Left.</summary>
+    public static readonly RoutedUICommand NextPhoto = Make("Ne_xt Photo", nameof(NextPhoto), new KeyGesture(Key.Right, ModifierKeys.Alt));
+    public static readonly RoutedUICommand PreviousPhoto = Make("Pre_vious Photo", nameof(PreviousPhoto), new KeyGesture(Key.Left, ModifierKeys.Alt));
     /// <summary>To the Description panel's text box, showing the panel if it's hidden; from there, back to the list or
     /// gallery (#119). The Mac's is Shift-Command-D.</summary>
     public static readonly RoutedUICommand GoToDescription = Make("Go to _Description or Back to Photos", nameof(GoToDescription),

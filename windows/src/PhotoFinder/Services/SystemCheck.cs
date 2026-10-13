@@ -46,6 +46,9 @@ public sealed partial class SystemCheck : ICheckResult
         public IReadOnlyList<string> LibraryFolders { get; init; } = [];
         public IReadOnlyList<string> MissingFolders { get; init; } = [];
         public int SavedDescriptions { get; init; }
+        /// <summary>How much of the library is described (#119): its photos (not videos), and how many of them have a saved
+        /// description of the type in use. Null when not counted.</summary>
+        public (int Described, int Total)? LibraryCoverage { get; init; }
         public bool DescribeAutomatically { get; init; }
         public bool DescribeInBackground { get; init; }
 
@@ -116,8 +119,8 @@ public sealed partial class SystemCheck : ICheckResult
             items.Add(new("Library folders", Status.Ok, $"{Folders(count)}: {string.Join(", ", facts.LibraryFolders)}.", $"{Folders(count)}."));
 
         var saved = facts.SavedDescriptions;
-        items.Add(new("Saved descriptions", Status.Info,
-            saved == 0 ? "None yet." : saved == 1 ? "1 photo described." : $"{saved.ToString("N0", CultureInfo.CurrentCulture)} photos described."));
+        items.Add(new("Saved descriptions", Status.Info, facts.LibraryCoverage is { } coverage ? CoverageText(coverage.Described, coverage.Total)
+            : saved == 0 ? "None yet." : saved == 1 ? "1 photo described." : $"{saved.ToString("N0", CultureInfo.CurrentCulture)} photos described."));
         items.Add(new("Describe Photos Automatically", Status.Info, facts.DescribeAutomatically ? "On." : "Off. Turn it on in the Photo menu."));
         items.Add(new("Describe Photos in the Background", Status.Info, facts.DescribeInBackground ? "On." : "Off."));
         // The details last, so the checks that might need doing something come first.
@@ -146,6 +149,15 @@ public sealed partial class SystemCheck : ICheckResult
         if (facts.DescribeTimings is { } timings) items.Add(new("Descriptions this session", Status.Info, timings));
         foreach (var failure in facts.RecentFailures) items.Add(new("Recent failure", Status.Info, failure));
         if (facts.AIDescriptionCheck is { } check) items.Add(new("AI description check", Status.Info, check));
+    }
+
+    /// <summary>"39% described, 159 of 400 photos.", as on the Mac. Rounded down, so 100% means every photo.</summary>
+    internal static string CoverageText(int described, int total)
+    {
+        if (total <= 0) return "No photos in the library yet.";
+        described = Math.Min(described, total);
+        var percent = (int)((long)described * 100 / total);
+        return $"{percent}% described, {described.ToString("N0", CultureInfo.CurrentCulture)} of {total.ToString("N0", CultureInfo.CurrentCulture)} {(total == 1 ? "photo" : "photos")}.";
     }
 
     /// <summary>A Windows AI ready state in words.</summary>

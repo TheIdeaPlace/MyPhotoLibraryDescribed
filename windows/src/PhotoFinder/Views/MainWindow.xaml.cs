@@ -157,6 +157,9 @@ public partial class MainWindow : Window
         Bind(AppCommands.DescribePhoto, () => DescribePhoto(again: false), () => _model.FocusedRow is not null);
         Bind(AppCommands.Redescribe, () => DescribePhoto(again: true), () => _model.FocusedRow is not null);
         Bind(AppCommands.GoToDescription, GoToDescriptionOrBack);
+        // The list says the row it lands on; anywhere else (the description box, the gallery) it's said for you.
+        Bind(AppCommands.NextPhoto, () => _model.StepPhoto(1, announce: !FileList.IsKeyboardFocusWithin));
+        Bind(AppCommands.PreviousPhoto, () => _model.StepPhoto(-1, announce: !FileList.IsKeyboardFocusWithin));
         Bind(AppCommands.ShowInExplorer, () => _model.ShowInExplorer(), () => _model.SelectedRows.Any(r => r.Item is not null || r.Container?.FolderPath is not null));
         Bind(AppCommands.Export, ExportSelection, HasFiles);
         Bind(AppCommands.AddFolder, AddFolder);
@@ -914,6 +917,7 @@ public partial class MainWindow : Window
         // The list stays in the tree, hidden, so its selection is still the gallery's position.
         FileList.Visibility = gallery ? Visibility.Hidden : Visibility.Visible;
         GalleryPanel.Visibility = gallery ? Visibility.Visible : Visibility.Collapsed;
+        DescriptionPanel.ShowsPreview = !gallery;
         UpdateEmptyText();
         if (gallery)
         {
@@ -1374,6 +1378,7 @@ public partial class MainWindow : Window
             LibraryFolders = folders,
             MissingFolders = missing.Result,
             SavedDescriptions = _model.Descriptions?.PhotoCount ?? 0,
+            LibraryCoverage = _model.DescriptionCoverage(),
             DescribeAutomatically = AutoDescriber?.Enabled ?? false,
             DescribeInBackground = BackgroundDescriber?.Enabled ?? false,
             WindowsEdition = Services.SystemDetails.WindowsEdition(),
