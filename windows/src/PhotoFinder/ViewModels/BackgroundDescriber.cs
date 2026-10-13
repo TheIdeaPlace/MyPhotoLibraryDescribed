@@ -109,6 +109,8 @@ public sealed class BackgroundDescriber : IDisposable
     private int StopQueue()
     {
         var left = _front.Count + _queue.Count;
+        // Failures not yet shown to be the photos' own aren't kept once the run ends early, however it was stopped.
+        _pending.Clear();
         _front.Clear();
         _queue.Clear();
         _queued.Clear();
@@ -362,7 +364,8 @@ public sealed class BackgroundDescriber : IDisposable
         if (_failuresPath is null) return;
         try
         {
-            // Photos no longer in the library are dropped, so the file doesn't grow forever.
+            // Photos no longer in the library are dropped, so the file doesn't grow forever. (One on a share that's offline
+            // just now is dropped too, and simply tried again later.)
             var paths = _model.AllItems.Select(i => i.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
             _remembered.RemoveWhere(k => !paths.Contains(k[..Math.Max(0, k.IndexOf('|'))]));
             Directory.CreateDirectory(Path.GetDirectoryName(_failuresPath)!);
@@ -389,6 +392,12 @@ public sealed class BackgroundDescriber : IDisposable
     /// declining what's in the picture, or too much text in it to describe. These don't count towards stopping the run.
     /// A missing codec shows as decode_failed or unsupported_format, which do.</summary>
     internal static bool IsAboutThePhoto(Exception ex) => ex is DescriptionException { Code: "content_filtered" or "too_much_text" };
+
+    /// <summary>A failure that may well not happen next time: Windows taking too long, or the helper stopping partway
+    /// (WindowsAI says "stopped unexpectedly"). Never kept for later starts.</summary>
+    internal static bool IsPassing(Exception ex) =>
+        ex is TimeoutException or DescriptionException { Code: "timeout" }
+        || (ex is DescriptionException { Code: "internal_error" } d && d.Message.Contains("stopped unexpectedly", StringComparison.Ordinal));
 
     /// <summary>After this many photos in a row fail, the run stops and says why, rather than failing through thousands
     /// of photos (a missing HEIF codec, a broken helper). Photos Windows' content filter declines don't count.</summary>
@@ -530,13 +539,13 @@ public sealed class BackgroundDescriber : IDisposable
                         _remembered.Add(key);
                         SaveFailures();
                     }
-                    else _pending.Add(key);
+                    // A timeout, or the helper stopping partway, says nothing about the photo: skipped this session only.
+                    else if (!IsPassing(ex)) _pending.Add(key);
                     Log.Write("background", $"Couldn't describe {item.Name}: {(ex is DescriptionException d ? $"{d.Code}: " : ex.GetType().Name + ": ")}{ex.Message}");
                     if (run == _run && !IsAboutThePhoto(ex) && ++failedInARow >= FailuresInARow)
                     {
+                        // Something may be wrong with every photo: StopQueue drops the streak, so it isn't kept for later starts.
                         var left = StopQueue();
-                        // Something may be wrong with every photo: the streak isn't kept for later starts.
-                        _pending.Clear();
                         Log.Write("background", $"Stopped after {FailuresInARow} failures in a row; {left} not tried");
                         Announcer.AnnounceAfter(
                             $"Background describing stopped: {Plural(FailuresInARow)} in a row couldn't be described, so {Plural(left)} weren't tried. " +

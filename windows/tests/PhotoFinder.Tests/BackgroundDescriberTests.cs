@@ -535,6 +535,41 @@ public sealed class BackgroundDescriberTests : IDisposable
     }
 
     [WpfFact]
+    public async Task TooMuchText_DoesntStopTheRun_ButATimeoutIsntRemembered()
+    {
+        for (var i = 0; i < 6; i++) _lib.AddJpeg($"text{i}.jpg");
+        _lib.AddJpeg("slow.jpg");
+        _lib.AddJpeg("ok.jpg");
+        MakeNewest("text");
+        File.SetLastWriteTime(_lib.PathOf("slow.jpg"), DateTime.Now.AddMinutes(-2));
+        var failures = _lib.PathOf(@"data\BackgroundFailures.json");
+        var slow = true;
+        Task<string> Describe(MediaItem item) => item.Name.StartsWith("text", StringComparison.Ordinal)
+            ? throw new DescriptionException("too_much_text", "There's too much text in this picture to describe.")
+            : item.Name == "slow.jpg" && slow ? throw new DescriptionException("timeout", "Windows took too long. Try again.")
+            : Task.FromResult("Fine");
+        var (model, background, _) = await StartAsync(enabled: false, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.DoesNotContain(_announced, s => s.StartsWith("Background describing stopped:"));
+            Assert.Contains("ok.jpg", _described);
+        }
+        // The timed-out photo is tried again at the next start; the ones with too much text aren't.
+        slow = false;
+        _described.Clear();
+        (model, background, _) = await StartAsync(enabled: true, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Contains("slow.jpg", _described);
+            Assert.DoesNotContain(_described, n => n.StartsWith("text", StringComparison.Ordinal));
+        }
+    }
+
+    [WpfFact]
     public async Task TurningItOnAgain_TriesThePhotosThatCouldntBeDescribed()
     {
         _lib.AddJpeg("declined.jpg");
