@@ -82,7 +82,7 @@ public sealed class FileRow : INotifyPropertyChanged
     /// <summary>What a screen reader hears for the row in the list.</summary>
     public string AccessibleName => SpokenWith(SpokenColumns);
 
-    /// <summary>The row as it would be read with these columns in this order (the Columns dialog's preview).</summary>
+    /// <summary>The row as it would be read with these columns in this order (View > Labels' preview).</summary>
     public string SpokenWith(IReadOnlyList<string> columns)
     {
         var order = columns.Contains(Columns.Name) ? columns : columns.Prepend(Columns.Name).ToList();
@@ -126,7 +126,7 @@ public sealed class FileRow : INotifyPropertyChanged
     };
 
     /// <summary>A column's text as it's spoken: labelled where the value alone wouldn't say what it is.</summary>
-    private string SpokenText(string id)
+    internal string SpokenText(string id)
     {
         var text = ColumnText(id);
         if (text.Length == 0) return "";

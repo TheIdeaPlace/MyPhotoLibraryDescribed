@@ -200,7 +200,7 @@ public partial class MainWindow : Window
         Bind(AppCommands.UserGuide, () => OpenInBrowser(AppInfo.UserGuideUrl, "The user guide is"));
         Bind(AppCommands.PrivacyPolicy, () => OpenInBrowser(AppInfo.PrivacyPolicyUrl, "The privacy policy is"));
         Bind(AppCommands.ReportBug, () => ReportBug(null));
-        Bind(AppCommands.ChooseColumns, ChooseColumns);
+        Bind(AppCommands.ChooseLabels, ChooseLabels);
         Bind(AppCommands.ShowDescription, () => ShowDescriptionPanel(!_model.Settings.ShowDescriptionPanel, announce: true));
         Bind(AppCommands.AutoDescribe, () =>
         {
@@ -288,24 +288,35 @@ public partial class MainWindow : Window
         return header;
     }
 
-    /// <summary>Right-clicking a column header opens the Columns dialog, the one place columns are chosen and ordered.</summary>
+    /// <summary>Right-clicking a column header opens View > Labels, the one place columns are chosen and ordered.</summary>
     private ContextMenu MakeColumnsContextMenu()
     {
         var menu = new ContextMenu();
-        menu.Items.Add(new MenuItem { Command = AppCommands.ChooseColumns, CommandTarget = this });
+        menu.Items.Add(new MenuItem { Command = AppCommands.ChooseLabels, CommandTarget = this });
         return menu;
     }
 
-    /// <summary>View, Columns: which columns, and in what order they're shown and read.</summary>
-    private void ChooseColumns()
+    /// <summary>View > Labels (#38): which columns the list shows and reads, and what the gallery says.</summary>
+    private void ChooseLabels()
     {
         var sample = _model.FocusedRow is { IsContainer: false } focused ? focused : _model.Rows.FirstOrDefault(r => !r.IsContainer);
         var before = _model.ShownColumns.Select(c => c.Id).ToList();
+        var galleryBefore = _model.GalleryLabelOrder.ToList();
         var returnTo = Keyboard.FocusedElement as IInputElement;
-        var dialog = new ColumnsDialog(before, sample) { Owner = this };
+        var number = sample is null ? 1 : _model.Rows.IndexOf(sample) + 1;
+        var dialog = new LabelsDialog(before, galleryBefore, sample, number, _model.Rows.Count, galleryFirst: _model.ViewMode == ViewMode.Gallery)
+            { Owner = this };
         // The new order first, then focus back: the focused row reading in its new order is the confirmation,
         // rather than the old order, a name change and an announcement all at once.
-        if (dialog.ShowDialog() == true && !dialog.ShownColumns.SequenceEqual(before)) _model.SetColumnOrder(dialog.ShownColumns);
+        if (dialog.ShowDialog() == true)
+        {
+            if (!dialog.ShownColumns.SequenceEqual(before)) _model.SetColumnOrder(dialog.ShownColumns);
+            if (!dialog.ShownGalleryLabels.SequenceEqual(galleryBefore))
+            {
+                _model.SetGalleryLabels(dialog.ShownGalleryLabels);
+                if (_model.ViewMode == ViewMode.Gallery) UpdateGallery();
+            }
+        }
         // Back where it was (it can be opened from the sidebar or search); the list if that's gone.
         if (returnTo is UIElement { IsVisible: true } element && element.Focus()) return;
         FocusContent();
@@ -958,7 +969,7 @@ public partial class MainWindow : Window
         {
             _galleryShownId = null;
             GalleryName.Text = GalleryDetails.Text = GalleryCaption.Text = "";
-            AutomationProperties.SetName(GalleryImage, _model.IsLoading ? "Loading" : "No items");
+            GalleryImage.SpokenName = _model.IsLoading ? "Loading" : "No items";
             GalleryImage.Show(null, _model.IsLoading ? "Loading…" : "There is nothing here.");
             return;
         }
@@ -975,9 +986,9 @@ public partial class MainWindow : Window
             row.PropertyChanged += GalleryRow_PropertyChanged;
         }
         ShowGalleryDescription(row);
-        // Just the name: arrowing through the gallery says which photo, then its description follows. The rest is in
-        // the footer below (Tab to it).
-        AutomationProperties.SetName(GalleryImage, row.Name);
+        // What View > Labels > Gallery chooses (#38), the same words moving to it says; its description follows. The
+        // rest is in the footer below (Tab to it).
+        GalleryImage.SpokenName = position is { } at ? _model.MoveText(at.Index) : row.Name;
         if (_galleryShownId == row.Id) return;
         _galleryShownId = row.Id;
 
@@ -995,7 +1006,11 @@ public partial class MainWindow : Window
 
     private void GalleryRow_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(FileRow.Description) && sender is FileRow row && row == _galleryRow) ShowGalleryDescription(row);
+        if (sender is not FileRow row || row != _galleryRow) return;
+        if (e.PropertyName == nameof(FileRow.Description)) ShowGalleryDescription(row);
+        // The labels can name its rating, caption or date, which can change while it's showing (a rating given, details
+        // read): the picture's name follows, quietly.
+        else if (_model.GalleryPosition is { } at) GalleryImage.SpokenName = _model.MoveText(at.Index);
     }
 
     private void ShowGalleryDescription(FileRow row)

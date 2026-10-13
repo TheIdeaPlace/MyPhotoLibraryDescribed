@@ -29,7 +29,8 @@ public static class AppCommands
 
     public static readonly RoutedUICommand AsList = Make("as _List", nameof(AsList), new KeyGesture(Key.D2, ModifierKeys.Control));
     public static readonly RoutedUICommand AsGallery = Make("as _Gallery", nameof(AsGallery), new KeyGesture(Key.D4, ModifierKeys.Control));
-    public static readonly RoutedUICommand ChooseColumns = Make("_Columns…", nameof(ChooseColumns));
+    /// <summary>View > Labels… (#38): what the list shows and the gallery says. It was Columns.</summary>
+    public static readonly RoutedUICommand ChooseLabels = Make("Lab_els…", nameof(ChooseLabels));
     /// <summary>The Description panel. The Mac's is Option-Command-I; Ctrl+Alt is AltGr on many keyboards, so not here.</summary>
     public static readonly RoutedUICommand ShowDescription = Make("Show _Description", nameof(ShowDescription),
         new KeyGesture(Key.I, ModifierKeys.Control | ModifierKeys.Shift));

@@ -1085,8 +1085,24 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         var next = current < 0 ? 0 : current + delta;
         if (next < 0 || next >= Rows.Count) { Beep(); return; }
         SelectionRequested?.Invoke([Rows[next].Id], false);
-        Announcer.Announce($"{Rows[next].Name}, {next + 1} of {Rows.Count}");
+        Announcer.Announce(MoveText(next));
     }
+
+    /// <summary>View > Labels > Gallery (#38): what the gallery says when you move to a photo, in order.</summary>
+    public IReadOnlyList<string> GalleryLabelOrder => Models.GalleryLabels.Clean(_settings.GalleryLabels);
+
+    public void SetGalleryLabels(IEnumerable<string> ids)
+    {
+        _settings.GalleryLabels = Models.GalleryLabels.Clean(ids);
+        SaveSettings();
+        OnPropertyChanged(nameof(GalleryLabelOrder));
+    }
+
+    /// <summary>The photo at <paramref name="index"/> as moving to it says it: the gallery's labels in the gallery
+    /// ("12 of 400" by default), and "name, n of N" in the list.</summary>
+    public string MoveText(int index) => ViewMode == ViewMode.Gallery
+        ? Models.GalleryLabels.Text(Rows[index], index + 1, Rows.Count, GalleryLabelOrder)
+        : $"{Rows[index].Name}, {index + 1} of {Rows.Count}";
 
     /// <summary>How much of the library is described (#119): its photos (not videos), and how many have a saved description
     /// of the Description Type in use. Null while the library is still loading. In memory, so quick even for a large
@@ -1103,7 +1119,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     /// and videos (either would take the Description panel's text box away, and focus with it), without moving focus. So
     /// you can stay in the description box (reading with a braille display, say) and step from photo to photo: the box
     /// shows each one's description, to read there (automatic describing speaks only from the list or gallery). Says
-    /// "name, n of N", or "No next photo" at the end, as on the Mac.</summary>
+    /// "name, n of N" in the list and the gallery's labels in the gallery (#38), or "No next photo" at the end, as on the Mac.</summary>
     /// <param name="announce">False when focus is on the list, which says the new row itself.</param>
     public void StepPhoto(int direction, bool announce = true)
     {
@@ -1116,7 +1132,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             return;
         }
         SelectionRequested?.Invoke([Rows[index].Id], false);
-        if (announce) Announcer.Announce($"{Rows[index].Name}, {index + 1} of {Rows.Count}");
+        if (announce) Announcer.Announce(MoveText(index));
     }
 
     // MARK: Helpers

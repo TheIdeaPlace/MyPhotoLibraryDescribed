@@ -58,7 +58,7 @@
                 <v:AppMenuItem x:Name="AsGalleryItem" Command="v:AppCommands.AsGallery" IsCheckable="False" />
                 <Separator />
                 <v:AppMenuItem x:Name="ShowDescriptionItem" Command="v:AppCommands.ShowDescription" IsCheckable="False" />
-                <v:AppMenuItem Command="v:AppCommands.ChooseColumns" />
+                <v:AppMenuItem Command="v:AppCommands.ChooseLabels" />
                 <v:AppMenuItem Header="_Sort By" x:Name="SortMenu" />
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.ReadStatusBar" />

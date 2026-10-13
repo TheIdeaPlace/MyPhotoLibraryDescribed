@@ -1,0 +1,23 @@
+<Window x:Class="PhotoFinder.Views.LabelsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:v="clr-namespace:PhotoFinder.Views"
+        Title="Labels" Width="680" Height="620" MinWidth="540" MinHeight="500"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <!-- View > Labels (#38): what's read for each photo. List is what was Columns; Gallery is what's said when you move
+         to a photo in the gallery. OK keeps both tabs' choices; Cancel or Escape leaves them. -->
+    <DockPanel Margin="12">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="OK" IsDefault="True" MinWidth="80" Padding="10,3" Click="Ok_Click" />
+            <Button Content="Cancel" IsCancel="True" MinWidth="80" Padding="10,3" Margin="8,0,0,0" />
+        </StackPanel>
+        <TabControl x:Name="Tabs">
+            <TabItem x:Name="ListTab" Header="List">
+                <v:OrderListEditor x:Name="ListEditor" Margin="8" />
+            </TabItem>
+            <TabItem x:Name="GalleryTab" Header="Gallery">
+                <v:OrderListEditor x:Name="GalleryEditor" Margin="8" />
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>
