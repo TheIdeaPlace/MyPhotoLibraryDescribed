@@ -448,7 +448,7 @@ public sealed class WindowTests : IDisposable
 
             // The Help menu in the order both apps use (#33).
             var help = window.MainMenu.Items.OfType<MenuItem>().Last();
-            Assert.Equal([AppCommands.CheckForUpdates, AppCommands.ReportBug, AppCommands.CheckSystem, AppCommands.OpenLogFolder, null, AppCommands.About],
+            Assert.Equal([AppCommands.CheckForUpdates, AppCommands.ReportBug, AppCommands.CheckSystem, AppCommands.CheckAIDescription, AppCommands.OpenLogFolder, null, AppCommands.About],
                 help.Items.Cast<object>().Select(i => (i as MenuItem)?.Command));
             Assert.Equal($"_About {AppInfo.Name}", AppCommands.About.Text);
 

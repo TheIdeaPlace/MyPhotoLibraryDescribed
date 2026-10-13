@@ -204,4 +204,17 @@ public class ProtocolTests
         Assert.Null(o["message"]);
         Assert.Equal("why", (string)JsonNode.Parse(Protocol.Readiness(false, "NoIdentity", "why"))!["message"]!);
     }
+
+    [Fact]
+    public void Readiness_CanCarryTheOtherFeaturesStates_ForCheckSystem()
+    {
+        var o = JsonNode.Parse(Protocol.Readiness(true, "Ready", components: new Dictionary<string, string>
+        {
+            ["textRecognition"] = "Ready",
+            ["languageModel"] = "NotSupportedOnCurrentSystem",
+        }))!.AsObject();
+        Assert.Equal("Ready", (string)o["components"]!["textRecognition"]!);
+        Assert.Equal("NotSupportedOnCurrentSystem", (string)o["components"]!["languageModel"]!);
+        Assert.Null(JsonNode.Parse(Protocol.Readiness(true, "Ready"))!["components"]);
+    }
 }

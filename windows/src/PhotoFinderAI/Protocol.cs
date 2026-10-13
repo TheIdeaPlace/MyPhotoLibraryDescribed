@@ -137,7 +137,9 @@ public static class Protocol
         new JsonObject { ["id"] = id, ["ok"] = false, ["code"] = code, ["message"] = message }.ToJsonString(Readable);
 
     /// <summary>The readiness report for --check and --prepare.</summary>
-    public static string Readiness(bool identity, string state, string? message = null)
+    /// <param name="components">The ready state of Windows' other AI features ("textRecognition", "languageModel"), for
+    /// Photo Finder's Check System.</param>
+    public static string Readiness(bool identity, string state, string? message = null, IReadOnlyDictionary<string, string>? components = null)
     {
         var o = new JsonObject
         {
@@ -148,6 +150,12 @@ public static class Protocol
             ["kinds"] = new JsonArray(Kinds.Select(k => (JsonNode)k).ToArray()),
         };
         if (message is not null) o["message"] = message;
+        if (components is { Count: > 0 })
+        {
+            var parts = new JsonObject();
+            foreach (var (name, value) in components) parts[name] = value;
+            o["components"] = parts;
+        }
         return o.ToJsonString(Readable);
     }
 

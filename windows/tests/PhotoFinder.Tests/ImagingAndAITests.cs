@@ -180,7 +180,7 @@ public class WindowsAIProtocolTests
     [Fact]
     public async Task Retries_GiveUpWithTheLastInternalError()
     {
-        var ex = await Assert.ThrowsAsync<DescriptionException>(() => WindowsAI.WithRetriesAsync(
+        var ex = await Assert.ThrowsAsync<DescriptionException>(() => WindowsAI.WithRetriesAsync<string>(
             _ => Task.FromResult(new byte[] { 1 }),
             _ => throw new DescriptionException("internal_error", "still broken")));
         Assert.Equal("still broken", ex.Message);
@@ -190,7 +190,7 @@ public class WindowsAIProtocolTests
     public async Task Retries_DontRetryOtherFailures()
     {
         var calls = 0;
-        await Assert.ThrowsAsync<DescriptionException>(() => WindowsAI.WithRetriesAsync(
+        await Assert.ThrowsAsync<DescriptionException>(() => WindowsAI.WithRetriesAsync<string>(
             _ => Task.FromResult(new byte[] { 1 }),
             _ => { calls++; throw new DescriptionException("content_filtered", "no"); }));
         Assert.Equal(1, calls);

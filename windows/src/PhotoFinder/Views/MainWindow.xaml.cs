@@ -193,6 +193,7 @@ public partial class MainWindow : Window
         Bind(AppCommands.About, ShowAbout);
         Bind(AppCommands.CheckForUpdates, CheckForUpdates);
         Bind(AppCommands.CheckSystem, ShowCheckSystem);
+        Bind(AppCommands.CheckAIDescription, ShowCheckAIDescription);
         Bind(AppCommands.ReportBug, () => ReportBug(null));
         Bind(AppCommands.ChooseColumns, ChooseColumns);
         Bind(AppCommands.ShowDescription, () => ShowDescriptionPanel(!_model.Settings.ShowDescriptionPanel, announce: true));
@@ -1335,20 +1336,38 @@ public partial class MainWindow : Window
         var npu = Services.SystemCheck.FindNpuAsync();
         // A disconnected network folder can take many seconds to answer.
         var missing = Task.Run(() => folders.Where(f => !Directory.Exists(f)).ToList(), cancel);
-        await Task.WhenAll(readiness, npu, missing);
+        var driver = Services.SystemDetails.NpuDriverAsync();
+        var details = os.Build >= Services.SystemCheck.MinimumBuild ? Services.WindowsAI.DetailsAsync(cancel) : Task.FromResult<Services.AIReadiness?>(null);
+        // Windows lists every package on the PC, which takes a moment.
+        var packages = Task.Run(Services.SystemDetails.AIPackages, cancel);
+        await Task.WhenAll(readiness, npu, missing, driver, packages, details);
         cancel.ThrowIfCancellationRequested();
+        var stats = Services.DescribeStats.Session;
         return new Services.SystemCheck(new Services.SystemCheck.Facts
         {
             AppVersion = Services.Updates.AppVersion,
             UpdatesItself = Services.Updates.UpdatesItself,
             OsVersion = os,
             Npu = npu.Result,
-            Readiness = readiness.Result,
+            Readiness = readiness.Result is { } r && details.Result is { } d
+                ? r with { Components = d.Components, HelperVersion = r.HelperVersion ?? d.HelperVersion, Protocol = r.Protocol ?? d.Protocol }
+                : readiness.Result,
             LibraryFolders = folders,
             MissingFolders = missing.Result,
             SavedDescriptions = _model.Descriptions?.PhotoCount ?? 0,
             DescribeAutomatically = AutoDescriber?.Enabled ?? false,
             DescribeInBackground = BackgroundDescriber?.Enabled ?? false,
+            WindowsEdition = Services.SystemDetails.WindowsEdition(),
+            Processor = Services.SystemDetails.Processor(),
+            Memory = Services.SystemDetails.Memory(),
+            Power = Services.SystemDetails.Power(),
+            NpuDriver = driver.Result,
+            PackageName = Services.SystemDetails.PackageName(),
+            AppRuntime = Services.SystemDetails.AppRuntime(),
+            AIPackages = packages.Result,
+            DescribeTimings = stats.Timings(),
+            RecentFailures = stats.RecentFailures(),
+            AIDescriptionCheck = _lastAICheck?.ReportSummary,
         });
     }
 
@@ -1358,12 +1377,46 @@ public partial class MainWindow : Window
         FocusContent();
     }
 
+    /// <summary>Check AI Description's last result this session, for Check System and Report a Bug.</summary>
+    private Services.AIDescriptionCheck? _lastAICheck;
+
+    /// <summary>Describes the sample picture with the description type in use; the helper is passed in so tests can
+    /// stand in for Windows AI.</summary>
+    internal Services.AIDescriptionCheck.DescribeFunc DescribeSample { get; set; } =
+        // Closing the window gives it up only until it's sent: stopping the helper after that would mean a model reload
+        // for the next description. Sent once: the sample is the same picture at every size.
+        (jpegAtSize, kind, cancel) => App.WindowsAI.DescribeAsync(jpegAtSize, kind, drop: cancel, retry: false);
+
+    internal Func<CancellationToken, Task<Services.AIReadiness>> CheckAI { get; set; } = Services.WindowsAI.CheckAsync;
+
+    internal async Task<Services.AIDescriptionCheck> RunAIDescriptionCheckAsync(CancellationToken cancel = default)
+    {
+        var readiness = await CheckAI(cancel);
+        var result = await Services.AIDescriptionCheck.RunAsync(DescribeSample, _model.Settings.DescriptionKind, readiness, cancel);
+        _lastAICheck = result;
+        Services.Log.Write("describe", $"Check AI Description: {result.ReportSummary}");
+        return result;
+    }
+
+    private void ShowCheckAIDescription()
+    {
+        CreateAIDescriptionWindow().ShowDialog();
+        FocusContent();
+    }
+
+    internal CheckSystemWindow CreateAIDescriptionWindow() =>
+        new("Check AI Description", "Describing the sample photo…", "Describe _Again", "Result", readsResult: true,
+            async cancel => await RunAIDescriptionCheckAsync(cancel), r => ReportBugWith(null, r as Services.AIDescriptionCheck)) { Owner = this };
+
     private bool _reporting;
 
     /// <summary>Help > Report a Bug…: a new GitHub issue in the browser, prefilled with the questions and the system
     /// check, and the same text on the clipboard, as on the Mac. Until the app kit's relay is set up (#33). The report
     /// leaves out folder paths, since an issue is public.</summary>
-    private async void ReportBug(Services.SystemCheck? check)
+    private void ReportBug(Services.SystemCheck? check) => ReportBugWith(check, null);
+
+    /// <param name="aiCheck">Check AI Description's whole result, when the report starts there.</param>
+    private async void ReportBugWith(Services.SystemCheck? check, Services.AIDescriptionCheck? aiCheck)
     {
         if (_reporting)
         {
@@ -1378,7 +1431,8 @@ public partial class MainWindow : Window
                 Services.Announcer.Announce("Preparing a bug report");
                 check = await RunSystemCheckAsync();
             }
-            var body = Services.BugReport.Body(check.ReportText);
+            var body = Services.BugReport.Body(check.ReportText +
+                (aiCheck is null ? "" : $"{Environment.NewLine}{Environment.NewLine}Check AI Description: {aiCheck.ReportText}"));
             var copied = false;
             try
             {

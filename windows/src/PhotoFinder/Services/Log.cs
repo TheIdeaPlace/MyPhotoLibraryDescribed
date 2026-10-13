@@ -20,9 +20,8 @@ public static class Log
     /// <summary>Writes one line: the time, the area ("describe", "background", "save", "helper") and what happened.</summary>
     public static void Write(string area, string message)
     {
-        // The user folder (with the Windows user name) as %USERPROFILE%, so a log can be attached to a public bug report.
-        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (profile.Length > 0) message = message.Replace(profile, "%USERPROFILE%", StringComparison.OrdinalIgnoreCase);
+        // So a log can be attached to a public bug report.
+        message = Privacy.Redact(message);
         var line = $"{DateTime.Now:HH:mm:ss.fff} [{area}] {message.Replace("\r", " ").Replace("\n", " ").Trim()}";
         System.Diagnostics.Trace.WriteLine(line);
         try

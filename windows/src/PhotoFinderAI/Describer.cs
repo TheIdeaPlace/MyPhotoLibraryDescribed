@@ -5,6 +5,7 @@ using Microsoft.Graphics.Imaging;
 using Microsoft.Windows.AI;
 using Microsoft.Windows.AI.ContentSafety;
 using Microsoft.Windows.AI.Imaging;
+using Microsoft.Windows.AI.Text;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 
@@ -15,6 +16,21 @@ public sealed class Describer : IDisposable
     private ImageDescriptionGenerator? _generator;
 
     public static string ReadyState() => ImageDescriptionGenerator.GetReadyState().ToString();
+
+    /// <summary>The ready state of Windows' other AI features, for Photo Finder's Check System: text recognition, and
+    /// Phi Silica (the language model, which Windows lets an app use only with Microsoft's permission). A feature that
+    /// can't be asked says why, briefly.</summary>
+    public static Dictionary<string, string> OtherStates() => new()
+    {
+        ["textRecognition"] = StateOf(() => TextRecognizer.GetReadyState().ToString()),
+        ["languageModel"] = StateOf(() => LanguageModel.GetReadyState().ToString()),
+    };
+
+    private static string StateOf(Func<string> read)
+    {
+        try { return read(); }
+        catch (Exception ex) { return $"Unavailable ({ex.GetType().Name}, 0x{ex.HResult:X8})"; }
+    }
 
     /// <summary>Makes the model ready, downloading it the first time if Windows needs to.
     /// Returns null when ready, or the failure code and message.</summary>

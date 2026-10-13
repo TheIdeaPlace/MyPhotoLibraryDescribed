@@ -21,4 +21,9 @@
     <Using Include="System.IO" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Help > Check AI Description's sample picture (#95), drawn by ..\..\scripts\MakeSamplePhoto.cs. -->
+    <EmbeddedResource Include="Assets\SamplePhoto.jpg" LogicalName="SamplePhoto.jpg" />
+  </ItemGroup>
+
 </Project>
