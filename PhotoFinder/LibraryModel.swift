@@ -83,23 +83,29 @@ final class LibraryModel {
     }
     var searchText = "" {
         didSet {
-            guard searchText != oldValue else { return }
-            keepSelectionShowing()
-            announceResultsAfterPause()
+            if searchText != oldValue { announceResultsAfterPause() }
         }
     }
     /// Set while a search drops hidden rows from the selection, which isn't a move to describe.
     @ObservationIgnored private var keepingSelectionShowing = false
 
-    /// Rows a search hides leave the selection, as on Windows, so Favorite, Rating, Edit Caption and the rest never
-    /// act on a photo out of sight, and the status bar's count is what they act on (#159's review).
+    /// The selected rows that are showing: what Open, Favorite, Rating, Edit Caption and the rest act on, so nothing
+    /// out of sight is changed while a search hides it, whatever reloaded or changed meanwhile (#159).
+    var selectedShowing: Set<String> {
+        guard !selection.isEmpty, !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return selection }
+        return selection.intersection(visibleRows.map(\.id))
+    }
+
+    /// Once typing in Search pauses, rows it hides leave the selection, as on Windows, so they don't come back when
+    /// it's cleared. Not on every key: a typo that hides the photo for a moment mustn't lose it.
     private func keepSelectionShowing() {
-        guard !selection.isEmpty, !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        let showing = selection.intersection(visibleRows.map(\.id))
+        let showing = selectedShowing
         guard showing != selection else { return }
         keepingSelectionShowing = true
         selection = showing
         keepingSelectionShowing = false
+        // Not a move to describe, but the photo you were on is no longer it, so landing on it again speaks it.
+        autoDescriber.moved(to: nil)
     }
     @ObservationIgnored private var resultsAnnouncement: Task<Void, Never>?
     var searchFocusRequest = 0
@@ -469,6 +475,7 @@ final class LibraryModel {
                 try? await Task.sleep(for: .milliseconds(200))
             }
             guard let self, !Task.isCancelled else { return }
+            self.keepSelectionShowing()
             self.announce(Self.resultCount(self.visibleRows.count), queued: true)
         }
     }
@@ -526,7 +533,7 @@ final class LibraryModel {
         if showingPhotosNoAccess { return "No access to Photos" }
         let visible = visibleRows
         let items = visible.count == 1 ? "1 item" : "\(visible.count.formatted()) items"
-        // Only rows showing count (search drops hidden ones from the selection; a reload can leave ids no longer listed).
+        // Only rows showing count, as only they're acted on (`selectedShowing`); a reload can also leave ids no longer listed.
         let selected = selection.isEmpty ? 0 : visible.reduce(0) { $0 + (selection.contains($1.id) ? 1 : 0) }
         return selected == 0 ? items : "\(selected.formatted()) of \(items) selected"
     }
@@ -1320,7 +1327,7 @@ final class LibraryModel {
     }
 
     func open(_ ids: Set<String>? = nil) {
-        let ids = ids ?? selection
+        let ids = ids ?? selectedShowing
         let chosen = rows.filter { ids.contains($0.id) }
         if let container = chosen.first(where: \.isContainer), chosen.allSatisfy(\.isContainer) {
             navigate(to: container.id)
@@ -1356,13 +1363,13 @@ final class LibraryModel {
             previewURL = nil
             return
         }
-        let files = Array(files(for: ids ?? selection).prefix(200))
+        let files = Array(files(for: ids ?? selectedShowing).prefix(200))
         if !files.isEmpty {
             previewURLs = files.map(\.url)
             previewURL = previewURLs.first
             return
         }
-        let assets = Array(assets(for: ids ?? selection).prefix(200))
+        let assets = Array(assets(for: ids ?? selectedShowing).prefix(200))
         guard !assets.isEmpty else { NSSound.beep(); return }
         perform("Preparing preview…") {
             let urls = try await self.exportTemporary(assets)
@@ -1372,8 +1379,8 @@ final class LibraryModel {
     }
 
     func exportSelection(_ ids: Set<String>? = nil) {
-        let assets = assets(for: ids ?? selection)
-        let files = files(for: ids ?? selection)
+        let assets = assets(for: ids ?? selectedShowing)
+        let files = files(for: ids ?? selectedShowing)
         let count = assets.count + files.count
         guard count > 0 else { NSSound.beep(); return }
         let panel = NSOpenPanel()
@@ -1402,14 +1409,14 @@ final class LibraryModel {
     }
 
     func copySelection(_ ids: Set<String>? = nil) {
-        let files = files(for: ids ?? selection)
+        let files = files(for: ids ?? selectedShowing)
         if !files.isEmpty {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.writeObjects(files.map { $0.url as NSURL })
             announce(files.count == 1 ? "Copied \(files[0].name)" : "Copied \(files.count) items")
             return
         }
-        let assets = assets(for: ids ?? selection)
+        let assets = assets(for: ids ?? selectedShowing)
         guard !assets.isEmpty else { NSSound.beep(); return }
         perform("Copying…") {
             let urls = try await self.exportTemporary(assets)
@@ -1422,10 +1429,10 @@ final class LibraryModel {
 
     func toggleFavorite(_ ids: Set<String>? = nil) {
         guard changesAllowed() else { return }
-        let assets = assets(for: ids ?? selection)
+        let assets = assets(for: ids ?? selectedShowing)
         guard !assets.isEmpty else {
             // Windows makes a file a favorite by rating it five stars; writing file metadata on the Mac is to come.
-            if !files(for: ids ?? selection).isEmpty { announce("Favorites aren't available for files yet") } else { NSSound.beep() }
+            if !files(for: ids ?? selectedShowing).isEmpty { announce("Favorites aren't available for files yet") } else { NSSound.beep() }
             return
         }
         let makeFavorite = !assets.allSatisfy(\.isFavorite)
@@ -1448,7 +1455,7 @@ final class LibraryModel {
             errorMessage = "Rating photos requires macOS 27 or later."
             return
         }
-        let ids = ids ?? selection
+        let ids = ids ?? selectedShowing
         let assets = assets(for: ids)
         guard !assets.isEmpty else {
             if !files(for: ids).isEmpty { announce("Ratings aren't available for files yet") } else { NSSound.beep() }
@@ -1473,7 +1480,7 @@ final class LibraryModel {
     }
 
     func showInfo(_ ids: Set<String>? = nil) {
-        let ids = ids ?? selection
+        let ids = ids ?? selectedShowing
         guard let row = rows.first(where: { ids.contains($0.id) && !$0.isContainer }) else {
             NSSound.beep()
             return
@@ -1521,7 +1528,7 @@ final class LibraryModel {
 
     func editCaption(_ ids: Set<String>? = nil) {
         guard changesAllowed() else { return }
-        let ids = ids ?? selection
+        let ids = ids ?? selectedShowing
         // Files in an added folder have their caption written into the file (#31).
         let files = files(for: ids)
         if !files.isEmpty {
@@ -1678,7 +1685,7 @@ final class LibraryModel {
     /// replacing captions people wrote.
     func useDescriptionAsCaption(_ ids: Set<String>? = nil) {
         guard changesAllowed() else { return }
-        let ids = ids ?? selection
+        let ids = ids ?? selectedShowing
         let files = files(for: ids)
         if !files.isEmpty {
             guard assets(for: ids).isEmpty else { announceMixedSelection(); return }

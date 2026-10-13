@@ -171,14 +171,29 @@ final class StatusBarTests: XCTestCase {
         let model = library.model
         model.selection = [library.id("a.jpg"), library.id("c.jpg")]
         model.searchText = "mov"
+        // At once, nothing hidden is counted or acted on.
         XCTAssertEqual(model.statusText, "1 item")
-        XCTAssertTrue(model.selection.isEmpty)
+        XCTAssertTrue(model.selectedShowing.isEmpty)
+        // Once typing pauses, the hidden rows leave the selection, and clearing the search doesn't bring them back.
+        try await waitUntil("the hidden rows to leave the selection") { model.selection.isEmpty }
         model.searchText = ""
         XCTAssertTrue(model.selection.isEmpty)
         model.selection = [library.id("a.jpg"), library.id("c.jpg")]
         model.searchText = "a.jpg"
-        XCTAssertEqual(model.selection, [library.id("a.jpg")])
+        XCTAssertEqual(model.selectedShowing, [library.id("a.jpg")])
         XCTAssertEqual(model.statusText, "1 of 1 item selected")
+        try await waitUntil("c.jpg to leave the selection") { model.selection == [library.id("a.jpg")] }
+    }
+
+    @MainActor
+    func testATypoThatHidesThePhotoForAMomentKeepsItSelected() async throws {
+        let library = try await makeLibrary()
+        let model = library.model
+        model.selection = [library.id("a.jpg")]
+        model.searchText = "x"
+        model.searchText = ""
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(model.selection, [library.id("a.jpg")])
     }
 
     @MainActor
