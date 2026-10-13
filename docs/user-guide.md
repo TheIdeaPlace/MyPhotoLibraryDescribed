@@ -97,7 +97,7 @@ On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save
 - **Check System…** checks that your computer can describe photos, and says what to do if it can't.
 - **Mac only, for now:** User Guide opens this guide, and Privacy Policy opens the privacy policy.
 - **Check AI Description…** describes a sample photo that comes with the app (a red mug on a table beside a sign reading OPEN), to show describing works end to end. It saves nothing.
-- **Windows only, for now:** Open Log Folder opens the diagnostic log.
+- **Open Log Folder** shows the diagnostic log: one file a day, kept two weeks, of what went wrong. It stays on your computer unless you attach it to a bug report; it names files and folders, so look at it first.
 
 ## Keyboard shortcut reference
 
