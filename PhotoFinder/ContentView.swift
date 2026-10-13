@@ -24,6 +24,21 @@ struct BrowserView: View {
     /// Where F6 is taking you in the status bar, while its sections become focusable.
     @State private var pendingStatusFocus: Pane?
 
+    /// Moves focus into the status bar once its sections can take it: a few tries, a moment apart, stopping as soon
+    /// as focus is there or another move (F6 again, a click) replaced this one.
+    private func focusStatusBar(_ target: Pane) {
+        Task { @MainActor in
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .milliseconds(30))
+                guard pendingStatusFocus == target else { return }
+                pane = target
+                try? await Task.sleep(for: .milliseconds(30))
+                if pane == target { break }
+            }
+            if pendingStatusFocus == target { pendingStatusFocus = nil }
+        }
+    }
+
     var body: some View {
         @Bindable var model = model
         NavigationSplitView {
@@ -54,26 +69,23 @@ struct BrowserView: View {
                                                                by: model.paneRequest.direction,
                                                                showingDescription: model.showDescriptionPanel)
             if target == .search {
+                pendingStatusFocus = nil
                 searchFocused = true
             } else if case .status = target {
                 searchFocused = false
-                if model.statusBarReachable {
-                    pane = target
-                } else {
-                    // Focusable first; focus moves once SwiftUI has made the sections focus targets (onChange below).
-                    pendingStatusFocus = target
-                    model.statusBarReachable = true
-                }
+                // Focusable first, then focus moves once SwiftUI has made the sections focus targets. Setting focus in
+                // the same update did nothing (Kelly, 13 Oct: F6 never reached the status bar), so it's set a moment
+                // later and again until it takes.
+                model.statusBarReachable = true
+                pendingStatusFocus = target
+                focusStatusBar(target)
             } else {
+                pendingStatusFocus = nil
                 searchFocused = false
                 pane = target
             }
         }
-        .onChange(of: model.statusBarReachable) {
-            guard model.statusBarReachable, let target = pendingStatusFocus else { return }
-            pendingStatusFocus = nil
-            pane = target
-        }
+
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .sheet(item: $model.infoTarget) { InfoView(target: $0) }
         .sheet(item: $model.captionTarget) { CaptionEditor(target: $0, model: model) }
@@ -452,8 +464,10 @@ private struct StatusBar: View {
                     .accessibilityHidden(true)
             }
             ForEach(shown, id: \.self) { section in
+                // `.edit`, not the default `.activate`: macOS only lets `.activate` views take focus when Keyboard
+                // navigation is on in System Settings, so F6 found nowhere to land without it.
                 Text(text(section) ?? "")
-                    .focusable(model.statusBarReachable)
+                    .focusable(model.statusBarReachable, interactions: .edit)
                     .focused(pane, equals: .status(section))
             }
             Spacer()
