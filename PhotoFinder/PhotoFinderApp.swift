@@ -119,6 +119,9 @@ struct PhotoCommands: Commands {
                 model.systemCheckRequest += 1
                 openWindow(id: "systemCheck")
             }
+            Divider()
+            Button("\(AppInfo.name) User Guide") { NSWorkspace.shared.open(AppInfo.userGuideURL) }
+            Button("Privacy Policy") { NSWorkspace.shared.open(AppInfo.privacyPolicyURL) }
         }
         CommandMenu("Go") {
             Button("Enclosing Folder") { model.goToEnclosingFolder() }
