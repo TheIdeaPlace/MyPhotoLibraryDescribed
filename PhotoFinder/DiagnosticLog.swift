@@ -3,7 +3,7 @@ import os
 
 /// A plain-text diagnostic log (#103), as on Windows (#98): one file a day in the data folder's Logs folder, kept for
 /// two weeks, with what Photo Finder started with and what went wrong (Apple Intelligence, describing, background
-/// describing, saving, uncaught exceptions). It stays on this Mac unless the person sends it; Help > Open Log Folder
+/// describing, saving, Objective-C exceptions no one caught, which AppKit leaves to it off the main thread). It stays on this Mac unless the person sends it; Help > Open Log Folder
 /// shows it. The home folder is written as ~, but file names are kept, so a bug report says to look before attaching
 /// it. Each line also goes to the unified log, so Console shows the same. Never throws.
 enum DiagnosticLog {

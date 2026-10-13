@@ -154,7 +154,11 @@ final class BackgroundDescriber {
             }
             busyWaits = 0
             failedIDs.insert(id)
-            if failure is BackgroundError { DiagnosticLog.write("background", "Couldn't read a photo to describe it") }
+            if failure is BackgroundError {
+                let name = id.hasPrefix(Self.filePrefix) ? (String(id.dropFirst(Self.filePrefix.count)) as NSString).lastPathComponent
+                    : "a photo in the Photos library"
+                DiagnosticLog.write("background", "Couldn't read \(name) to describe it")
+            }
             if Self.isAboutThisPhoto(failure) {
                 queue.finished(described: false)
                 continue

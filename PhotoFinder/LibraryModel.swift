@@ -1356,7 +1356,7 @@ final class LibraryModel {
                 try await work()
             } catch {
                 // Read-only says so itself; that isn't something that went wrong.
-                if !(error is PhotoChanges.ReadOnly) { DiagnosticLog.write("save", "\(label) failed: \(Self.describe(error))") }
+                if !(error is PhotoChanges.ReadOnly) { DiagnosticLog.write("action", "\(label.trimmingCharacters(in: CharacterSet(charactersIn: "…"))) failed: \(Self.describe(error))") }
                 errorMessage = error.localizedDescription
             }
             activity = nil
@@ -2235,7 +2235,9 @@ final class LibraryModel {
     /// Help > Open Log Folder (#103): the diagnostic log's folder in Finder.
     func openLogFolder() {
         try? FileManager.default.createDirectory(at: DiagnosticLog.folder, withIntermediateDirectories: true)
-        NSWorkspace.shared.open(DiagnosticLog.folder)
+        if !NSWorkspace.shared.open(DiagnosticLog.folder) {
+            errorMessage = "The log folder couldn't be opened. It's in your Library folder, under Application Support/\(AppInfo.dataFolderName)/Logs."
+        }
     }
 
     /// Help > Report a Bug…: a new GitHub issue with the system check filled in, and the same text on the clipboard
