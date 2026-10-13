@@ -251,6 +251,7 @@ enum PNGMetadata {
             return nil
         }
         let entry = entries + index * 12
+        var blanked = 0..<0
         // The text, when it's too long to sit in the entry itself.
         let sizes: [UInt16: Int] = [1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8]
         let type = readUInt16(exif, entry + 2, bigEndian: big)
@@ -267,6 +268,7 @@ enum PNGMetadata {
                 // to. An orphaned string is harmless; zeroing bytes still in use isn't (#76's review).
                 if !usedElsewhere(offset..<end, in: exif, ifd: ifd, count: count, except: index, bigEndian: big) {
                     for i in offset..<end { exif[i] = 0 }
+                    blanked = offset..<end
                 }
             }
         }
@@ -276,6 +278,11 @@ enum PNGMetadata {
         let newCount = UInt16(count - 1)
         exif.replaceSubrange(ifd..<(ifd + 2), with: big ? [UInt8(newCount >> 8), UInt8(newCount & 0xFF)]
                                                        : [UInt8(newCount & 0xFF), UInt8(newCount >> 8)])
+        // A last look (#111): only IFD0's table and the old text may differ, so a mistake here can never reach the
+        // maker note, the thumbnail or any other value.
+        guard exif.count == input.count,
+              exif.indices.allSatisfy({ exif[$0] == input[$0] || (ifd..<tableEnd).contains($0) || blanked.contains($0) })
+        else { throw Failure.malformed("Its EXIF description couldn't be removed safely.") }
         return exif
     }
 
@@ -287,18 +294,26 @@ enum PNGMetadata {
         let pointerTags: Set<UInt16> = [0x8769, 0x8825, 0xA005]
         var used: [Range<Int>] = []
         var visited: Set<Int> = [ifd]
+        // Too many directories to follow (a loop, or a damaged file): the bytes are taken to be in use.
+        var gaveUp = false
         func clamp(_ start: Int, _ length: Int) {
             guard start >= 0, start < exif.count, length > 0 else { return }
             used.append(start..<(start + min(length, exif.count - start)))
         }
         /// The directory's table, its entries' values and the directories they lead to; IFD0's own entry `skip` aside.
         func directory(at offset: Int, skipping skip: Int? = nil) {
-            guard offset >= 8, offset + 2 <= exif.count, visited.count < 16 else { return }
+            guard offset >= 8, offset + 2 <= exif.count else { return }
+            guard visited.count < 16 else {
+                gaveUp = true
+                return
+            }
             if offset != ifd { guard visited.insert(offset).inserted else { return } }
             let n = Int(readUInt16(exif, offset, bigEndian: big))
             let tableEnd = offset + 2 + n * 12
             clamp(offset, 2 + n * 12 + 4)
-            guard tableEnd + 4 <= exif.count else { return }
+            // Its entries are followed even when the next directory's offset after them is missing, as some writers
+            // leave it out of the Exif directory (#111).
+            guard tableEnd <= exif.count else { return }
             var thumbnail: (at: Int?, length: Int?) = (nil, nil)
             for i in 0..<n where i != skip {
                 let entry = offset + 2 + i * 12
@@ -312,11 +327,11 @@ enum PNGMetadata {
                 if !overflow, bytes > 4 { clamp(value, bytes) }
             }
             if let at = thumbnail.at, let length = thumbnail.length { clamp(at, length) }
-            directory(at: Int(readUInt32(exif, tableEnd, bigEndian: big)))
+            if tableEnd + 4 <= exif.count { directory(at: Int(readUInt32(exif, tableEnd, bigEndian: big))) }
         }
         directory(at: ifd, skipping: skip)
         // IFD0's own table is where the entry is removed, which is never "used elsewhere".
-        return used.dropFirst().contains { $0.overlaps(range) }
+        return gaveUp || used.dropFirst().contains { $0.overlaps(range) }
     }
 
     // MARK: - Bytes

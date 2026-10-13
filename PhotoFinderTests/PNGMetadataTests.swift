@@ -459,4 +459,25 @@ final class PNGMetadataTests: XCTestCase {
         XCTAssertThrowsError(try PNGMetadata.removingImageDescription(fromEXIF: Array("XX".utf8) + [0, 42, 0, 0, 0, 8]))
         XCTAssertNil(try PNGMetadata.removingImageDescription(fromEXIF: exif(big: true, description: nil)))
     }
+
+    /// #111: an Exif directory at the end, written without the next directory's offset, whose value shares the
+    /// description's bytes. Those bytes are still in use, so they're left as they are.
+    func testSharedDescriptionBytesInAnExifDirectoryWithoutANextOffsetAreKept() throws {
+        func u16(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8(v >> 8)] }
+        func u32(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8(v >> 24)] }
+        let text = Array("Hello world!".utf8)
+        let description = 38, exifIFD = description + text.count
+        var exif: [UInt8] = [0x49, 0x49] + u16(42) + u32(8)
+        exif += u16(2)
+        exif += u16(0x010E) + u16(2) + u32(text.count) + u32(description)
+        exif += u16(0x8769) + u16(4) + u32(1) + u32(exifIFD)
+        exif += u32(0)
+        exif += text
+        exif += u16(1) + u16(0x9286) + u16(7) + u32(text.count) + u32(description)  // no next offset
+        let result = try XCTUnwrap(PNGMetadata.removingImageDescription(fromEXIF: exif))
+        XCTAssertEqual(result.count, exif.count)
+        XCTAssertEqual(Array(result[description..<exifIFD]), text)
+        XCTAssertEqual(Array(result[exifIFD...]), Array(exif[exifIFD...]))
+        XCTAssertEqual(result[8], 1)
+    }
 }

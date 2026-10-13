@@ -177,9 +177,16 @@ enum FileMetadataWriter {
             // description copied as it was. ImageIO's copy of a JPEG can drop its comment and most of its EXIF, the
             // embedded thumbnail included.
             try writeEdited(from: url, to: temp) { data in
-                type as String == UTType.png.identifier
-                    ? try PNGMetadata.rewrite(data, setting: expected, removingEXIFDescription: expected.keys.contains(captionPath))
-                    : try JPEGMetadata.rewrite(data, setting: expected)
+                if type as String == UTType.png.identifier {
+                    return try PNGMetadata.rewrite(data, setting: expected,
+                                                   removingEXIFDescription: expected.keys.contains(captionPath))
+                }
+                // The bytes being rewritten are the ones checked (#111): a file replaced since the check above isn't
+                // written.
+                guard !JPEGLayout.hasMultiPicture(data), JPEGLayout.trailingData(data) == jpegTail else {
+                    throw PNGMetadata.Failure.malformed("It changed while it was being saved.")
+                }
+                return try JPEGMetadata.rewrite(data, setting: expected)
             }
             guard readsBack(temp, expected) else { throw FileMetadataWriteError.notWritten("The new metadata didn't read back.") }
         } else {
