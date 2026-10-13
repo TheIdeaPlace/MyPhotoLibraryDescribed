@@ -84,7 +84,7 @@ struct DescriptionPanel: View {
             if let oldID, oldID == draftID { save(oldID) }
             load()
         }
-        // A description arriving (automatic describing, Describe Again) shows at once, even while you're in the box,
+        // A description arriving (automatic describing, Redescribe) shows at once, even while you're in the box,
         // unless you've started changing it.
         .onChange(of: model.descriptionRevision) {
             if !isDirty { load() }

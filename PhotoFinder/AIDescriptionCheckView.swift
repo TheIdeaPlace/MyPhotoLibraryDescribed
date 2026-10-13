@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Help > Check AI Description… (#95): the sample photo's description first, so focus lands on it and VoiceOver reads
-/// it, then whether it mentions what the sample shows, the time and the model, with Describe Again, Copy to Clipboard
+/// it, then whether it mentions what the sample shows, the time and the model, with Redescribe, Copy to Clipboard
 /// and Report a Bug. Laid out like Check System, as on Windows, where both use the same window.
 struct AIDescriptionCheckView: View {
     @Environment(LibraryModel.self) private var model

@@ -269,7 +269,7 @@ struct AppleIntelligenceSection: View {
             if let conversation, conversation.startedFromSaved, !conversation.isWorking {
                 // A saved description may be stale (the photo was edited) or poor: describing again replaces it.
                 Button("Redescribe") {
-                    // As Photo > Describe Again: a description the person corrected is replaced only if they agree.
+                    // As Photo > Redescribe: a description the person corrected is replaced only if they agree.
                     let agreed = model.descriptions.isEdited(forKey: descriptionKey)
                         ? model.descriptions.description(forKey: descriptionKey) : nil
                     if agreed != nil {
@@ -321,7 +321,7 @@ struct AppleIntelligenceSection: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// `replacingEdit` is the correction the person agreed Describe Again may replace; any other correction is kept.
+    /// `replacingEdit` is the correction the person agreed Redescribe may replace; any other correction is kept.
     private func start(replacingEdit: String? = nil) {
         guard let imageData else { return }
         let cache = model.descriptions

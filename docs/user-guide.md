@@ -47,7 +47,7 @@ The window has a sidebar (the library, albums on the Mac, and folders), the list
 While you step through photos one at a time, Photo Finder quietly describes the next one in the direction you're going, so it's ready when you get there. It doesn't do this on Low Power Mode / energy saver.
 
 - **Describe Photo** (Command-D / Ctrl+Shift+D, becoming Ctrl+D) describes the photo you're on and reads it, whether or not automatic descriptions are on.
-- **Redescribe** (Command-R / Ctrl+Alt+Shift+D, becoming Ctrl+R) describes it afresh and replaces the saved description. (On Windows it's still called Redescribe for now.)
+- **Redescribe** (Command-R / Ctrl+Alt+Shift+D, becoming Ctrl+R) describes it afresh and replaces the saved description. (On Windows it's still called Describe Again for now.)
 - **Describe in the background:** Photo > Describe Photos in the Background describes photos that haven't been described yet behind the scenes, so their descriptions are ready when you get to them. Photo > Stop Background Describing stops it for now.
 
 How photos are described: on the Mac, Settings has the prompt Apple Intelligence is given (leave it empty for the standard one). On Windows, Photo > Description Type chooses Accessible, Detailed, Brief or Diagram.
