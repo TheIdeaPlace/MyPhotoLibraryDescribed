@@ -97,9 +97,8 @@ final class BackgroundQueueMoreTests: XCTestCase {
         queue.skippedNotOnThisMac()
         let summary = queue.summary
         XCTAssertTrue(summary?.contains("1 photo wasn't described because it's only in iCloud.") == true, "\(summary ?? "nil")")
-        // Found by #21: it starts "Finished describing 0 photos in the background.", which says nothing useful.
-        XCTExpectFailure("#21: the summary says \"Finished describing 0 photos\" when every photo was only in iCloud")
-        XCTAssertFalse(summary?.hasPrefix("Finished describing 0 photos") == true, "\(summary ?? "nil")")
+        // Found by #21: it started "Finished describing 0 photos in the background."
+        XCTAssertEqual(summary, "Background describing finished. 1 photo wasn't described because it's only in iCloud.")
     }
 
     func testAPhotoNotDescribedNeitherResetsNorAddsToTheFailuresInARow() {
@@ -115,9 +114,13 @@ final class BackgroundQueueMoreTests: XCTestCase {
 
     func testTheStoppedMessageCountsOnePhotoLeft() {
         // Found by #21: "so 1 photo weren't tried". Spoken and shown in the status bar.
-        XCTExpectFailure("#21: one photo left reads \"1 photo weren't tried\"")
         XCTAssertEqual(BackgroundQueue.stoppedMessage(left: 1, reason: "Apple Intelligence isn't ready."),
                        "Background describing stopped: 5 photos in a row couldn't be described, so 1 photo wasn't tried. Apple Intelligence isn't ready.")
+    }
+
+    func testTheStoppedMessageWithNothingLeftSaysNothingAboutIt() {
+        XCTAssertEqual(BackgroundQueue.stoppedMessage(left: 0, reason: "Apple Intelligence isn't ready."),
+                       "Background describing stopped: 5 photos in a row couldn't be described. Apple Intelligence isn't ready.")
     }
 
     func testResetStartsAFreshRun() {

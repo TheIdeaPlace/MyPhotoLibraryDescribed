@@ -165,14 +165,37 @@ final class StatusBarTests: XCTestCase {
 
     @MainActor
     func testASelectionHiddenBySearchIsntCounted() async throws {
-        // Found by #21. Windows keeps only the rows a search still shows selected, so its status bar never says more
-        // are selected than are listed. On the Mac the selection outlives the search, so it reads "2 of 1 item selected".
+        // Found by #21: it read "2 of 1 item selected", while Favorite and the rest acted on both. Rows a search hides
+        // now leave the selection, as on Windows, and don't come back when the search is cleared.
         let library = try await makeLibrary()
         let model = library.model
         model.selection = [library.id("a.jpg"), library.id("c.jpg")]
         model.searchText = "mov"
-        XCTExpectFailure("#21: a selection hidden by search is still counted in the status bar")
+        // At once, nothing hidden is counted or acted on.
         XCTAssertEqual(model.statusText, "1 item")
+        XCTAssertTrue(model.selectedShowing.isEmpty)
+        // A context menu's rows too.
+        XCTAssertTrue(model.showing([library.id("a.jpg")]).isEmpty)
+        // Once typing pauses, the hidden rows leave the selection, and clearing the search doesn't bring them back.
+        try await waitUntil("the hidden rows to leave the selection") { model.selection.isEmpty }
+        model.searchText = ""
+        XCTAssertTrue(model.selection.isEmpty)
+        model.selection = [library.id("a.jpg"), library.id("c.jpg")]
+        model.searchText = "a.jpg"
+        XCTAssertEqual(model.selectedShowing, [library.id("a.jpg")])
+        XCTAssertEqual(model.statusText, "1 of 1 item selected")
+        try await waitUntil("c.jpg to leave the selection") { model.selection == [library.id("a.jpg")] }
+    }
+
+    @MainActor
+    func testATypoThatHidesThePhotoForAMomentKeepsItSelected() async throws {
+        let library = try await makeLibrary()
+        let model = library.model
+        model.selection = [library.id("a.jpg")]
+        model.searchText = "x"
+        model.searchText = ""
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(model.selection, [library.id("a.jpg")])
     }
 
     @MainActor
