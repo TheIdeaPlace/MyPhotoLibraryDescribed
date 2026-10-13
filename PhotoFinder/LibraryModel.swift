@@ -1433,7 +1433,6 @@ final class LibraryModel {
     private(set) var saveInPhotos: Bool = CaptionPolicy.isOn(in: .standard)
     var captionPolicy: CaptionPolicy { saveInPhotos ? .whenEmpty : .never }
 
-    /// Turns Save Descriptions in Photos on, after asking, or off. Asking is the permission to change people's photos.
     /// Save Descriptions in Photos, as the Photo menu and Settings show it: paused, and unchecked, while read-only.
     var saveInPhotosTitle: String {
         readOnly && saveInPhotos ? "Save Descriptions in Photos (Paused While Read-Only)" : "Save Descriptions in Photos"
@@ -1446,6 +1445,7 @@ final class LibraryModel {
         setSaveInPhotos(readOnly && saveInPhotos ? false : on)
     }
 
+    /// Turns Save Descriptions in Photos on, after asking, or off. Asking is the permission to change people's photos.
     func setSaveInPhotos(_ on: Bool) {
         if on, readOnly {
             announce(PhotoChanges.readOnlyMessage)
@@ -1466,6 +1466,30 @@ final class LibraryModel {
         saveInPhotos = on
         UserDefaults.standard.set(on, forKey: CaptionPolicy.key)
         announce(on ? "New descriptions are saved in your photos" : "Descriptions aren't saved in your photos")
+    }
+
+    // MARK: - Place names (#105)
+
+    /// Settings > Look up place names: off until the person agrees once, since it sends coordinates to Apple.
+    private(set) var lookUpPlaceNames: Bool = PlaceNames.isOn(in: .standard)
+
+    /// Turns place names on, after saying what's sent and to whom, or off.
+    func setLookUpPlaceNames(_ on: Bool) {
+        if on {
+            let alert = NSAlert()
+            alert.messageText = PlaceNames.question
+            alert.informativeText = PlaceNames.explanation
+            alert.addButton(withTitle: "Look Up Place Names")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                // Set again, so Settings' checkbox, already showing on, redraws as off.
+                lookUpPlaceNames = false
+                return
+            }
+        }
+        lookUpPlaceNames = on
+        UserDefaults.standard.set(on, forKey: PlaceNames.key)
+        announce(on ? "Get Info looks up place names" : "Place names aren't looked up")
     }
 
     /// Photo > Use Description as Caption: each selected photo's saved description becomes its caption. Asks before

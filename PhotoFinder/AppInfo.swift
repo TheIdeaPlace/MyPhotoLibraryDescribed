@@ -29,6 +29,10 @@ enum AppInfo {
     /// Where Report a Bug files issues, until the app kit's relay is set up for this app (#33).
     static let issuesURL = URL(string: "https://github.com/\(repository)/issues/new")!
 
+    /// Help > User Guide and Help > Privacy Policy: the documents in the repo, shared by the Mac and Windows apps (#105).
+    static let userGuideURL = URL(string: "https://github.com/\(repository)/blob/main/docs/user-guide.md")!
+    static let privacyPolicyURL = URL(string: "https://github.com/\(repository)/blob/main/docs/PRIVACY.md")!
+
     /// The release notes of a Mac version, for "See What's New".
     static func releaseNotesURL(_ version: String) -> URL {
         URL(string: "https://github.com/\(repository)/releases/tag/\(Updates.tagPrefix)\(version)")!

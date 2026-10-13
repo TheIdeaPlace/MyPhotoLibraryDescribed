@@ -39,6 +39,17 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section {
+                // Asks before it turns on, since it sends coordinates to Apple (#105).
+                Toggle("Look up place names", isOn: Binding(
+                    get: { model.lookUpPlaceNames },
+                    set: { model.setLookUpPlaceNames($0) }
+                ))
+            } footer: {
+                Text("Off until you turn it on. Then Get Info names the place a photo was taken, by sending its coordinates (nothing else) to Apple's location service. Coordinates are shown either way. Help > Privacy Policy says more.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 520)

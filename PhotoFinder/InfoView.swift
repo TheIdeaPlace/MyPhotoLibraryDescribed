@@ -256,8 +256,10 @@ enum PhotoMetadata {
         return (fields, data)
     }
 
+    /// The place's name, only when Look up place names is on: finding it sends the coordinates to Apple (#105).
     private static func placeName(for location: CLLocation) async -> String? {
-        guard let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }
+        guard PlaceNames.isOn(in: .standard),
+              let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }
         var parts: [String] = []
         for part in [placemark.name, placemark.locality, placemark.administrativeArea, placemark.country] {
             if let part, !parts.contains(part) { parts.append(part) }
