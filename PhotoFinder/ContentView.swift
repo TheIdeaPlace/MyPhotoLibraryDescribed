@@ -386,8 +386,11 @@ private struct GalleryFooter: View {
                 Text(row.name)
                     .font(.headline)
                 // Kind and size on one line, the date on its own, so a long date doesn't break mid-phrase (#35's look).
-                Text([row.kind, row.dimensions].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .foregroundStyle(.secondary)
+                let details = [row.kind, row.dimensions].filter { !$0.isEmpty }.joined(separator: " · ")
+                if !details.isEmpty {
+                    Text(details)
+                        .foregroundStyle(.secondary)
+                }
                 if !row.dateText.isEmpty {
                     Text(row.dateText)
                         .foregroundStyle(.secondary)
