@@ -211,6 +211,7 @@ enum PhotoDescriber {
             return answer
         } catch {
             if !(error is CancellationError), !Task.isCancelled, countsBusy || !isRateLimited(error) {
+                DiagnosticLog.write("describe", "Apple Intelligence failed: \(ImageConversation.failureCode(for: error)): \(ImageConversation.message(for: error))")
                 DescribeStats.session.failed(code: ImageConversation.failureCode(for: error),
                                              message: ImageConversation.message(for: error))
             }

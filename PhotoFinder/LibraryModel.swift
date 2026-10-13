@@ -473,11 +473,14 @@ final class LibraryModel {
 
     func start() async {
         guard authState == .unknown else { return }
+        DiagnosticLog.started(appleIntelligence: describeUnavailableReason ?? "available")
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         guard status == .authorized || status == .limited else {
+            DiagnosticLog.write("start", "Photos access not given")
             authState = .denied
             return
         }
+        DiagnosticLog.write("start", "Photos access: \(status == .limited ? "limited" : "full"); \(folderRoots.count) added folders")
         authState = .authorized
         try? FileManager.default.removeItem(at: PhotoExporter.temporaryRoot)
 
@@ -1352,6 +1355,8 @@ final class LibraryModel {
             do {
                 try await work()
             } catch {
+                // Read-only says so itself; that isn't something that went wrong.
+                if !(error is PhotoChanges.ReadOnly) { DiagnosticLog.write("action", "\(label.trimmingCharacters(in: CharacterSet(charactersIn: "…"))) failed: \(Self.describe(error))") }
                 errorMessage = error.localizedDescription
             }
             activity = nil
@@ -1701,6 +1706,7 @@ final class LibraryModel {
                 outcome.skipped.append((file.name, "Multi-picture JPEG"))
             case .failure(let error):
                 Self.log.error("Couldn't write into \(file.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                DiagnosticLog.write("save", "Couldn't write into \(file.name): \(Self.describe(error))")
                 outcome.failed.append((file.name, error.localizedDescription))
             }
         }
@@ -1801,6 +1807,9 @@ final class LibraryModel {
             }
         } catch {
             log.error("Couldn't save a description as a caption: \(error.localizedDescription, privacy: .public)")
+            if !(error is PhotoChanges.ReadOnly) {
+                DiagnosticLog.write("save", "Couldn't save a description as a caption: \(Self.describe(error))")
+            }
         }
     }
 
@@ -2187,6 +2196,7 @@ final class LibraryModel {
             let check = AIDescriptionCheck(description: description, took: took, code: code, message: message,
                                            standardPrompt: standardPrompt, modelSystem: system)
             lastAIDescriptionCheck = check
+            DiagnosticLog.write("describe", "Check AI Description: \(check.reportSummary)")
             return check
         }
         // Apple Intelligence can't describe here: say so rather than try.
@@ -2214,6 +2224,20 @@ final class LibraryModel {
         }
 #endif
         return result(nil, took: 0, code: "unavailable", message: "Describing photos needs Apple Intelligence on macOS 27 or later")
+    }
+
+    /// An error for the diagnostic log: its type and code as well as its message, never a photo's content.
+    nonisolated static func describe(_ error: Error) -> String {
+        let ns = error as NSError
+        return "\(type(of: error)) \(ns.domain) \(ns.code): \(error.localizedDescription)"
+    }
+
+    /// Help > Open Log Folder (#103): the diagnostic log's folder in Finder.
+    func openLogFolder() {
+        try? FileManager.default.createDirectory(at: DiagnosticLog.folder, withIntermediateDirectories: true)
+        if !NSWorkspace.shared.open(DiagnosticLog.folder) {
+            errorMessage = "The log folder couldn't be opened. It's in your Library folder, under Application Support/\(AppInfo.dataFolderName)/Logs."
+        }
     }
 
     /// Help > Report a Bug…: a new GitHub issue with the system check filled in, and the same text on the clipboard

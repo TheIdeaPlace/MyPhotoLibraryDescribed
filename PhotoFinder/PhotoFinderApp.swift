@@ -130,6 +130,8 @@ struct PhotoCommands: Commands {
                 model.aiDescriptionCheckRequest += 1
                 openWindow(id: "aiDescriptionCheck")
             }
+            // The diagnostic log (#103), as on Windows.
+            Button("Open Log Folder") { model.openLogFolder() }
             Divider()
             Button("\(AppInfo.name) User Guide") { NSWorkspace.shared.open(AppInfo.userGuideURL) }
             Button("Privacy Policy") { NSWorkspace.shared.open(AppInfo.privacyPolicyURL) }
