@@ -92,6 +92,7 @@
                 <v:AppMenuItem x:Name="AutoDescribeItem" Command="v:AppCommands.AutoDescribe" IsCheckable="True" />
                 <v:AppMenuItem Header="Description T_ype" x:Name="KindMenu" />
                 <v:AppMenuItem Header="Save Descriptions _in Photos" x:Name="SaveInPhotosItem" IsCheckable="True" Click="SaveInPhotos_Click" />
+                <v:AppMenuItem Header="Look Up Place _Names" x:Name="PlaceNamesItem" IsCheckable="True" Click="PlaceNames_Click" />
                 <v:AppMenuItem x:Name="BackgroundDescribeItem" Command="v:AppCommands.DescribeInBackground" IsCheckable="True" />
                 <v:AppMenuItem Command="v:AppCommands.StopBackground" />
             </v:AppMenuItem>

@@ -63,6 +63,7 @@ public partial class MainWindow : Window
         BuildKindMenu();
         ReadOnlyItem.IsChecked = model.IsReadOnly;
         ShowSaveInPhotos();
+        PlaceNamesItem.IsChecked = model.Settings.LookUpPlaceNames;
         // Ctrl+F9 from Preview and Get Info too, which are modal over this window.
         if (!_statusKeyRegistered)
         {
@@ -342,6 +343,23 @@ public partial class MainWindow : Window
     /// <summary>Photo > Save Descriptions in Photos (#62, Kelly's 12 Oct direction): one switch, off until the person agrees
     /// once. Asking is the permission to change their photos; when on, only empty captions and alt text are filled.</summary>
     private void SaveInPhotos_Click(object sender, RoutedEventArgs e) => SetSaveInPhotos(!_model.Settings.SaveDescriptionsInPhotos);
+
+    private void PlaceNames_Click(object sender, RoutedEventArgs e) => SetLookUpPlaceNames(!_model.Settings.LookUpPlaceNames);
+
+    /// <summary>Photo > Look Up Place Names (#25): turning it on says what's sent and to whom, first, as on the Mac.</summary>
+    internal void SetLookUpPlaceNames(bool on)
+    {
+        if (on && !QuestionDialog.Ask(ActiveWindow, "Look Up Place Names", Services.PlaceNames.Question, Services.PlaceNames.Explanation,
+                "Look Up Place Names"))
+        {
+            PlaceNamesItem.IsChecked = false;
+            return;
+        }
+        _model.Settings.LookUpPlaceNames = on;
+        _model.SaveSettings();
+        PlaceNamesItem.IsChecked = on;
+        Services.Announcer.AnnounceAfter(on ? "Get Info looks up place names" : "Place names aren't looked up", "PhotoFinderSetting");
+    }
 
     /// <summary>"caption", "caption and alt text", "caption, alt text and extended description".</summary>
     private static string Joined(IReadOnlyList<string> items) =>
