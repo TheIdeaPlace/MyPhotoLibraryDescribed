@@ -306,7 +306,7 @@ final class FileMetadataWriterTests: XCTestCase {
                 theirs = (try? Data(contentsOf: url)) ?? Data()
             }
             XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: url), ext) { error in
-                XCTAssertEqual(error as? FileMetadataWriteError, .notWritten("It changed while it was being saved."), ext)
+                XCTAssertEqual(error as? FileMetadataWriteError, FileMetadataWriter.changedWhileSaving, ext)
             }
             XCTAssertFalse(theirs.isEmpty, ext)
             XCTAssertEqual(try Data(contentsOf: url), theirs, ext)
@@ -329,7 +329,9 @@ final class FileMetadataWriterTests: XCTestCase {
             _ = rename(other.path, url.path)
             theirs = bytes
         }
-        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: url))
+        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: url)) {
+            XCTAssertEqual($0 as? FileMetadataWriteError, FileMetadataWriter.changedWhileSaving)
+        }
         XCTAssertFalse(theirs.isEmpty)
         XCTAssertEqual(try Data(contentsOf: url), theirs)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: temp.path), ["replaced.jpg"])

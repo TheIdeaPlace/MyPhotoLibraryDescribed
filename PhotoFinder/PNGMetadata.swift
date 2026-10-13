@@ -341,7 +341,11 @@ enum PNGMetadata {
             let (bytes, overflow) = Int(readUInt32(old, entry + 4, bigEndian: big)).multipliedReportingOverflow(by: size)
             let offset = Int(readUInt32(old, entry + 8, bigEndian: big))
             let (end, past) = offset.addingReportingOverflow(bytes)
-            if !overflow, !past, bytes > 4, end <= old.count { text = offset..<end }
+            // Only where the rewrite may zero it: outside the header and IFD0's table, and used by nothing else.
+            if !overflow, !past, bytes > 4, offset >= 8, end <= old.count, end <= ifd || offset >= tableEnd,
+               !usedElsewhere(offset..<end, in: old, ifd: ifd, count: count, except: index, bigEndian: big) {
+                text = offset..<end
+            }
         }
         return old.indices.allSatisfy { i in
             old[i] == new[i] || (ifd..<tableEnd).contains(i) || (text.contains(i) && new[i] == 0)

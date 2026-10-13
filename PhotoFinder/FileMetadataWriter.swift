@@ -120,9 +120,20 @@ enum FileMetadataWriter {
         let created = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
         // The file is read once (#111): its format, its title, its layout and the bytes rewritten all come from these
         // bytes, so nothing is decided from one version of the file and written from another. Read whole rather than
-        // mapped, so another app writing into the file can't change them underneath.
-        guard let data = try? Data(contentsOf: url),
-              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+        // mapped, so another app writing into the file can't change them underneath; the dates compared just before
+        // the original is replaced catch a change made after this.
+        guard var data = try? Data(contentsOf: url) else { throw FileMetadataWriteError.unreadable }
+        // Reading can itself change the dates, as when iCloud Drive or another cloud folder downloads the file to read
+        // it. Then it's read again, and the dates from then on are the ones compared; if they move again, it's left.
+        var afterRead = stat()
+        guard stat(url.path, &afterRead) == 0 else { throw FileMetadataWriteError.unreadable }
+        if !sameFile(afterRead, info) {
+            info = afterRead
+            guard let again = try? Data(contentsOf: url) else { throw FileMetadataWriteError.unreadable }
+            data = again
+            guard stat(url.path, &afterRead) == 0, sameFile(afterRead, info) else { throw changedWhileSaving }
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               let type = CGImageSourceGetType(source), CGImageSourceGetCount(source) > 0 else {
             throw FileMetadataWriteError.unreadable
         }
@@ -215,9 +226,7 @@ enum FileMetadataWriter {
         // made from the old bytes.
         beforeReplacing?(url)
         var now = stat()
-        guard stat(url.path, &now) == 0, now.st_dev == info.st_dev, now.st_ino == info.st_ino, now.st_size == info.st_size,
-              now.st_mtimespec.tv_sec == info.st_mtimespec.tv_sec, now.st_mtimespec.tv_nsec == info.st_mtimespec.tv_nsec
-        else { throw FileMetadataWriteError.notWritten("It changed while it was being saved.") }
+        guard stat(url.path, &now) == 0, sameFile(now, info) else { throw changedWhileSaving }
 
         do {
             _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
@@ -242,6 +251,16 @@ enum FileMetadataWriter {
         guard let a = size(source), let b = size(copy) else { return false }
         return a == b
     }
+
+    /// The same file, unchanged: the same volume and file number, size and modified time.
+    private static func sameFile(_ a: stat, _ b: stat) -> Bool {
+        a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_size == b.st_size
+            && a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec && a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec
+    }
+
+    /// Windows' words for the same refusal.
+    static let changedWhileSaving = FileMetadataWriteError.notWritten(
+        "It changed while it was being saved (iCloud bringing a newer version, say), so it was left as it is. Try again.")
 
     /// Called by tests just before the original is replaced, to change it as another app might (#111).
     nonisolated(unsafe) static var beforeReplacing: ((URL) -> Void)?
