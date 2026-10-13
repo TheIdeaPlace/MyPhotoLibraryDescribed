@@ -43,18 +43,29 @@ struct LabelsSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TabView(selection: $tab) {
-                OrderListEditor(editor: $columns, text: .columns, preview: listPreview, focus: $focus,
-                                available: .listAvailable, shown: .listShown, isActive: tab == .list)
-                    .padding()
-                    .tabItem { Text("List") }
-                    .tag(Tab.list)
-                OrderListEditor(editor: $gallery, text: .gallery, preview: galleryPreview, focus: $focus,
-                                available: .galleryAvailable, shown: .galleryShown, isActive: tab == .gallery)
-                    .padding()
-                    .tabItem { Text("Gallery") }
-                    .tag(Tab.gallery)
+            // A segmented choice and the chosen editor below it, not a TabView: AppKit's tab view kept Tab circling
+            // inside the tabs, so Cancel and OK were never reached and the buttons read as empty groups (Kelly, 13 Oct).
+            Picker("Labels for", selection: $tab) {
+                Text("List").tag(Tab.list)
+                Text("Gallery").tag(Tab.gallery)
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Labels for")
+            Group {
+                switch tab {
+                case .list:
+                    OrderListEditor(editor: $columns, text: .columns, preview: listPreview, focus: $focus,
+                                    available: .listAvailable, shown: .listShown, isActive: true)
+                case .gallery:
+                    OrderListEditor(editor: $gallery, text: .gallery, preview: galleryPreview, focus: $focus,
+                                    available: .galleryAvailable, shown: .galleryShown, isActive: true)
+                }
+            }
+            .padding()
+            .background(RoundedRectangle(cornerRadius: 10).fill(.quaternary.opacity(0.4)))
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
@@ -71,8 +82,13 @@ struct LabelsSheet: View {
         .padding()
         .frame(minWidth: 660, minHeight: 540)
         .closesWithKeyboard(escape: false) { dismiss() }
-        // Set as the sheet's default rather than on appear, which can run before the sheet has a window.
+        // Set as the sheet's default rather than on appear, which can run before the sheet has a window; and once
+        // more a moment after it opens, since the segmented choice above otherwise took first focus.
         .defaultFocus($focus, tab == .gallery ? .galleryShown : .listShown)
+        .task {
+            try? await Task.sleep(for: .milliseconds(150))
+            focus = tab == .gallery ? .galleryShown : .listShown
+        }
     }
 }
 
@@ -165,7 +181,6 @@ struct OrderListEditor: View {
                 }
             }
             .frame(minHeight: 220)
-            .background(TabControlResizer())
             // Always enabled, so the order you meet them in never changes; each says when there's nothing it can do.
             // They wrap onto a second row rather than shortening a name when the sheet is too narrow for one.
             WrappingRow(spacing: 8) {
@@ -243,35 +258,6 @@ struct WrappingRow: Layout {
             y += height + spacing
         }
     }
-}
-
-/// Makes the Labels sheet's tab control as wide as its names. On macOS 26 and later, a TabView in a sheet can size its
-/// tab control before the second tab's name is set and not again, so it read "List | G…". Setting the names again,
-/// once the sheet is showing, sizes it to them. The tabs stay the system's own, so VoiceOver reads them as tabs.
-private struct TabControlResizer: NSViewRepresentable {
-    final class Probe: NSView {
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard window != nil else { return }
-            DispatchQueue.main.async { [weak self] in self?.resizeTabControl() }
-        }
-
-        private func resizeTabControl() {
-            var view = superview
-            while let current = view, !(current is NSTabView) { view = current.superview }
-            guard let tabs = view as? NSTabView else { return }
-            if let control = tabs.subviews.first(where: { $0 is NSSegmentedControl }),
-               control.frame.width >= control.intrinsicContentSize.width - 0.5 { return }
-            for item in tabs.tabViewItems {
-                let label = item.label
-                item.label = ""
-                item.label = label
-            }
-        }
-    }
-
-    func makeNSView(context: Context) -> Probe { Probe() }
-    func updateNSView(_ nsView: Probe, context: Context) {}
 }
 
 /// What one tab of the Labels sheet chooses from: the list's columns, or what the gallery reads.
