@@ -105,7 +105,10 @@ public partial class InfoWindow : Window
     /// <summary>The General list's lines. Changed in place, so the line with focus keeps it.</summary>
     private readonly System.Collections.ObjectModel.ObservableCollection<InfoLine> _general = [];
 
-    private IEnumerable<InfoLine> Lines() => GeneralFields(_row, _place).Select(f => new InfoLine(f.Label, f.Value));
+    private IEnumerable<InfoLine> Lines() => GeneralFields(_row, _place, !_placeIsNote).Select(f => new InfoLine(f.Label, f.Value));
+
+    /// <summary>The place line says lookups are paused (#128), rather than naming a place.</summary>
+    private bool _placeIsNote;
 
     /// <summary>With Look Up Place Names on, the place's name, added above the coordinates when it comes. Nothing is sent
     /// while it's off.</summary>
@@ -113,14 +116,18 @@ public partial class InfoWindow : Window
     {
         if (_place is not null || !_settings.LookUpPlaceNames || _item.Metadata is not { Latitude: { } lat, Longitude: { } lon }) return;
         var place = await _placeNames.LookUpAsync(lat, lon, _closing.Token);
-        if (place is null || _closing.IsCancellationRequested) return;
+        if (_closing.IsCancellationRequested) return;
+        // Switched off remotely (#128): says so where the name would be, rather than nothing.
+        if (place is null && _placeNames.Paused is { } paused) (place, _placeIsNote) = (paused, true);
+        if (place is null) return;
         _place = place;
         // Inserted above the coordinates, rather than the list rebuilt: the line you're on keeps focus, wherever it is.
         var at = _general.ToList().FindIndex(l => l.Label == "Coordinates");
         _general.Insert(at < 0 ? _general.Count : at, Lines().Single(l => l.Label == "Place Taken"));
     }
 
-    internal static List<InfoField> GeneralFields(FileRow row, string? place = null)
+    /// <param name="credited">The place is a name from OpenStreetMap, rather than a note that lookups are paused.</param>
+    internal static List<InfoField> GeneralFields(FileRow row, string? place = null, bool credited = true)
     {
         var item = row.Item!;
         var m = item.Metadata ?? MediaMetadata.Empty;
@@ -138,7 +145,8 @@ public partial class InfoWindow : Window
         if (m.AltText.Length > 0) fields.Add(new("Alt Text in the File", m.AltText));
         if (m.Keywords.Length > 0) fields.Add(new("Keywords", m.Keywords));
         if (m.Rating > 0) fields.Add(new("Rating", FileRow.StarsText(m.Rating)));
-        if (place is not null) fields.Add(new("Place Taken", $"{place} ({PlaceNames.Credit})"));
+        // A name gets OpenStreetMap's credit; the note that lookups are paused doesn't.
+        if (place is not null) fields.Add(new("Place Taken", credited ? $"{place} ({PlaceNames.Credit})" : place));
         if (m.Latitude is { } lat && m.Longitude is { } lon)
             fields.Add(new("Coordinates", string.Format(CultureInfo.CurrentCulture, "{0:0.00000}, {1:0.00000}", lat, lon)));
         fields.Add(new("File Type", MediaTypes.FileTypeDescription(item.Path)));
