@@ -98,8 +98,16 @@ struct BugReportView: View {
             HStack {
                 if sending { ProgressView().controlSize(.small).accessibilityHidden(true) }
                 Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
+                // While a report is on its way, closing would lose its answer (the issue's number, or the page to
+                // open instead), so it waits; the relay answers within 15 seconds (#147, as Windows does).
+                Button("Cancel", role: .cancel) {
+                    if sending {
+                        AccessibilityNotification.Announcement("Still sending").post()
+                    } else {
+                        dismiss()
+                    }
+                }
+                .keyboardShortcut(.cancelAction)
                 // Not the default button: Return in a field mustn't send a report half written.
                 Button(sending ? "Sending…" : "Send") { send() }
                     .disabled(sending)

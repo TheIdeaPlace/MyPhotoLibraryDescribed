@@ -54,8 +54,19 @@ struct BugReport: Equatable {
         return contact.isEmpty ? nil : contact
     }
 
+    /// The longest body sent. The relay cuts a body at 8,000 characters (counted as JavaScript does, in UTF-16 units),
+    /// which would lose the end of a crash log, the part that matters; so attachments lose their oldest lines first,
+    /// and the preview stays exactly what's sent (#147, as Windows does).
+    static let longestBody = 7800
+
+    /// Put in place of an attachment's lines left out to fit.
+    static let linesLeftOut = "(Earlier lines left out.)"
+
+    /// In place of an attachment when not even a line fits.
+    static let didntFit = "(Left out: the report is too long to include it.)"
+
     /// The issue's text, laid out as Report a Bug's page always was: the questions, then the system check, then
-    /// anything attached. An empty answer is left out rather than sent as an empty heading.
+    /// anything attached, within `longestBody`. An empty answer is left out rather than sent as an empty heading.
     var body: String {
         var sections: [String] = []
         func add(_ heading: String, _ text: String) {
@@ -71,10 +82,28 @@ struct BugReport: Equatable {
             add("Suggestion", suggestion)
         }
         if includeSystemCheck, !systemText.isEmpty { sections.append("**System**\n```\n\(systemText)\n```") }
+        var room = Self.longestBody - sections.reduce(0) { $0 + $1.utf16.count + 2 }
         for attachment in attachments where includeAttachments && !attachment.text.isEmpty {
-            sections.append("**\(attachment.heading)**\n```\n\(attachment.text)\n```")
+            let frame = "**\(attachment.heading)**\n```\n\n```".utf16.count + 2
+            let section = Self.fitted(attachment.text, room: room - frame)
+                .map { "**\(attachment.heading)**\n```\n\($0)\n```" } ?? "**\(attachment.heading)**\n\(Self.didntFit)"
+            sections.append(section)
+            room -= section.utf16.count + 2
         }
         return sections.isEmpty ? "(No details given.)" : sections.joined(separator: "\n\n")
+    }
+
+    /// The text, or its last lines within `room` after `linesLeftOut`; nil when not even a line fits.
+    static func fitted(_ text: String, room: Int) -> String? {
+        if text.utf16.count <= room { return text }
+        var kept: [Substring] = []
+        var used = linesLeftOut.utf16.count
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false).reversed() {
+            guard used + line.utf16.count + 1 <= room else { break }
+            kept.insert(line, at: 0)
+            used += line.utf16.count + 1
+        }
+        return kept.isEmpty ? nil : linesLeftOut + "\n" + kept.joined(separator: "\n")
     }
 
     /// Exactly what Send sends, for the form's preview: the title, the kind, the contact if there is one, and the body.
@@ -252,12 +281,17 @@ enum CrashCheck {
             .max { $0.1 < $1.1 }?.0
     }
 
+    /// A line of a crash report or the log longer than this is cut.
+    static let longestLine = 1500
+
     /// The first lines of a text, or the last, without folder paths: a crash report or the log is public once sent.
     static func excerpt(_ text: String, first: Int? = nil, last: Int? = nil, home: String = NSHomeDirectory()) -> String {
         var lines = text.components(separatedBy: .newlines)
         while lines.last?.isEmpty == true { lines.removeLast() }
         if let first { lines = Array(lines.prefix(first)) }
         if let last { lines = Array(lines.suffix(last)) }
+        // One very long line (a whole error, say) can't crowd out the rest of the report (#147, as Windows does).
+        lines = lines.map { $0.count > longestLine ? String($0.prefix(longestLine)) + " …" : $0 }
         return Privacy.redact(lines.joined(separator: "\n"), home: home)
     }
 
