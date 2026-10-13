@@ -1898,7 +1898,11 @@ final class LibraryModel {
     // MARK: - Help
 
     /// A newer Mac release, found by the quiet check at launch or by Check for Updates.
-    private(set) var availableUpdate: Updates.Release?
+    /// Remembered across restarts until it's installed (#104), so Help keeps saying "Update to X available…".
+    private(set) var availableUpdate: Updates.Release? = Updates.remembered(running: AppInfo.shortVersion,
+                                                                             in: .standard) {
+        didSet { Updates.remember(availableUpdate, in: .standard) }
+    }
 
     /// Once a day at most, a moment after launch: is there a newer release? Says nothing; the Help menu item changes.
     func checkForUpdatesQuietly() {
