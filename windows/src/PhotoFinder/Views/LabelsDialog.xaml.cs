@@ -32,6 +32,9 @@ public partial class LabelsDialog : Window
             "Available labels", "Shown labels, in the order they're read", "Every label is shown.",
             "Preview of how the selected photo reads in the gallery",
             shown => sample is null ? none : GalleryLabels.Text(sample, number, Math.Max(count, 1), shown)), GalleryLabels.Clean(gallery));
+        // Said with the tab, once, rather than with every item in its lists (Kelly, with JAWS).
+        System.Windows.Automation.AutomationProperties.SetHelpText(ListTab, ListEditor.Explanation.Text);
+        System.Windows.Automation.AutomationProperties.SetHelpText(GalleryTab, GalleryEditor.Explanation.Text);
         Tabs.SelectedItem = galleryFirst ? GalleryTab : ListTab;
         Loaded += (_, _) => (galleryFirst ? GalleryEditor : ListEditor).FocusShown();
     }

@@ -79,6 +79,11 @@ public sealed class GalleryLabelsTests : IDisposable
             Assert.Equal(["position"], dialog.ShownGalleryLabels);
             Assert.Equal("Labels reset to the default: Position.", _announced[^1]);
             Assert.Equal("Available labels", System.Windows.Automation.AutomationProperties.GetName(gallery.AvailableList));
+            // The explanation is said with the tab, not with every item in the lists.
+            Assert.Equal("", System.Windows.Automation.AutomationProperties.GetHelpText(gallery.ShownList));
+            Assert.Equal("", System.Windows.Automation.AutomationProperties.GetHelpText(gallery.AvailableList));
+            Assert.StartsWith("Choose what's read", System.Windows.Automation.AutomationProperties.GetHelpText(dialog.GalleryTab));
+            Assert.StartsWith("Choose which columns", System.Windows.Automation.AutomationProperties.GetHelpText(dialog.ListTab));
         }
         finally
         {

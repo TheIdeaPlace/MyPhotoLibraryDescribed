@@ -58,9 +58,8 @@ public partial class OrderListEditor : UserControl
         AutomationProperties.SetName(AvailableList, choice.AvailableTitle);
         AutomationProperties.SetName(ShownList, choice.ShownTitle);
         AutomationProperties.SetName(PreviewBox, choice.PreviewTitle);
-        // Focus opens in the lists, past the explanation, so the lists carry it as their help text.
-        AutomationProperties.SetHelpText(ShownList, choice.Explanation);
-        AutomationProperties.SetHelpText(AvailableList, choice.Explanation);
+        // Not the lists' help text: inside the tabs, JAWS reads a list's help text again with every item arrowed to.
+        // The tab carries it instead (LabelsDialog), and it's the first text in the tab.
         Fill(shownIndex: 0, availableIndex: 0);
     }
 
