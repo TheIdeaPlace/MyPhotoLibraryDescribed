@@ -214,7 +214,7 @@ final class BackgroundDescriber {
     /// else), or not at all (cancelled).
     private static func outcome(of error: Error) -> BackgroundFailures.Outcome {
         if error is CancellationError || Task.isCancelled { return .cancelled }
-        if isAboutThisPhoto(error) || error is BackgroundError { return .aboutThePhoto }
+        if isAboutThisPhoto(error) || (error as? BackgroundError) == .unreadable { return .aboutThePhoto }
         return .other
     }
 
@@ -297,17 +297,23 @@ final class BackgroundDescriber {
             if run == generation { queue.skippedNotOnThisMac() }
             return nil
         }
-        let image = await Task.detached(priority: .utility) { () -> CGImage? in
-            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
-            return ImageConversation.makeImage(from: data)
+        // A file that can't be opened (a network share gone, access lapsed) says nothing about the photo; one that
+        // opens but isn't a picture does.
+        let image = await Task.detached(priority: .utility) { () -> Result<CGImage, BackgroundError> in
+            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return .failure(.notOpened) }
+            return ImageConversation.makeImage(from: data).map { .success($0) } ?? .failure(.unreadable)
         }.value
         let key = file.descriptionKey
-        guard let image else { return Failed(error: BackgroundError.unreadable, key: key) }
+        let picture: CGImage
+        switch image {
+        case .success(let image): picture = image
+        case .failure(let error): return Failed(error: error, key: key)
+        }
         let session = LanguageModelSession(instructions: ImageConversation.instructions)
         let prompt = ImageConversation.describePrompt
         do {
             // Through PhotoDescriber, so Check System's timings and failures count it (#94).
-            let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image, countsBusy: false)
+            let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: picture, countsBusy: false)
             if !cache.isEdited(forKey: key) { cache.remember(answer, forKey: key) }
             if run == generation { queue.finished(described: true) }
             return nil
@@ -317,7 +323,10 @@ final class BackgroundDescriber {
     }
 
     private enum BackgroundError: LocalizedError {
+        /// Read, but not a picture that can be described: about the photo.
         case unreadable
+        /// The file couldn't be opened at all: not about the photo, so it's tried again.
+        case notOpened
         var errorDescription: String? { "The photos couldn't be read." }
     }
 
