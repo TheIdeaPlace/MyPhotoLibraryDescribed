@@ -445,7 +445,7 @@ final class JPEGMetadataTests: XCTestCase {
         let untitled = try makeJPEG("untitled.jpg")
         try FileMetadataWriter.write(.init(caption: "Two dogs"), to: untitled)
         XCTAssertEqual(xmpValue(untitled, "dc:title"), "Two dogs")
-        // A title that was the caption (as Photo Finder on Windows wrote) keeps following it.
+        // A title that was the caption (as the Windows app wrote) keeps following it.
         let windows = try makeJPEG("windows.jpg", description: nil, xmp: exifToolXMP(caption: "Rex", title: "Rex"),
                                    iptc: standardIPTC(caption: "Rex", title: "Rex"))
         let read = try FileMetadataWriter.write(.init(caption: "Rex on the beach"), to: windows)

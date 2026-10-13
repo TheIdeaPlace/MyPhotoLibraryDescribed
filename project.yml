@@ -30,22 +30,24 @@ targets:
     info:
       path: PhotoFinder/Info.plist
       properties:
-        CFBundleName: Photo Finder
-        CFBundleDisplayName: Photo Finder
+        CFBundleName: My Photo Library Described
+        CFBundleDisplayName: My Photo Library Described
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.photography
-        NSPhotoLibraryUsageDescription: Photo Finder lists the photos and videos in your library so you can browse, preview and export them like files.
+        NSPhotoLibraryUsageDescription: My Photo Library Described lists the photos and videos in your library so you can browse, preview and export them like files.
         # Folders added with File > Add Folder to Library… can be in these places (#36); macOS asks once for each.
-        NSDesktopFolderUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
-        NSDocumentsFolderUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
-        NSDownloadsFolderUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
-        NSRemovableVolumesUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
-        NSNetworkVolumesUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
+        NSDesktopFolderUsageDescription: My Photo Library Described lists the photos and videos in folders you add to its library.
+        NSDocumentsFolderUsageDescription: My Photo Library Described lists the photos and videos in folders you add to its library.
+        NSDownloadsFolderUsageDescription: My Photo Library Described lists the photos and videos in folders you add to its library.
+        NSRemovableVolumesUsageDescription: My Photo Library Described lists the photos and videos in folders you add to its library.
+        NSNetworkVolumesUsageDescription: My Photo Library Described lists the photos and videos in folders you add to its library.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.theideaplace.PhotoFinder
-        PRODUCT_NAME: Photo Finder
+        PRODUCT_NAME: My Photo Library Described
+        # The module keeps its old name, so `@testable import Photo_Finder` and the code don't churn (#125).
+        PRODUCT_MODULE_NAME: Photo_Finder
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: Apple Development
         DEVELOPMENT_TEAM: P887QF74N8
@@ -67,7 +69,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: net.theideaplace.PhotoFinderTests
         # The app's product name has a space, which XcodeGen's default test host path doesn't account for.
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Photo Finder.app/Contents/MacOS/Photo Finder"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/My Photo Library Described.app/Contents/MacOS/My Photo Library Described"
         BUNDLE_LOADER: "$(TEST_HOST)"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: P887QF74N8

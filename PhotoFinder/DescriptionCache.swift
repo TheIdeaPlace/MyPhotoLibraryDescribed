@@ -77,7 +77,7 @@ final class DescriptionCache: @unchecked Sendable {
         }
     }
 
-    /// Keeps a file's description when Photo Finder itself writes into the file (a caption or alt text, #31), which
+    /// Keeps a file's description when My Photo Library Described itself writes into the file (a caption or alt text, #31), which
     /// changes its size but not its picture, as Windows' DescriptionStore.Rekey does. What's on screen is told, but
     /// not as a new description, so it isn't written into the caption again.
     func rekey(from old: String, to new: String) {

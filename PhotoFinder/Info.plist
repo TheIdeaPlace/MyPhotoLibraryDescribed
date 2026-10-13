@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Photo Finder</string>
+	<string>My Photo Library Described</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Photo Finder</string>
+	<string>My Photo Library Described</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -23,16 +23,16 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.photography</string>
 	<key>NSDesktopFolderUsageDescription</key>
-	<string>Photo Finder lists the photos and videos in folders you add to its library.</string>
+	<string>My Photo Library Described lists the photos and videos in folders you add to its library.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
-	<string>Photo Finder lists the photos and videos in folders you add to its library.</string>
+	<string>My Photo Library Described lists the photos and videos in folders you add to its library.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
-	<string>Photo Finder lists the photos and videos in folders you add to its library.</string>
+	<string>My Photo Library Described lists the photos and videos in folders you add to its library.</string>
 	<key>NSNetworkVolumesUsageDescription</key>
-	<string>Photo Finder lists the photos and videos in folders you add to its library.</string>
+	<string>My Photo Library Described lists the photos and videos in folders you add to its library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Photo Finder lists the photos and videos in your library so you can browse, preview and export them like files.</string>
+	<string>My Photo Library Described lists the photos and videos in your library so you can browse, preview and export them like files.</string>
 	<key>NSRemovableVolumesUsageDescription</key>
-	<string>Photo Finder lists the photos and videos in folders you add to its library.</string>
+	<string>My Photo Library Described lists the photos and videos in folders you add to its library.</string>
 </dict>
 </plist>

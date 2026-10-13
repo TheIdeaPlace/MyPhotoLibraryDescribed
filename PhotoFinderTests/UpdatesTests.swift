@@ -12,7 +12,7 @@ final class UpdatesTests: XCTestCase {
 
     private func release(_ tag: String, draft: Bool = false, prerelease: Bool = false) -> [String: Any] {
         ["tag_name": tag, "draft": draft, "prerelease": prerelease,
-         "html_url": "https://github.com/kellylford/PhotoFinder/releases/tag/\(tag)"]
+         "html_url": "https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/tag/\(tag)"]
     }
 
     func testTheNewestMacReleaseIsFoundAndOthersAreIgnored() {
@@ -43,7 +43,7 @@ final class UpdatesTests: XCTestCase {
     func testAFoundUpdateIsRememberedUntilItsInstalled() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "UpdatesTests.found"))
         defaults.removePersistentDomain(forName: "UpdatesTests.found")
-        let page = URL(string: "https://github.com/kellylford/PhotoFinder/releases/tag/mac-v0.2.0")!
+        let page = URL(string: "https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/tag/mac-v0.2.0")!
         Updates.remember(.init(version: "0.2.0", page: page), in: defaults)
         XCTAssertEqual(Updates.remembered(running: "0.1.1", in: defaults)?.version, "0.2.0")
         XCTAssertNil(Updates.remembered(running: "0.2.0", in: defaults), "installed: forgotten")

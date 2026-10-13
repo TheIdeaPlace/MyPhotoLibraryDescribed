@@ -133,7 +133,7 @@ enum FolderRoots {
 
 /// Which photos in an added folder to describe in the background after it's scanned (#47): every photo in a folder
 /// just added (as Windows does), and afterwards the photos that weren't there at the last scan. The first scan after
-/// launch only sets the baseline, so opening Photo Finder doesn't describe whole folders again. Videos aren't
+/// launch only sets the baseline, so opening My Photo Library Described doesn't describe whole folders again. Videos aren't
 /// described.
 enum FolderChanges {
     static func photosToDescribe(before: Set<String>?, after: [String], justAdded: Bool) -> [String] {
@@ -254,7 +254,7 @@ enum FolderScanner {
         }
     }
 
-    /// One file as the file system has it now, after Photo Finder wrote into it (#31).
+    /// One file as the file system has it now, after My Photo Library Described wrote into it (#31).
     static func file(at path: String) -> MediaFile? {
         guard let values = try? URL(fileURLWithPath: path).resourceValues(forKeys: Set(fileKeys)),
               values.isRegularFile == true else { return nil }

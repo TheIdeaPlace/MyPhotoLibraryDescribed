@@ -10,7 +10,7 @@ struct FileMetadata: Hashable, Sendable {
     var height = 0
     var dateTaken: Date?
     var caption = ""
-    /// IPTC's Alt Text (Accessibility) and Extended Description (Accessibility), which Photo Finder writes (#31).
+    /// IPTC's Alt Text (Accessibility) and Extended Description (Accessibility), which My Photo Library Described writes (#31).
     var altText = ""
     var extendedDescription = ""
     var keywords: [String] = []
@@ -49,7 +49,7 @@ struct FileMetadata: Hashable, Sendable {
 
     /// The fields from ImageIO's properties and XMP. The caption is the first of IPTC's Caption-Abstract, XMP's
     /// dc:description, the TIFF ImageDescription and XMP's dc:title: Photos and most Mac apps write the first three,
-    /// and Windows' File Explorer (and so Photo Finder on Windows) writes the title.
+    /// and Windows' File Explorer (and so the Windows app) writes the title.
     static func from(properties: [CFString: Any], xmp: CGImageMetadata?) -> FileMetadata {
         let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
         let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] ?? [:]
