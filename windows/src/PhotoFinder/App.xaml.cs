@@ -43,6 +43,8 @@ public partial class App : Application
         var backgroundDescriber = new BackgroundDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
         backgroundDescriber.ForegroundBusy = () => autoDescriber.IsBusy;
         backgroundDescriber.MayRun = () => !EnergySaverOn();
+        // Describe Photo working after background describing gave up waiting for Windows AI: it starts, unasked.
+        WindowsAI.DescribedOne += () => Dispatcher.BeginInvoke(backgroundDescriber.WindowsAIWorked);
         MainWindow = new MainWindow(model) { AutoDescriber = autoDescriber, BackgroundDescriber = backgroundDescriber };
         MainWindow.Show();
     }

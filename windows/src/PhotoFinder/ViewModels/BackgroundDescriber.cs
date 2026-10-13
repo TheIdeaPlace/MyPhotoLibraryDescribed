@@ -120,7 +120,24 @@ public sealed class BackgroundDescriber : IDisposable
     }
 
     /// <summary>At a start: the library's photos not described yet, quietly, tracked so tests can wait for it.</summary>
-    public void Resume() => Busy(ResumeAsync(_resume.Token));
+    public void Resume()
+    {
+        _waitingForAI = false;
+        Busy(ResumeAsync(_resume.Token));
+    }
+
+    /// <summary>Gave up waiting for Windows AI at a start: the next description that works anywhere (Describe Photo, say)
+    /// starts it, with nothing for the person to do.</summary>
+    private bool _waitingForAI;
+
+    /// <summary>Windows AI has just described a photo: if background describing was waiting for it, it starts now.</summary>
+    public void WindowsAIWorked()
+    {
+        if (!_waitingForAI || !Enabled || IsRunning) return;
+        Log.Write("background", "Windows AI is working again; background describing starts");
+        CancelResume();
+        Resume();
+    }
 
     /// <summary>How long to wait before asking Windows AI again when it couldn't answer at a start. Tests shorten it.</summary>
     internal TimeSpan[] ResumeRetries { get; set; } =
@@ -152,11 +169,15 @@ public sealed class BackgroundDescriber : IDisposable
             bool tryAgain;
             (tryAgain, problem) = await DescribeLibraryAsync(cancel: cancel);
             if (!tryAgain) break;
-            problem = "Background describing couldn't start: Windows AI didn't answer. Turn it off and on to try again.";
+            problem = "Background describing is waiting for Windows AI. It starts by itself once Windows AI is working.";
         }
         if (problem is null || cancel.IsCancellationRequested) return;
-        Log.Write("background", $"Not describing until it's turned off and on, or the next start: {problem}");
-        if (Enabled && !IsRunning) _model.ShowBackgroundProblem(problem);
+        Log.Write("background", $"Waiting: {problem}");
+        if (Enabled && !IsRunning)
+        {
+            _model.ShowBackgroundProblem(problem);
+            _waitingForAI = true;
+        }
     }
 
     /// <summary>The library's photos not described yet, newest first, queued: when it's turned on, and when My Photo Library Described
@@ -182,6 +203,33 @@ public sealed class BackgroundDescriber : IDisposable
             return (true, null);
         }
         if (!Enabled || linked.IsCancellationRequested) return (false, null);
+        if (readiness.State == "NotReady")
+        {
+            // The model's gone since it was turned on (a Windows update, say): got ready again, saying so, rather than
+            // waiting for the person to do something. The first time it can take a few minutes.
+            Log.Write("background", "Windows AI's model isn't ready; getting it ready");
+            if (!IsRunning) _model.BackgroundProgress = "Getting Windows' image description model ready for background describing";
+            try
+            {
+                readiness = await _prepare(linked.Token);
+            }
+            catch (OperationCanceledException) when (linked.IsCancellationRequested)
+            {
+                return (false, null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("background", "Windows AI's model couldn't be got ready", ex);
+                readiness = new AIReadiness(true, "Error", ex.Message);
+            }
+            finally
+            {
+                if (!IsRunning) _model.BackgroundProgress = null;
+            }
+            if (!Enabled || linked.IsCancellationRequested) return (false, null);
+            // Not ready yet (still downloading, say): asked again later, as for a helper that didn't answer.
+            if (readiness.State == "NotReady") readiness = readiness with { State = "Error" };
+        }
         if (readiness.State != "Ready")
         {
             Log.Write("background", $"Not started: Windows AI is {readiness.State}. {readiness.Message}");
@@ -189,9 +237,6 @@ public sealed class BackgroundDescriber : IDisposable
             {
                 // The helper not starting or not answering in time, which can pass.
                 "Error" => (true, null),
-                // The model's gone since it was turned on (a Windows update, say). Getting it can mean a download of
-                // minutes, so that waits for the person: turning it on again does it, and says so.
-                "NotReady" => (false, "Background describing is waiting for Windows' image description model. Turn it off and on to get the model ready."),
                 _ => (false, $"Background describing can't run. {readiness.Message}"),
             };
         }

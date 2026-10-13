@@ -177,6 +177,9 @@ public sealed class WindowsAI : IDisposable
         CountedAsync(DescribeStats.Session, () => WithRetriesAsync(jpegAtSize, jpeg => DescribeOnceAsync(jpeg, kind, cancel, drop), retry),
             cancel, drop);
 
+    /// <summary>A photo was described, by anything: background describing waiting for Windows AI starts on it.</summary>
+    public static event Action? DescribedOne;
+
     /// <summary>One photo's outcome, counted once for Check System however many sizes were tried: how long the attempt
     /// that worked took (not the wait for the helper), or the last failure.</summary>
     internal static async Task<string> CountedAsync(DescribeStats stats, Func<Task<(string Text, TimeSpan Took)>> describe,
@@ -186,6 +189,7 @@ public sealed class WindowsAI : IDisposable
         {
             var (text, took) = await describe();
             stats.Described(took);
+            DescribedOne?.Invoke();
             return text;
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested || drop.IsCancellationRequested)
