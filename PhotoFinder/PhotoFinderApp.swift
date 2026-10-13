@@ -255,7 +255,7 @@ struct PhotoCommands: Commands {
                 get: { model.describeInBackground },
                 set: { model.setDescribeInBackground($0) }
             ))
-            // Always enabled (it says when nothing is running), like the Columns sheet's buttons.
+            // Always enabled (it says when nothing is running), like the Labels sheet's buttons.
             Button("Stop Background Describing") { model.stopBackgroundDescribing() }
         }
     }

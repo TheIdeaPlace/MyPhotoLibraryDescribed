@@ -190,7 +190,7 @@ struct FileListView: View {
 
     var body: some View {
         @Bindable var model = model
-        // Built from the chosen columns, in the chosen order (View > Columns), which is also the order
+        // Built from the chosen columns, in the chosen order (View > Labels, List tab), which is also the order
         // VoiceOver reads a row's cells in.
         ScrollViewReader { proxy in
             Table(of: FileRow.self, selection: $model.selection, sortOrder: $model.sortOrder) {

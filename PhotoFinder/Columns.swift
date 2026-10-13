@@ -173,7 +173,7 @@ extension FileRow {
         }
     }
 
-    /// The row as VoiceOver reads it with these columns in this order: the Columns sheet's preview.
+    /// The row as VoiceOver reads it with these columns in this order: the preview in View > Labels, List tab.
     func line(for columns: [String]) -> String {
         let parts = columns.compactMap { id -> String? in
             let value = text(for: id)

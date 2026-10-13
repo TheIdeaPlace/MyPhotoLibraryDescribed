@@ -16,7 +16,7 @@ The two apps work the same wherever the platform allows. Where they differ, this
 - [Read-only, and changing your photos](#read-only-and-changing-your-photos)
 - [Captions and saving descriptions in photos](#captions-and-saving-descriptions-in-photos)
 - [Adding folders](#adding-folders)
-- [Columns and sorting](#columns-and-sorting)
+- [Columns, labels and sorting](#columns-labels-and-sorting)
 - [Get Info](#get-info)
 - [Place names](#place-names)
 - [Settings](#settings)
@@ -46,7 +46,7 @@ Without the AI, My Photo Library Described still browses, searches, sorts and sh
 The window has a sidebar (the library, albums on the Mac, and folders), the list or gallery of photos, the Description panel, a search field and a status bar. **F6** and **Shift-F6** move between them.
 
 - **List** (Command-2 / Ctrl+2) shows one photo per row, with the columns you choose.
-- **Gallery** (Command-4 / Ctrl+4) shows one photo at a time with its description; Left and Right Arrow move between photos, Home and End go to the first and last.
+- **Gallery** (Command-4 / Ctrl+4) shows one photo at a time with its description; Left and Right Arrow move between photos, Home and End go to the first and last. On the Mac, moving to a photo says its position, such as "12 of 400", then its description; View > Labels…, Gallery tab, chooses what's said instead (see [Columns, labels and sorting](#columns-labels-and-sorting)).
 - **The status bar** says what's in the list, what's being done, and how background describing is going. Control-F9 / Ctrl+F9 reads it from anywhere, and Control-Shift-F9 / Ctrl+Shift+F9 goes to it (in the Go menu on the Mac, the View menu on Windows). On a Mac laptop, add Fn unless the function keys are set as standard keys.
 
 ## Hearing photos described
@@ -65,7 +65,7 @@ How photos are described: on the Mac, Settings has the prompt Apple Intelligence
 
 In list view, the panel starts with a picture of the photo you're on, as Finder's and File Explorer's preview panes do, for anyone looking at the screen with you; screen readers skip it, since the description says what's in it. (The gallery already shows the photo large.) It never downloads a photo that's only in iCloud or OneDrive; those show their small thumbnail, or a placeholder when there isn't one.
 
-**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Redescribe, Use as Caption and Copy, and the photo's caption with Edit Caption. **Go > Go to Description or Back to Photos** (Shift-Command-D / Ctrl+Shift+D) goes straight to the description, showing the panel if it's hidden, and pressed again goes back to the list or gallery. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow / Alt+Right Arrow) and Previous Photo (Command-Left / Alt+Left): the photo changes, its name and position are read, and focus stays where it is, with the box showing the new photo's description.
+**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Redescribe, Use as Caption and Copy, and the photo's caption with Edit Caption. **Go > Go to Description or Back to Photos** (Shift-Command-D / Ctrl+Shift+D) goes straight to the description, showing the panel if it's hidden, and pressed again goes back to the list or gallery. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow / Alt+Right Arrow) and Previous Photo (Command-Left / Alt+Left): the photo changes, its name and position are read (in the Mac's gallery, what View > Labels… chooses), and focus stays where it is, with the box showing the new photo's description.
 
 ## Read-only, and changing your photos
 
@@ -85,9 +85,16 @@ On the Mac, a photo in your Photos library gets a Photos caption, which syncs wi
 
 **File > Add Folder to Library…** adds a folder of photos to the sidebar, under Folders, and its photos are described like the rest. **Remove Folder from Library** (or Delete on it in the sidebar) removes it after asking. The folder and its photos stay on your computer.
 
-## Columns and sorting
+## Columns, labels and sorting
 
-**View > Columns…** chooses which columns the list shows and in what order. The order is also the order a screen reader reads each row in, so putting Caption first means hearing it before the name. **View > Sort By** sorts by any column; choosing it again reverses the order.
+On the Mac, **View > Labels…** chooses what's read for each photo, in two tabs. On Windows, **View > Columns…** is the List tab alone, for now (#38).
+
+- **List** chooses which columns the list shows and in what order. The order is also the order a screen reader reads each row in, so putting Caption first means hearing it before the name.
+- **Gallery** (Mac) chooses what's said, and in what order, when you move to a photo in the gallery: Position ("12 of 400"), Name, Kind, Date Taken, Dimensions, Caption, Keywords, Rating and Place Taken. The default is Position only. The description isn't one of them: it follows after a pause when Describe Photos Automatically is on. The details under the photo stay the same whatever you choose.
+
+Each tab has the same Available and Shown lists, with Add, Remove, Move Up, Move Down, Move to Top, Move to Bottom and Reset to Default, and a preview of how the photo you're on will read. Return in Available adds, Delete or Return in Shown removes, and Option-Up and Option-Down Arrow (Option-Home and Option-End for the top and bottom) move the selected item; each change is announced. OK keeps both tabs' choices and Cancel leaves them. The sheet opens on the tab for the view you're in.
+
+**View > Sort By** sorts by any column; choosing it again reverses the order.
 
 ## Get Info
 
