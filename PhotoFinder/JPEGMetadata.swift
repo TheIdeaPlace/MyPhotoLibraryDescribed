@@ -136,7 +136,7 @@ enum JPEGMetadata {
             // leave readers to choose between them.
             guard let packet = PNGMetadata.parseXMP(extended.packet) else { throw ExtendedXMP.refused }
             for path in values.keys where CGImageMetadataCopyTagWithPath(packet, nil, path as CFString) != nil {
-                throw ExtendedXMP.refused
+                throw ExtendedXMP.heldInExtension
             }
         }
         let xmpIndices = segments.indices.filter { isXMP(segments[$0]) }
@@ -274,6 +274,9 @@ enum JPEGMetadata {
     struct ExtendedXMP: Equatable {
         static let refused = Failure.malformed(
             "Its metadata is spread over several parts (Extended XMP) that don't add up, so it isn't changed.")
+        /// The parts add up, but what would change is in the extension, not the main XMP.
+        static let heldInExtension = Failure.malformed(
+            "Its metadata is spread over several parts (Extended XMP), and what would change is in another part, so it isn't changed.")
         let guid: String
         let packet: [UInt8]
 

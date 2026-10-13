@@ -1088,6 +1088,9 @@ final class JPEGMetadataTests: XCTestCase {
         let url = try pixelPhoto("caption-in-extension.jpg", main: pixelMainXMP(guid: guid),
                                  extensions: extensionSegments(packet, guid: guid), second: try gainMap())
         try assertRefused(.init(caption: short), url)
+        XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(contentsOf: url), setting: ["dc:description": short])) {
+            XCTAssertEqual($0 as? PNGMetadata.Failure, JPEGMetadata.ExtendedXMP.heldInExtension)
+        }
         // The alt text isn't in the extension, so it can go in the main XMP.
         let read = try FileMetadataWriter.write(.init(accessibilityDescription: short), to: url)
         XCTAssertEqual(read.altText, short)
