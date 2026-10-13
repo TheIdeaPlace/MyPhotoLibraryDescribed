@@ -439,7 +439,7 @@ private struct StatusBar: View {
         switch section {
         case .status: model.statusText
         case .activity: model.activity ?? model.nameProgress
-        case .background: model.backgroundProgress
+        case .background: model.backgroundStatus
         }
     }
 
@@ -447,7 +447,7 @@ private struct StatusBar: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            if model.isLoading || model.activity != nil || model.nameProgress != nil || model.backgroundProgress != nil {
+            if model.isLoading || model.activity != nil || model.nameProgress != nil || model.backgroundStatus != nil {
                 ProgressView().controlSize(.small)
                     .accessibilityHidden(true)
             }

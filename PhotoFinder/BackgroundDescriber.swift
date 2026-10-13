@@ -6,15 +6,19 @@ import SwiftUI
 
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
 
-/// Describes photos added to the Photos library behind the scenes (a setting, off until turned on), with
-/// Apple Intelligence, so their descriptions are ready in Get Info without waiting.
+/// Photo > Describe Photos in the Background (#102): describes every photo not described yet, behind the scenes, with
+/// Apple Intelligence, so descriptions are ready when you get to them. As on Windows (#96, #97):
 ///
-/// - One photo at a time, into the same cache Describe Image uses. The bookkeeping is in BackgroundQueue.
+/// - The library's photos newest first, when it's turned on and at each launch, so a big library carries on across
+///   restarts; a folder just added goes ahead of that backlog, and photos added later are described as they come.
+/// - One photo at a time, into the same cache Describe Photo uses. The bookkeeping is in BackgroundQueue.
 /// - Photos are queued by identifier and fetched again when their turn comes, so one deleted meanwhile is skipped.
 /// - Photos only in iCloud aren't downloaded for this; the summary says how many were skipped.
-/// - A photo that fails (Apple Intelligence rate-limits apps that aren't in front) is tried again later.
+/// - The photo you're on always comes first; it waits on Low Power Mode and while the Mac is running hot.
+/// - When Apple Intelligence is busy (it limits apps that aren't in front), it waits and tries the same photo again.
+///   Other failures leave the photo for the next run, and five in a row stop the run, saying why.
 /// - Stopping takes effect at once: the photo in progress is still saved, but nothing more is said.
-/// - It speaks only when Photo Finder is in front, and only at the start and end of a run.
+/// - It speaks only when Photo Finder is in front.
 @available(macOS 27, *)
 @MainActor
 final class BackgroundDescriber {
@@ -29,34 +33,55 @@ final class BackgroundDescriber {
     /// Whether the photo you're on is being described right now (automatic describing, describing ahead, Describe
     /// Photo): background work waits for it, so the photo you're on always comes first.
     var isForegroundBusy: @MainActor () -> Bool = { false }
+    /// Why background work should wait now (Low Power Mode, running hot), or nil when it can go on.
+    var pauseReason: @MainActor () -> String? = {
+        if ProcessInfo.processInfo.isLowPowerModeEnabled { return "Background describing paused on Low Power Mode" }
+        if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue {
+            return "Background describing paused while the Mac is hot"
+        }
+        return nil
+    }
+    /// The run stopped after too many failures in a row; says why, for the status bar.
+    var stopped: @MainActor (String) -> Void = { _ in }
 
     init(cache: DescriptionCache, progress: @escaping @MainActor (String?) -> Void) {
         self.cache = cache
         self.progress = progress
     }
 
-    /// Queues the photos (not videos) that haven't been described yet.
-    func enqueue(_ assets: [PHAsset]) {
+    /// Queues the photos (not videos) that haven't been described yet. `first` puts them ahead of the backlog.
+    /// `announce`, when given, is said as they're queued.
+    func enqueue(_ assets: [PHAsset], first: Bool = false, announce text: String? = nil) {
         guard ImageConversation.unavailableReason == nil else { return }
         let ids = assets
             .filter { $0.mediaType == .image && cache.description(for: $0) == nil }
             .map(\.localIdentifier)
-        add(ids)
+        add(ids, first: first, announce: text)
     }
 
-    /// Queues photos in added folders (#47), by path. Each is looked up again when its turn comes, so a file deleted
-    /// or already described meanwhile is skipped and an edited one is described under its current key.
-    func enqueue(filePaths paths: [String]) {
+    /// Queues photos in added folders (#47), by path, leaving out those already described. Each is looked up again
+    /// when its turn comes, so a file deleted or described meanwhile is skipped and an edited one is described under
+    /// its current key.
+    func enqueue(filePaths paths: [String], first: Bool = false, announce text: String? = nil) async {
         guard ImageConversation.unavailableReason == nil else { return }
-        add(paths.filter { !MediaFiles.isVideo(($0 as NSString).lastPathComponent) }.map(FolderID.file))
+        let cache = cache
+        let todo = await Task.detached(priority: .utility) {
+            paths.filter { path in
+                guard !MediaFiles.isVideo((path as NSString).lastPathComponent) else { return false }
+                guard let file = FolderScanner.file(at: path) else { return false }
+                return cache.description(forKey: file.descriptionKey) == nil
+            }
+        }.value
+        add(todo.map(FolderID.file), first: first, announce: text)
     }
 
-    private func add(_ ids: [String]) {
-        guard queue.add(ids) > 0 else { return }
+    private func add(_ ids: [String], first: Bool, announce text: String?) {
+        let added = queue.add(ids, first: first)
+        guard added > 0 else { return }
+        if let text { announce(text.replacingOccurrences(of: "{count}", with: BackgroundQueue.plural(added))) }
         progress(queue.progress)
         guard !running else { return }
         running = true
-        announce("Describing new photos in the background")
         let run = generation
         Task { await self.run(run) }
     }
@@ -78,45 +103,41 @@ final class BackgroundDescriber {
             for _ in 0..<600 where isForegroundBusy() && run == generation {
                 try? await Task.sleep(for: .milliseconds(100))
             }
+            // Low Power Mode or running hot: wait until that's over.
+            while run == generation, let reason = pauseReason() {
+                progress(reason)
+                try? await Task.sleep(for: .seconds(10))
+            }
             guard run == generation else { return }
+            progress(queue.progress)
+            let failure: Error?
             if id.hasPrefix(Self.filePrefix) {
-                await describeFile(String(id.dropFirst(Self.filePrefix.count)), id: id, run: run)
+                failure = await describeFile(String(id.dropFirst(Self.filePrefix.count)), run: run)
+            } else {
+                failure = await describeAsset(id, run: run)
+            }
+            guard run == generation else { return }
+            guard let failure else { continue }
+            if Self.isBusy(failure) {
+                // Apple Intelligence limits apps that aren't in front: wait, then try the same photo again.
+                queue.putBack(id)
+                try? await Task.sleep(for: .seconds(30))
                 continue
             }
-            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
-                  cache.description(for: asset) == nil,
-                  ImageConversation.unavailableReason == nil else {
+            if Self.isAboutThisPhoto(failure) {
                 queue.finished(described: false)
                 continue
             }
-            // Photos only in iCloud aren't downloaded for this.
-            guard let data = await PhotoData.request(asset, allowNetwork: false)?.data else {
-                queue.skippedNotOnThisMac()
-                continue
-            }
-            // Decoded off the main actor: a 2048-pixel decode for every photo would stall the window.
-            let image = await Task.detached(priority: .utility) { ImageConversation.makeImage(from: data) }.value
-            guard let image else {
-                queue.finished(described: false)
-                continue
-            }
-            let session = LanguageModelSession(instructions: ImageConversation.instructions)
-            let prompt = ImageConversation.describePrompt
-            do {
-                let answer = try await session.respond {
-                    prompt
-                    Attachment(image)
-                }.content
-                // Corrected in the Description panel while this was being described: the person's words win.
-                if !cache.isEdited(forKey: asset.localIdentifier) { cache.remember(answer, for: asset) }
-                guard run == generation else { return }
-                queue.finished(described: true)
-            } catch {
-                guard run == generation else { return }
-                // Often a rate limit while Photo Finder isn't in front: wait, then try it again later.
-                if queue.retryLater(id) {
-                    try? await Task.sleep(for: .seconds(15))
-                }
+            if queue.failed() {
+                let left = queue.stop()
+                generation += 1
+                running = false
+                progress(nil)
+                let message = BackgroundQueue.stoppedMessage(
+                    left: left, reason: "Apple Intelligence couldn't describe them: \(failure.localizedDescription)")
+                stopped(message)
+                announce(message)
+                return
             }
         }
         guard run == generation else { return }
@@ -126,38 +147,90 @@ final class BackgroundDescriber {
         progress(nil)
     }
 
+    /// Apple Intelligence is busy rather than unable: worth trying the same photo again after a wait.
+    private static func isBusy(_ error: Error) -> Bool {
+        if let error = error as? LanguageModelError, case .rateLimited = error { return true }
+        if let error = error as? LanguageModelSession.GenerationError, case .rateLimited = error { return true }
+        return false
+    }
+
+    /// Apple Intelligence wouldn't describe this one photo (its content), which says nothing about the next.
+    private static func isAboutThisPhoto(_ error: Error) -> Bool {
+        if let error = error as? LanguageModelError {
+            switch error {
+            case .guardrailViolation, .refusal: return true
+            default: return false
+            }
+        }
+        if let error = error as? LanguageModelSession.GenerationError {
+            switch error {
+            case .guardrailViolation, .refusal: return true
+            default: return false
+            }
+        }
+        return false
+    }
+
+    /// Describes a photo in the Photos library. Nil when it was described or skipped, or why it couldn't be.
+    private func describeAsset(_ id: String, run: Int) async -> Error? {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
+              cache.description(for: asset) == nil,
+              ImageConversation.unavailableReason == nil else {
+            queue.finished(described: false)
+            return nil
+        }
+        // Photos only in iCloud aren't downloaded for this.
+        guard let data = await PhotoData.request(asset, allowNetwork: false)?.data else {
+            queue.skippedNotOnThisMac()
+            return nil
+        }
+        // Decoded off the main actor: a 2048-pixel decode for every photo would stall the window.
+        let image = await Task.detached(priority: .utility) { ImageConversation.makeImage(from: data) }.value
+        guard let image else { return BackgroundError.unreadable }
+        let session = LanguageModelSession(instructions: ImageConversation.instructions)
+        let prompt = ImageConversation.describePrompt
+        do {
+            let answer = try await session.respond {
+                prompt
+                Attachment(image)
+            }.content
+            // Corrected in the Description panel while this was being described: the person's words win.
+            if !cache.isEdited(forKey: asset.localIdentifier) { cache.remember(answer, for: asset) }
+            if run == generation { queue.finished(described: true) }
+            return nil
+        } catch {
+            return error
+        }
+    }
+
     private static let filePrefix = FolderID.file("")
 
     /// A photo in an added folder: read from disk off the main actor, described, and saved to the description cache
     /// under its file key. Nothing is written into the file here; with Save Descriptions in Photos on, the saved
-    /// description goes into a listed file's caption through the usual path.
-    private func describeFile(_ path: String, id: String, run: Int) async {
+    /// description goes into a listed file's caption through the usual path. Nil when it was described or skipped.
+    private func describeFile(_ path: String, run: Int) async -> Error? {
         guard isWanted(path) else {
             queue.finished(described: false)
-            return
+            return nil
         }
         let file = await Task.detached(priority: .utility) { FolderScanner.file(at: path) }.value
         guard let file, !file.isVideo, cache.description(forKey: file.descriptionKey) == nil,
               ImageConversation.unavailableReason == nil else {
             queue.finished(described: false)
-            return
+            return nil
         }
         // Only in iCloud Drive (not downloaded): reading it would download it, so it's skipped, as Photos' iCloud-only
         // photos are.
-        let url0 = file.url
-        guard await Task.detached(priority: .utility, operation: { FileAvailability.isOnThisMac(url0) }).value else {
-            queue.skippedNotOnThisMac()
-            return
-        }
         let url = file.url
+        guard await Task.detached(priority: .utility, operation: { FileAvailability.isOnThisMac(url) }).value else {
+            queue.skippedNotOnThisMac()
+            return nil
+        }
         let image = await Task.detached(priority: .utility) { () -> CGImage? in
             guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
             return ImageConversation.makeImage(from: data)
         }.value
-        guard let image else {
-            queue.finished(described: false)
-            return
-        }
+        guard let image else { return BackgroundError.unreadable }
         let session = LanguageModelSession(instructions: ImageConversation.instructions)
         let prompt = ImageConversation.describePrompt
         do {
@@ -167,14 +240,16 @@ final class BackgroundDescriber {
             }.content
             let key = file.descriptionKey
             if !cache.isEdited(forKey: key) { cache.remember(answer, forKey: key) }
-            guard run == generation else { return }
-            queue.finished(described: true)
+            if run == generation { queue.finished(described: true) }
+            return nil
         } catch {
-            guard run == generation else { return }
-            if queue.retryLater(id) {
-                try? await Task.sleep(for: .seconds(15))
-            }
+            return error
         }
+    }
+
+    private enum BackgroundError: LocalizedError {
+        case unreadable
+        var errorDescription: String? { "The photos couldn't be read." }
     }
 
     /// Spoken only when Photo Finder is the app in front: new photos usually arrive while it isn't.

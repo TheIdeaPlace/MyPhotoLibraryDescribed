@@ -5,24 +5,42 @@ import Foundation
 struct BackgroundQueue {
     private(set) var pending: [String] = []
     private var queued = Set<String>()
-    private var retries: [String: Int] = [:]
     private(set) var total = 0
     private(set) var done = 0
     private(set) var described = 0
     private(set) var notOnThisMac = 0
 
-    /// How many times a photo that failed is tried again (a rate limit, say) before it's left for later.
-    static let maxRetries = 2
-
     var isEmpty: Bool { pending.isEmpty }
 
-    /// Adds the identifiers not already waiting; returns how many were added.
+    /// Photos that couldn't be described one after another; reset by one that could.
+    private(set) var failedInARow = 0
+
+    /// After this many photos in a row fail, the run stops and says why, rather than failing through thousands (#102),
+    /// as on Windows.
+    static let failuresInARow = 5
+
+    /// Adds the identifiers not already waiting; returns how many were added. `first` puts them ahead of the rest: a
+    /// folder just added goes ahead of the library's backlog.
     @discardableResult
-    mutating func add(_ ids: [String]) -> Int {
+    mutating func add(_ ids: [String], first: Bool = false) -> Int {
         let new = ids.filter { queued.insert($0).inserted }
-        pending.append(contentsOf: new)
+        if first { pending.insert(contentsOf: new, at: 0) } else { pending.append(contentsOf: new) }
         total += new.count
         return new.count
+    }
+
+    /// Puts a photo just taken off the queue back at the front, to try again after a wait (Apple Intelligence was
+    /// busy). It isn't counted again.
+    mutating func putBack(_ id: String) {
+        if queued.insert(id).inserted { pending.insert(id, at: 0) }
+    }
+
+    /// A photo couldn't be described; it's left until the next run. True when that's too many in a row and the run
+    /// should stop.
+    mutating func failed() -> Bool {
+        done += 1
+        failedInARow += 1
+        return failedInARow >= Self.failuresInARow
     }
 
     /// The next photo to describe, taken off the queue.
@@ -35,25 +53,16 @@ struct BackgroundQueue {
 
     mutating func finished(described wasDescribed: Bool) {
         done += 1
-        if wasDescribed { described += 1 }
+        if wasDescribed {
+            described += 1
+            failedInARow = 0
+        }
     }
 
     /// The photo is only in iCloud, so it wasn't downloaded to describe it.
     mutating func skippedNotOnThisMac() {
         done += 1
         notOnThisMac += 1
-    }
-
-    /// Puts a photo that failed back at the end to try again later. False once it's been retried enough.
-    mutating func retryLater(_ id: String) -> Bool {
-        let count = retries[id, default: 0]
-        guard count < Self.maxRetries else {
-            done += 1
-            return false
-        }
-        retries[id] = count + 1
-        if queued.insert(id).inserted { pending.append(id) }
-        return true
     }
 
     /// Empties the queue and returns how many photos were left.
@@ -68,6 +77,11 @@ struct BackgroundQueue {
     var progress: String? {
         guard total > 0 else { return nil }
         return "Describing photos in the background, \(min(done + 1, total).formatted()) of \(total.formatted())"
+    }
+
+    /// What to say when the run stops after too many failures in a row, with `reason`, the last failure.
+    static func stoppedMessage(left: Int, reason: String) -> String {
+        "Background describing stopped: \(plural(failuresInARow)) in a row couldn't be described, so \(plural(left)) weren't tried. \(reason)"
     }
 
     /// What to say when the queue runs out, or nil when there's nothing worth saying.
