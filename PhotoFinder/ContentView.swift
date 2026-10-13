@@ -64,6 +64,8 @@ struct BrowserView: View {
             }
         }
         .navigationTitle(model.windowTitle)
+        // Kept although the status bar says the same: with a subtitle the title is drawn smaller, and without it the
+        // mode ("Read-Only Mode") was cut off (#35's look).
         .navigationSubtitle(model.statusText)
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search names, kinds and dates")
         .searchFocused($searchFocused)
@@ -383,8 +385,13 @@ private struct GalleryFooter: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.name)
                     .font(.headline)
-                Text([row.kind, row.dateText, row.dimensions].filter { !$0.isEmpty }.joined(separator: " · "))
+                // Kind and size on one line, the date on its own, so a long date doesn't break mid-phrase (#35's look).
+                Text([row.kind, row.dimensions].filter { !$0.isEmpty }.joined(separator: " · "))
                     .foregroundStyle(.secondary)
+                if !row.dateText.isEmpty {
+                    Text(row.dateText)
+                        .foregroundStyle(.secondary)
+                }
                 if !row.caption.isEmpty {
                     Text(row.caption)
                 }
@@ -397,6 +404,8 @@ private struct GalleryFooter: View {
                 }
             }
             .textSelection(.enabled)
+            // The name and details get the room before the buttons do.
+            .layoutPriority(1)
             Spacer()
             let position = model.galleryPosition
             Button("Previous", systemImage: "chevron.left") { model.moveSelection(by: -1) }
