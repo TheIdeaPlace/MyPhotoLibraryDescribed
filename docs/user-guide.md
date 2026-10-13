@@ -46,7 +46,7 @@ Without the AI, My Photo Library Described still browses, searches, sorts and sh
 The window has a sidebar (the library, albums on the Mac, and folders), the list or gallery of photos, the Description panel, a search field and a status bar. **F6** and **Shift-F6** move between them.
 
 - **List** (Command-2 / Ctrl+2) shows one photo per row, with the columns you choose.
-- **Gallery** (Command-4 / Ctrl+4) shows one photo at a time with its description; Left and Right Arrow move between photos, Home and End go to the first and last. On the Mac, moving to a photo says its position, such as "12 of 400", then its description; View > Labels…, Gallery tab, chooses what's said instead (see [Columns, labels and sorting](#columns-labels-and-sorting)).
+- **Gallery** (Command-4 / Ctrl+4) shows one photo at a time with its description; Left and Right Arrow move between photos, Home and End go to the first and last. Moving to a photo says its position, such as "12 of 400", then its description; View > Labels…, Gallery tab, chooses what's said instead (see [Columns, labels and sorting](#columns-labels-and-sorting)).
 - **The status bar** says what's in the list, what's being done, and how background describing is going. Control-F9 / Ctrl+F9 reads it from anywhere, and Control-Shift-F9 / Ctrl+Shift+F9 goes to it (in the Go menu on the Mac, the View menu on Windows). On a Mac laptop, add Fn unless the function keys are set as standard keys.
 
 ## Hearing photos described
@@ -87,7 +87,7 @@ On the Mac, a photo in your Photos library gets a Photos caption, which syncs wi
 
 ## Columns, labels and sorting
 
-On the Mac, **View > Labels…** chooses what's read for each photo, in two tabs. On Windows, **View > Columns…** is the List tab alone, for now (#38).
+**View > Labels…** chooses what's read for each photo, in two tabs.
 
 - **List** chooses which columns the list shows and in what order. The order is also the order a screen reader reads each row in, so putting Caption first means hearing it before the name.
 - **Gallery** (Mac) chooses what's said, and in what order, when you move to a photo in the gallery: Position ("12 of 400"), Name, Kind, Date Taken, Dimensions, Caption, Keywords, Rating and Place Taken. The default is Position only. The description isn't one of them: it follows after a pause when Describe Photos Automatically is on. The details under the photo stay the same whatever you choose.

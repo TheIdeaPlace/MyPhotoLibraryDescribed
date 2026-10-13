@@ -297,10 +297,10 @@ public sealed class WindowTests : IDisposable
             model.SetColumnVisible(Columns.Find("keywords")!, true);
             Assert.Equal(before + 1, window.ListColumns.Columns.Count);
 
-            // Gallery shows the selected row with the list's name.
+            // Gallery shows the selected row, named with the gallery's labels: Position by default (#38).
             model.SelectedRows = [model.Rows[1]];
             AppCommands.AsGallery.Execute(null, window);
-            Assert.True(await WaitFor(() => AutomationProperties.GetName(window.GalleryImage).StartsWith("a.jpg")));
+            Assert.True(await WaitFor(() => window.GalleryImage.SpokenName == $"2 of {model.Rows.Count}"));
         }
         finally
         {
@@ -323,8 +323,8 @@ public sealed class WindowTests : IDisposable
             Assert.True(await WaitFor(() => model.Rows.Count == 1 && model.DetailProgress is null && model.Rows[0].Caption == "Beach"));
             model.SelectedRows = [model.Rows[0]];
             AppCommands.AsGallery.Execute(null, window);
-            // Just the name, so arrowing says which photo and the description follows it.
-            Assert.True(await WaitFor(() => AutomationProperties.GetName(window.GalleryImage) == "a.jpg"));
+            // The gallery's labels (Position by default, #38), so arrowing says where you are and the description follows.
+            Assert.True(await WaitFor(() => window.GalleryImage.SpokenName == "1 of 1"));
             window.UpdateLayout();
 
             // Tab from the photo goes through the footer in reading order: name, details, caption (no description

@@ -119,10 +119,27 @@ public sealed class FileListView : ListView
     }
 }
 
-/// <summary>The gallery's picture: one focusable element that screen readers know is an image and
-/// read by the name it's given (the same name the list uses).</summary>
+/// <summary>The gallery's picture: one focusable element that screen readers know is an image, named with the gallery's
+/// labels (#38). The name is read when focus arrives or a screen reader asks (Insert+Tab), but a change isn't raised on
+/// every move: moving says the same words already, so they'd be read twice.</summary>
 public sealed class GalleryImage : ContentControl
 {
+    private string _spokenName = "";
+
+    /// <summary>What the picture is read as.</summary>
+    public string SpokenName
+    {
+        get => _spokenName;
+        set
+        {
+            _spokenName = value;
+            // WPF raises a name change after the next layout when the name differs from what its peer last read
+            // (AutomationPeer.UpdateSubtree). Reading it now leaves nothing to differ, so no change is raised and the
+            // move's announcement is all that's said; a screen reader asking still gets the new name.
+            UIElementAutomationPeer.FromElement(this)?.GetName();
+        }
+    }
+
     private readonly Image _image = new() { Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly };
     private readonly TextBlock _message = new()
     {
@@ -155,6 +172,7 @@ public sealed class GalleryImage : ContentControl
     private sealed class GalleryImagePeer(GalleryImage owner) : FrameworkElementAutomationPeer(owner)
     {
         protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Image;
+        protected override string GetNameCore() => owner.SpokenName;
         protected override string GetClassNameCore() => "Image";
         protected override bool IsContentElementCore() => true;
         protected override bool IsControlElementCore() => true;

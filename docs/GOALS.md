@@ -13,8 +13,8 @@ Kelly's goals for the app, from 11 October 2026 (status updated after the Mac PR
 | 3 | By default, as the user moves around photos in any view, descriptions are given, using a default prompt or setting as the platform allows. | Done on both: Photo > Describe Photos Automatically, on by default (Mac in #28). | #15 |
 | 4 | Descriptions are cached. | Done on both (saved descriptions). | |
 | 5 | The user can ask for a photo to be described again, and the cache is updated. | Done on both: Photo > Redescribe, Command-R on the Mac (#40, renamed 13 Oct) and Ctrl+R on Windows (#119). | #29 |
-| — | In list view, the user chooses which columns are shown and in what order. | Done on both (View > Columns on Windows; View > Labels, List tab, on the Mac). | |
-| 6 | Gallery view uses the photo's name and nothing else by default. Customizing it is a nice-to-have. | Mac: customizable in View > Labels, Gallery tab, with Position only ("12 of 400") as the default (Kelly, 13 Oct). Windows: the name, not customizable yet. The description is in the Description panel, or under the photo when the panel is hidden. | #38 |
+| — | In list view, the user chooses which columns are shown and in what order. | Done on both (View > Labels, List tab). | |
+| 6 | Gallery view uses the photo's name and nothing else by default. Customizing it is a nice-to-have. | Done on both: customizable in View > Labels, Gallery tab, with Position only ("12 of 400") as the default (Kelly, 13 Oct). The description is in the Description panel, or under the photo when the panel is hidden. | #38 |
 | — | Sighted people get the descriptions too. | Done on both: View > Show Description, a Description panel beside the list and gallery (corrections are saved and protected), and a Description column (Mac #51, Windows #55). | #50 |
 | — | Keep what the app already does well: export, search, the library concept and the rest. | Kept. | |
 | 7 | The user can put a description into a field of the photo (the caption). | Done on both: Photo > Use Description as Caption (Mac in #43). On the Mac, files in added folders get it in the file's XMP description (#31). | #30, #31 |
