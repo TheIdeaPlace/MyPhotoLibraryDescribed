@@ -261,7 +261,8 @@ final class FileMetadataWriterTests: XCTestCase {
         XCTAssertEqual(JPEGLayout.trailingData(try Data(contentsOf: url)), video, "the video is byte-for-byte the same")
     }
 
-    func testAMultiPictureJPEGIsRefusedAndLeftAlone() throws {
+    /// An MPF segment with no MP Entries can't be patched (#90): JPEGMetadataTests covers the ones that can.
+    func testAMultiPictureJPEGWhoseIndexCantBeFollowedIsRefusedAndLeftAlone() throws {
         let url = try jpeg(mpf: true)
         let before = try Data(contentsOf: url)
         XCTAssertTrue(JPEGLayout.hasMultiPicture(before))
@@ -352,6 +353,14 @@ final class FileMetadataWriterTests: XCTestCase {
                        "Saved to 2 files. Skipped anim.gif: GIF files can't hold captions or descriptions. 1 photo hasn't been described yet")
         XCTAssertEqual(FileWriteSummary.text(done: nil, skipped: [("a.gif", "GIF"), ("b.webp", "WEBP"), ("c.gif", "GIF")], notDescribed: 2),
                        "Skipped 3 files: GIF and WEBP files can't hold captions or descriptions. 2 photos haven't been described yet")
+    }
+
+    func testAPhotoWhoseSecondPictureCantBeKeptRightIsNamed() {
+        // Worded as Windows says it (#90, #150).
+        XCTAssertEqual(FileWriteSummary.text(done: "Saved to 2 files", skipped: [], secondPicture: ["hdr.jpg"], notDescribed: 0),
+                       "Saved to 2 files. hdr.jpg holds a second picture, such as an HDR map, laid out in a way that can't be updated safely, so it was left as it is")
+        XCTAssertEqual(FileWriteSummary.text(done: nil, skipped: [], secondPicture: ["a.jpg", "b.jpg"], notDescribed: 0),
+                       "2 files hold a second picture, such as an HDR map, laid out in a way that can't be updated safely, so they were left as they are")
     }
 
     func testUnsupportedFilesAreFoundByName() {

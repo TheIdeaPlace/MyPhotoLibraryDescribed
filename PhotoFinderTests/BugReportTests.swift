@@ -150,12 +150,71 @@ final class BugReportTests: XCTestCase {
 
     func testALongReportIsCutShortOnThePageOnly() throws {
         var report = report()
-        report.attachments = [.init(name: "today's log", heading: "Log", text: String(repeating: "x", count: 20_000))]
+        let log = (1...100).map { "line \($0) " + String(repeating: "x", count: 60) }.joined(separator: "\n")
+        report.attachments = [.init(name: "today's log", heading: "Log", text: log)]
         let url = report.issuePageURL(issuesURL: URL(string: "https://github.com/o/r/issues/new")!)
         let body = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "body" }?.value)
         XCTAssertLessThan(body.count, 5200)
         XCTAssertTrue(body.hasSuffix("paste the rest from the clipboard.)"))
-        XCTAssertTrue(report.clipboardText.contains(String(repeating: "x", count: 20_000)))
+        XCTAssertTrue(report.clipboardText.contains("line 100 "))
+    }
+
+    func testALongReportKeepsTheEndOfItsAttachmentsWithinTheRelaysLimit() {
+        var report = report()
+        let log = (1...200).map { "line \($0) " + String(repeating: "é", count: 60) }.joined(separator: "\n")
+        report.attachments = [.init(name: "the crash report", heading: "Crash", text: "short summary"),
+                              .init(name: "the log", heading: "Log", text: log)]
+        let body = report.body
+        XCTAssertLessThanOrEqual(body.utf16.count, BugReport.longestBody)
+        XCTAssertTrue(body.contains("**Crash**\n```\nshort summary\n```"))
+        XCTAssertTrue(body.contains("**Log**\n```\n(Earlier lines left out.)\nline "))
+        XCTAssertTrue(body.hasSuffix("line 200 " + String(repeating: "é", count: 60) + "\n```"))
+        XCTAssertFalse(body.contains("line 1 "))
+        // The preview is exactly what's sent.
+        XCTAssertTrue(report.preview.hasSuffix(body))
+    }
+
+    func testLengthsAreCountedAsTheRelayCountsThem() {
+        // An emoji is one character to Swift but two to the relay's JavaScript.
+        var report = report()
+        let log = (1...200).map { "line \($0) " + String(repeating: "📷", count: 40) }.joined(separator: "\n")
+        report.attachments = [.init(name: "the log", heading: "Log", text: log)]
+        XCTAssertLessThanOrEqual(report.body.utf16.count, BugReport.longestBody)
+        XCTAssertTrue(report.body.contains("line 200 "))
+    }
+
+    func testAttachmentsLeftOutStayWithinTheLimit() {
+        var report = report()
+        report.happened = String(repeating: "a", count: 6_700)
+        report.attachments = (1...4).map { n in
+            .init(name: "log \(n)", heading: "A rather long heading for attachment number \(n)",
+                  text: (1...50).map { "entry \($0) " + String(repeating: "z", count: 80) }.joined(separator: "\n"))
+        }
+        XCTAssertLessThanOrEqual(report.body.utf16.count, BugReport.longestBody)
+    }
+
+    func testWindowsLineEndingsAreTrimmedByLine() {
+        var report = report()
+        let log = (1...200).map { "line \($0) " + String(repeating: "x", count: 60) }.joined(separator: "\r\n")
+        report.attachments = [.init(name: "the log", heading: "Log", text: log)]
+        XCTAssertTrue(report.body.contains("(Earlier lines left out.)\nline "))
+        XCTAssertTrue(report.body.contains("line 200 "))
+    }
+
+    func testAShortReportIsUnchanged() {
+        var report = report()
+        report.attachments = [.init(name: "the log", heading: "Log", text: "one\ntwo")]
+        XCTAssertTrue(report.body.hasSuffix("**Log**\n```\none\ntwo\n```"))
+    }
+
+    func testAnAttachmentWithNoRoomForALineIsLeftOutAndSaysSo() {
+        var report = report()
+        report.happened = String(repeating: "a", count: 7_500)
+        report.attachments = [.init(name: "the log", heading: "Log", text: String(repeating: "x", count: 500))]
+        XCTAssertTrue(report.body.hasSuffix("**Log**\n(Left out: the report is too long to include it.)"))
+        // With no room even for that note, nothing is said.
+        report.happened = String(repeating: "a", count: 7_780)
+        XCTAssertFalse(report.body.contains("**Log**"))
     }
 
     // MARK: Crashes
@@ -280,6 +339,9 @@ final class BugReportTests: XCTestCase {
         XCTAssertEqual(last.components(separatedBy: "\n").count, 40)
         XCTAssertTrue(last.hasPrefix("line 61 "))
         XCTAssertTrue(last.hasSuffix("line 100 ~/Pictures/a.jpg"))
+        // A very long line is cut.
+        let long = CrashCheck.excerpt(String(repeating: "y", count: 4_000), home: "/Users/kelly")
+        XCTAssertEqual(long, String(repeating: "y", count: CrashCheck.longestLine) + " …")
         // Another account's folder loses its name.
         XCTAssertEqual(CrashCheck.excerpt("at /Users/sam/x", home: "/Users/kelly"), "at /Users/…/x")
     }

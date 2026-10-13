@@ -55,8 +55,8 @@ struct FileMetadataChanges: Equatable, Sendable {
 enum FileMetadataWriteError: LocalizedError, Equatable {
     /// GIF, WebP, RAW and other formats ImageIO can't change without re-encoding, or at all. The format's name.
     case unsupportedFormat(String)
-    /// A JPEG holding more than one picture (Ultra HDR's gain map, some cameras' multi-picture files), found by its
-    /// MPF segment: not changed until a writer is proven to keep them (#79).
+    /// A JPEG holding more than one picture (Ultra HDR's gain map, Apple's HDR photos, MPO) whose Multi-Picture index
+    /// can't be followed, or that has two, so it couldn't be kept right if the file's size changed (#79, #90).
     case multiPicture
     case unreadable
     case notWritten(String)
@@ -64,7 +64,7 @@ enum FileMetadataWriteError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat(let format): "\(format) files can't hold captions or descriptions."
-        case .multiPicture: "This JPEG holds more than one picture (HDR photos and some cameras' files do), which can't be changed safely yet."
+        case .multiPicture: "It holds a second picture, such as an HDR map, laid out in a way that can't be updated safely."
         case .unreadable: "The file couldn't be read as a photo."
         case .notWritten(let reason): "The file couldn't be changed. \(reason)"
         }
@@ -160,12 +160,11 @@ enum FileMetadataWriter {
         let temp = url.deletingLastPathComponent()
             .appendingPathComponent(".\(url.deletingPathExtension().lastPathComponent).\(UUID().uuidString).\(url.pathExtension)")
         defer { try? FileManager.default.removeItem(at: temp) }
-        // A JPEG's data after its picture, a motion photo's video for one, must come through exactly (#79); a JPEG with
-        // a second picture (Ultra HDR) isn't touched at all.
+        // A JPEG's data after its picture, a motion photo's video or an Ultra HDR photo's gain map, must come through
+        // exactly (#79, #90); JPEGMetadata keeps a Multi-Picture index pointing at it.
         var jpegTail: Data?
         if type as String == UTType.jpeg.identifier {
             let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
-            if JPEGLayout.hasMultiPicture(bytes) { throw FileMetadataWriteError.multiPicture }
             // Its layout couldn't be followed (cut short, say): refused rather than written unchecked.
             guard let tail = JPEGLayout.trailingData(bytes) else {
                 throw FileMetadataWriteError.notWritten("Its JPEG layout couldn't be read.")
@@ -183,7 +182,7 @@ enum FileMetadataWriter {
                 }
                 // The bytes being rewritten are the ones checked (#111): a file replaced since the check above isn't
                 // written.
-                guard !JPEGLayout.hasMultiPicture(data), JPEGLayout.trailingData(data) == jpegTail else {
+                guard JPEGLayout.trailingData(data) == jpegTail else {
                     throw PNGMetadata.Failure.malformed("It changed while it was being saved.")
                 }
                 return try JPEGMetadata.rewrite(data, setting: expected)
@@ -205,7 +204,7 @@ enum FileMetadataWriter {
         if let jpegTail, !jpegTail.isEmpty {
             let written = try Data(contentsOf: temp, options: .mappedIfSafe)
             guard written.count >= jpegTail.count, written.suffix(jpegTail.count) == jpegTail else {
-                throw FileMetadataWriteError.notWritten("The data after the picture, a motion photo's video say, wasn't kept.")
+                throw FileMetadataWriteError.notWritten("The data after the picture, a motion photo's video or an HDR map say, wasn't kept.")
             }
         }
 
@@ -316,11 +315,23 @@ enum FileWriteSummary {
         return "\(what): \(list) files can't hold captions or descriptions"
     }
 
+    /// The photos holding a second picture whose index couldn't be kept right (#90), worded as Windows says it: "hdr.jpg
+    /// holds a second picture, such as an HDR map, laid out in a way that can't be updated safely, so it was left as
+    /// it is".
+    static func secondPictureText(_ names: [String]) -> String? {
+        guard let first = names.first else { return nil }
+        let what = names.count == 1 ? "\(first) holds" : "\(names.count) files hold"
+        let left = names.count == 1 ? "it was left as it is" : "they were left as they are"
+        return "\(what) a second picture, such as an HDR map, laid out in a way that can't be updated safely, so \(left)"
+    }
+
     /// `done` (nil when nothing was written), then what was skipped and what wasn't described.
-    static func text(done: String?, skipped: [(name: String, format: String)], notDescribed: Int) -> String {
+    static func text(done: String?, skipped: [(name: String, format: String)], secondPicture: [String] = [],
+                     notDescribed: Int) -> String {
         var parts: [String] = []
         if let done { parts.append(done) }
         if let text = skippedText(skipped) { parts.append(text) }
+        if let text = secondPictureText(secondPicture) { parts.append(text) }
         if notDescribed > 0 {
             parts.append(notDescribed == 1 ? "1 photo hasn't been described yet" : "\(notDescribed) photos haven't been described yet")
         }

@@ -13,3 +13,4 @@ windows/TestResults/
 windows/**/TestResults/
 *.user
 .vs/
+.claude/worktrees/
