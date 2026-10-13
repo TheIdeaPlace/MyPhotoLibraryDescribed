@@ -1969,7 +1969,11 @@ final class LibraryModel {
     // MARK: - Help
 
     /// A newer Mac release, found by the quiet check at launch or by Check for Updates.
-    private(set) var availableUpdate: Updates.Release?
+    /// Remembered across restarts until it's installed (#104), so Help keeps saying "Update to X available…".
+    private(set) var availableUpdate: Updates.Release? = Updates.remembered(running: AppInfo.shortVersion,
+                                                                             in: .standard) {
+        didSet { Updates.remember(availableUpdate, in: .standard) }
+    }
 
     /// Once a day at most, a moment after launch: is there a newer release? Says nothing; the Help menu item changes.
     func checkForUpdatesQuietly() {
@@ -1977,6 +1981,7 @@ final class LibraryModel {
         if let last = defaults.object(forKey: "lastUpdateCheck") as? Date, Date().timeIntervalSince(last) < 86_400 { return }
         Task {
             try? await Task.sleep(for: .seconds(5))
+            // Offline: keep what's remembered. Otherwise this is the newer release, or nil when up to date.
             guard case .some(let release) = await Updates.latest(newerThan: AppInfo.shortVersion) else { return }
             defaults.set(Date(), forKey: "lastUpdateCheck")
             availableUpdate = release
@@ -2007,18 +2012,21 @@ final class LibraryModel {
     }
 
     /// Help > Check for Updates…: says whether there's a newer version, and opens its download page if you want it.
+    /// Always asks GitHub again, so a remembered release that was since withdrawn is forgotten; offline, the
+    /// remembered one is still offered.
     func checkForUpdates() {
-        if let release = availableUpdate {
-            offer(release)
-            return
-        }
         announce("Checking for updates")
         Task {
             switch await Updates.latest(newerThan: AppInfo.shortVersion) {
             case .none:
-                errorMessage = "Couldn't check for updates. Check your internet connection and try again."
+                if let release = availableUpdate {
+                    offer(release)
+                } else {
+                    errorMessage = "Couldn't check for updates. Check your internet connection and try again."
+                }
             case .some(.none):
                 UserDefaults.standard.set(Date(), forKey: "lastUpdateCheck")
+                availableUpdate = nil
                 let alert = NSAlert()
                 alert.messageText = "\(AppInfo.name) is up to date"
                 alert.informativeText = "Version \(AppInfo.shortVersion) is the newest."
