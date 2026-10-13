@@ -102,8 +102,9 @@ final class FolderLibraryTests: XCTestCase {
     }
 
     func testTheFolderListIsRemembered() throws {
-        let suite = "FolderLibraryTests-\(UUID().uuidString)"
+        let suite = "FolderLibraryTests"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
         defer { defaults.removePersistentDomain(forName: suite) }
         XCTAssertEqual(FolderRoots.load(from: defaults), [])
         FolderRoots.save(["/a", "/b"], to: defaults)

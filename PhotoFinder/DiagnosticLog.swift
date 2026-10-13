@@ -37,9 +37,13 @@ enum DiagnosticLog {
         return "\(format.string(from: date)) [\(area)] \(text)"
     }
 
+    /// Under unit tests nothing goes into the person's real log file (#143's review); the unified log still has it.
+    private static let testing = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
     static func write(_ area: String, _ message: String) {
         let line = line(area, message)
         logger.notice("\(line, privacy: .public)")
+        guard !testing else { return }
         lock.lock()
         defer { lock.unlock() }
         let url = folder.appendingPathComponent(fileName(for: Date()))

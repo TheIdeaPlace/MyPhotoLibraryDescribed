@@ -3,7 +3,9 @@ import XCTest
 
 final class PlaceNamesTests: XCTestCase {
     func testOffUntilTurnedOn() throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PlaceNamesTests-\(UUID().uuidString)"))
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PlaceNamesTests"))
+        defaults.removePersistentDomain(forName: "PlaceNamesTests")
+        defer { defaults.removePersistentDomain(forName: "PlaceNamesTests") }
         XCTAssertFalse(PlaceNames.isOn(in: defaults))
         defaults.set(true, forKey: PlaceNames.key)
         XCTAssertTrue(PlaceNames.isOn(in: defaults))
