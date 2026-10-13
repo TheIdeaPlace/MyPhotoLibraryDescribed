@@ -109,8 +109,45 @@ public sealed class HeicFieldsTests : IDisposable
         return afterMdat is null ? file : afterMdat(file);
     }
 
-    /// <summary>Each item's bytes, as the file's own iloc places them.</summary>
-    private static Dictionary<uint, byte[]> ItemBytes(byte[] file) => HeifMetadata.Items(file);
+    /// <summary>Each item's bytes, as the file's iloc places them, read here independently of HeifMetadata: iloc version
+    /// 0 to 2, offsets of 4 or 8 bytes, a base offset of 0 or 4, lengths of 4, and idat for method 1.</summary>
+    private static Dictionary<uint, byte[]> ItemBytes(byte[] file)
+    {
+        var at = file.AsSpan().IndexOf("iloc"u8) - 4;
+        var version = file[at + 8];
+        var offsetSize = file[at + 12] >> 4;
+        var lengthSize = file[at + 12] & 15;
+        var baseSize = file[at + 13] >> 4;
+        var p = at + 14;
+        ulong Read(int size)
+        {
+            ulong v = 0;
+            for (var i = 0; i < size; i++) v = (v << 8) | file[p + i];
+            p += size;
+            return v;
+        }
+        var idWidth = version < 2 ? 2 : 4;
+        var count = (int)Read(idWidth);
+        var idatAt = file.AsSpan().IndexOf("idat"u8) + 4;
+        var items = new Dictionary<uint, byte[]>();
+        for (var i = 0; i < count; i++)
+        {
+            var id = (uint)Read(idWidth);
+            var method = version > 0 ? (int)(Read(2) & 15) : 0;
+            Read(2);
+            var baseOffset = Read(baseSize);
+            var extents = (int)Read(2);
+            var bytes = new List<byte>();
+            for (var e = 0; e < extents; e++)
+            {
+                var offset = (int)(baseOffset + Read(offsetSize));
+                var length = (int)Read(lengthSize);
+                bytes.AddRange(method == 1 ? file[(idatAt + offset)..(idatAt + offset + length)] : file[offset..(offset + length)]);
+            }
+            items[id] = [.. bytes];
+        }
+        return items;
+    }
 
     private static (string? Caption, string? AltText, string? ExtendedDescription) Read(byte[] file)
     {
@@ -324,5 +361,34 @@ public sealed class HeicFieldsTests : IDisposable
         var after = HeifMetadata.Apply(Heif(IPhoneItems()), new MetadataChanges { Caption = "A dog." });
         byte[] trailing = [.. after, 1, 2, 3];
         Assert.Equal(("A dog.", null, null), Read(trailing));
+    }
+
+    [Fact]
+    public void AChangeThatFailsItsOwnCheck_IsntMade_AndSaysSo()
+    {
+        var before = Heif(IPhoneItems());
+        // As if the arithmetic had put the gain map one byte out.
+        HeifMetadata.AfterBuild = output => output[output.AsSpan().IndexOf("THE GAIN MAP'S PICTURE"u8)] ^= 0xFF;
+        try
+        {
+            var refused = Assert.Throws<MetadataRefusedException>(() => HeifMetadata.Apply(before, new MetadataChanges { Caption = "A dog." }));
+            Assert.Equal("The change couldn't be checked, so it wasn't made.", refused.Message);
+        }
+        finally
+        {
+            HeifMetadata.AfterBuild = null;
+        }
+    }
+
+    [Fact]
+    public void EachItemsBytes_AreTheOnesItWasBuiltWith_ReadIndependently()
+    {
+        foreach (var layout in new[] { new Layout(), new Layout(0, 8), new Layout(1, 4, 4, Idat: true), new Layout(2, 8, 4) })
+        {
+            var items = IPhoneItems();
+            var after = HeifMetadata.Apply(Heif(items, layout: layout), new MetadataChanges { Caption = "A dog." });
+            var read = ItemBytes(after);
+            foreach (var item in items) Assert.Equal(item.Data, read[item.Id]);
+        }
     }
 }

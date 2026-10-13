@@ -79,11 +79,14 @@ public static class HeifMetadata
         // EXIF's own title, description and rating, in place: the same size, nothing moved.
         var working = (byte[])heif.Clone();
         var exif = meta.PhotoExif();
-        if (exif is { } exifId && meta.TryPlace(exifId) is { } exifPlace && exifPlace.Length >= 4)
+        if (exif is { } exifId)
         {
-            var tiff = exifPlace.At + 4 + BinaryPrimitives.ReadUInt32BigEndian(working.AsSpan((int)exifPlace.At));
-            if (tiff + 8 <= exifPlace.At + exifPlace.Length)
+            if (meta.TryPlace(exifId) is { Length: >= 4 } exifPlace
+                && exifPlace.At + 4 + BinaryPrimitives.ReadUInt32BigEndian(working.AsSpan((int)exifPlace.At)) is var tiff
+                && tiff + 8 <= exifPlace.At + exifPlace.Length)
                 XmpPacket.PatchExif(working, (int)tiff, (int)(exifPlace.At + exifPlace.Length), changes, clearDescription: changes.Caption is not null);
+            else
+                Log.Write("save", "A HEIC's EXIF is stored in a way that isn't patched; its own title or description is left as it is");
         }
 
         byte[] output;
@@ -139,29 +142,36 @@ public static class HeifMetadata
             WriteMdat(output, working.Length + delta, xmp);
         }
 
+        AfterBuild?.Invoke(output);
         Check(heif, output, xmpId, exif);
         return output;
     }
+
+    /// <summary>For tests: changes the new file before it's checked, to show a bad one is refused.</summary>
+    internal static Action<byte[]>? AfterBuild { get; set; }
 
     /// <summary>The new file read back: the same items (and one more at most, the XMP), each but the XMP and EXIF
     /// holding exactly the bytes it held, and the XMP readable. Anything else and nothing is written.</summary>
     private static void Check(byte[] before, byte[] after, uint xmpId, uint? exifId)
     {
+        // Whatever goes wrong here is this code's own mistake, not the file's, and is said so.
+        static MetadataRefusedException Failed() => new("The change couldn't be checked, so it wasn't made.");
         try
         {
             var was = Items(before);
             var now = Items(after);
-            if (!was.Keys.All(now.ContainsKey) || now.Count - was.Count is < 0 or > 1 || !now.ContainsKey(xmpId)) throw Unfollowable();
+            if (!was.Keys.All(now.ContainsKey) || now.Count - was.Count is < 0 or > 1 || !now.ContainsKey(xmpId)) throw Failed();
             foreach (var (id, bytes) in was)
             {
                 if (id == xmpId) continue;
-                if (id == exifId ? bytes.Length != now[id].Length : !bytes.AsSpan().SequenceEqual(now[id])) throw Unfollowable();
+                if (id == exifId ? bytes.Length != now[id].Length : !bytes.AsSpan().SequenceEqual(now[id])) throw Failed();
             }
             XmpPacket.Parse(now[xmpId]);
         }
-        catch (Exception ex) when (ex is not MetadataRefusedException)
+        catch (Exception ex)
         {
-            throw new MetadataRefusedException("The change couldn't be checked, so it wasn't made.");
+            Log.Write("save", $"A HEIC change failed its own check ({ex.GetType().Name}); the file was left as it is");
+            throw Failed();
         }
     }
 

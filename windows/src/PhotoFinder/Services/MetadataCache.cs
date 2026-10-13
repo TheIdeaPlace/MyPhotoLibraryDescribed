@@ -45,7 +45,11 @@ public sealed class MetadataCache
 
     /// <summary>The oldest reader whose details still hold for this file. HEIC's were read without their XMP before
     /// version 3 (#31), so only they are read again, not the whole library; the rest need version 2 (dc:description).</summary>
-    public static int VersionNeeded(string path) => XmpFields.IsHeif(path) ? MediaMetadata.CurrentVersion : 2;
+    public static int VersionNeeded(string path) => XmpFields.IsHeif(path) ? HeifXmpRead : 2;
+
+    /// <summary>The reader version that first read HEIC's XMP. Not CurrentVersion: a later bump meant for every format
+    /// changes the 2 above as well, on purpose.</summary>
+    private const int HeifXmpRead = 3;
 
     public void Remember(MediaItem item, MediaMetadata metadata)
     {
