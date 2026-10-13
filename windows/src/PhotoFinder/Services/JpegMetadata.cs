@@ -44,6 +44,8 @@ public static class JpegMetadata
         if (segments.Any(s => IsApp1With(jpeg, s, ExtendedSignature)))
             throw new MetadataRefusedException("Its metadata is spread over several parts (Extended XMP), which isn't changed.");
         var mpf = segments.FindIndex(s => s.Marker == 0xE2 && Has(jpeg, s.Offset + 4, MpfSignature));
+        // Only one index is patched, so a file with two (one would be left wrong) isn't grown.
+        var twoIndexes = segments.Count(s => s.Marker == 0xE2 && Has(jpeg, s.Offset + 4, MpfSignature)) > 1;
 
         XDocument document;
         var oldPacketLength = 0;
@@ -89,6 +91,7 @@ public static class JpegMetadata
         jpeg.AsSpan(keep).CopyTo(result.AsSpan(cut + segment.Length));
         if (mpf >= 0 && result.Length != jpeg.Length)
         {
+            if (twoIndexes) throw new SecondPictureException();
             var index = MultiPictureIndex.Read(jpeg, segments[mpf].Offset + 4 + MpfSignature.Length, segments[mpf].End);
             // The XMP comes before the index (as it's placed) or after it: the index moves with the change in the first
             // case, so only the main picture's size changes; in the second the other pictures move away from it too.

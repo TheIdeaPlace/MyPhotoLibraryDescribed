@@ -13,14 +13,15 @@ internal sealed class MultiPictureIndex
     private readonly bool _little;
     private readonly int _header;
     private readonly int _entries;
-    private readonly int _count;
     private readonly uint[] _sizes;
     private readonly uint[] _offsets;
 
-    private MultiPictureIndex(bool little, int header, int entries, int count, uint[] sizes, uint[] offsets)
+    private MultiPictureIndex(bool little, int header, int entries, uint[] sizes, uint[] offsets)
     {
-        (_little, _header, _entries, _count, _sizes, _offsets) = (little, header, entries, count, sizes, offsets);
+        (_little, _header, _entries, _sizes, _offsets) = (little, header, entries, sizes, offsets);
     }
+
+    private int Count => _sizes.Length;
 
     /// <summary>The index whose header (the byte order mark) is at <paramref name="header"/>, checked against the file:
     /// every picture after the first starts with a JPEG's start marker and fits in the file. Throws
@@ -54,7 +55,7 @@ internal sealed class MultiPictureIndex
                 sizes[i] = U32((int)entries + i * 16 + 4);
                 offsets[i] = U32((int)entries + i * 16 + 8);
             }
-            var index = new MultiPictureIndex(little, header, (int)entries, count, sizes, offsets);
+            var index = new MultiPictureIndex(little, header, (int)entries, sizes, offsets);
             index.Check(jpeg, header, sizes, offsets);
             return index;
         }
@@ -72,10 +73,16 @@ internal sealed class MultiPictureIndex
         var entries = _entries + shift;
         var sizes = (uint[])_sizes.Clone();
         var offsets = (uint[])_offsets.Clone();
-        sizes[0] = checked((uint)(sizes[0] + delta));
+        // Can't overflow (each is within a file under 2 GB), but if it did it's this kind of refusal, not an arithmetic one.
+        if ((long)sizes[0] + delta is < 0 or > uint.MaxValue) throw new SecondPictureException();
+        sizes[0] = (uint)(sizes[0] + delta);
         if (!movesWithChange)
-            for (var i = 1; i < _count; i++) offsets[i] = checked((uint)(offsets[i] + delta));
-        for (var i = 0; i < _count; i++)
+            for (var i = 1; i < Count; i++)
+            {
+                if ((long)offsets[i] + delta is < 0 or > uint.MaxValue) throw new SecondPictureException();
+                offsets[i] = (uint)(offsets[i] + delta);
+            }
+        for (var i = 0; i < Count; i++)
         {
             Write32(changed, entries + i * 16 + 4, sizes[i], _little);
             Write32(changed, entries + i * 16 + 8, offsets[i], _little);
@@ -84,12 +91,14 @@ internal sealed class MultiPictureIndex
     }
 
     /// <summary>Where the other pictures start is what readers use to find them, so that must be exact. The first
-    /// picture's size needn't be: Apple's HDR photos record it a little long, running into the gain map, so it's only
-    /// kept in step (and within the file).</summary>
+    /// picture's size needn't be: cameras record it a little off either way (Apple's HDR sample 70 bytes long, into the
+    /// gain map; Pixel's Ultra HDR photos about 300 bytes short), so it's only kept in step, past the index itself and
+    /// within the file.</summary>
     private void Check(byte[] jpeg, int header, uint[] sizes, uint[] offsets)
     {
-        if (offsets[0] != 0 || sizes[0] <= header || sizes[0] > jpeg.Length) throw new SecondPictureException();
-        for (var i = 1; i < _count; i++)
+        var pastIndex = sizes[0] > header;
+        if (offsets[0] != 0 || !pastIndex || sizes[0] > jpeg.Length) throw new SecondPictureException();
+        for (var i = 1; i < Count; i++)
         {
             var start = header + (long)offsets[i];
             if (offsets[i] == 0 || start + sizes[i] > jpeg.Length || !Has(jpeg, (int)start, [0xFF, 0xD8, 0xFF]))

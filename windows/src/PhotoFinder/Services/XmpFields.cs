@@ -299,4 +299,4 @@ public sealed class PhotoOnlyInCopyException(string path, string copy) : IOExcep
 
 /// <summary>A photo holding a second picture (an Ultra HDR gain map, an MPO's other view) whose index can't be followed,
 /// so it couldn't be kept right if the change were made (#90).</summary>
-public sealed class SecondPictureException() : Exception("It holds a second picture, such as an HDR map, whose index couldn't be followed, so the change would break it.");
+public sealed class SecondPictureException() : Exception("It holds a second picture, such as an HDR map, laid out in a way that can't be updated safely.");

@@ -346,9 +346,9 @@ public sealed class FileFieldsTests : IDisposable
     [Fact]
     public void AnAppleHdrPhoto_WhoseMainSizeRunsLong_IsCaptionedToo()
     {
-        // Apple's HDR photos record the main picture 70 bytes too long, into the gain map (libultrahdr's
-        // apple_gainmap_new.jpg: 44891 for a picture ending at 44821). The gain map's start is exact, so that's what
-        // counts; the size is kept in step.
+        // libultrahdr's Apple sample records the main picture 70 bytes too long, into the gain map (apple_gainmap_new.jpg:
+        // 44891 for a picture ending at 44821). The gain map's start is exact, so that's what counts; the size is kept in
+        // step.
         var gainMap = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("gainmap.jpg")));
         var jpeg = MultiPicture(WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg"))), gainMap, bigEndian: true);
         var sizeAt = Segments(jpeg).First(x => x.Marker == 0xE2).Offset + 8 + 50 + 4;
@@ -379,6 +379,78 @@ public sealed class FileFieldsTests : IDisposable
         Assert.Equal(before.Size + (uint)delta, after.Size);
         Assert.Equal(before.Second + delta, after.Second);
         Assert.Equal(gainMap, changed[after.Second..]);
+    }
+
+    [Theory]
+    [InlineData("type", 40, 2, new byte[] { 4, 0 })]
+    [InlineData("count of none", 42, 4, new byte[] { 0, 0, 0, 0 })]
+    [InlineData("count not a whole entry", 42, 4, new byte[] { 33, 0, 0, 0 })]
+    [InlineData("count too many", 42, 4, new byte[] { 0, 8, 0, 0 })]
+    [InlineData("entries past the segment", 46, 4, new byte[] { 0, 1, 0, 0 })]
+    [InlineData("IFD past the segment", 8, 4, new byte[] { 0, 1, 0, 0 })]
+    [InlineData("no MP Entry tag", 38, 2, new byte[] { 0x05, 0xB0 })]
+    [InlineData("main picture not at the start", 62, 4, new byte[] { 1, 0, 0, 0 })]
+    [InlineData("main size past the file", 58, 4, new byte[] { 0xFF, 0xFF, 0xFF, 0x7F })]
+    [InlineData("second picture's start missing", 78, 4, new byte[] { 0, 0, 0, 0 })]
+    [InlineData("not a byte order", 4, 2, new byte[] { (byte)'X', (byte)'X' })]
+    public void AnIndexItCantFollow_IsRefused_WhenTheFileWouldGrow(string what, int at, int length, byte[] value)
+    {
+        // Offsets within the MPF segment's payload ("MPF\0" at 0, the header at 4), little-endian, as MultiPicture writes it.
+        var gainMap = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("gainmap.jpg")));
+        var jpeg = MultiPicture(WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg"))), gainMap, bigEndian: false);
+        var payload = Segments(jpeg).First(x => x.Marker == 0xE2).Offset + 4;
+        Assert.Equal(length, value.Length);
+        value.CopyTo(jpeg, payload + at);
+        Assert.True(Assert.Throws<SecondPictureException>(() => JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = "A dog." })) is not null, what);
+    }
+
+    [Fact]
+    public void AFileWithTwoIndexes_IsntGrown()
+    {
+        var gainMap = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("gainmap.jpg")));
+        var jpeg = MultiPicture(WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg"))), gainMap, bigEndian: false);
+        var first = Segments(jpeg).First(x => x.Marker == 0xE2);
+        byte[] twice = [.. jpeg[..(first.Offset + first.Length)], .. jpeg[first.Offset..(first.Offset + first.Length)], .. jpeg[(first.Offset + first.Length)..]];
+        Assert.Throws<SecondPictureException>(() => JpegMetadata.Apply(twice, new MetadataChanges { Caption = "A dog." }));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheIndexAfterExifAndXmp_AsCamerasWriteIt_IsKeptRight(bool withXmp)
+    {
+        // Apple's: JFIF, EXIF, then the index, with the new XMP put between EXIF and the index. Pixel's: an XMP already
+        // there before the index, replaced and grown. A main size recorded short, as Pixel's are, is kept in step too.
+        var gainMap = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("gainmap.jpg")));
+        // Every APP segment taken out, then EXIF first, as Apple's are.
+        var plain = File.ReadAllBytes(_lib.AddJpeg("a.jpg"));
+        var appEnd = Segments(plain).TakeWhile(x => x.Marker is >= 0xE0 and <= 0xEF).Select(x => x.Offset + x.Length).DefaultIfEmpty(2).Last();
+        byte[] main = [0xFF, 0xD8, .. plain[appEnd..]];
+        main = WithSegment(main, 0xE1, [.. "Exif\0\0"u8.ToArray(), 0x49, 0x49, 0x2A, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        if (withXmp)
+        {
+            var xmp = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:hdrgm=\"http://ns.adobe.com/hdr-gain-map/1.0/\" hdrgm:Version=\"1.0\"/></rdf:RDF></x:xmpmeta>";
+            var exifEnd = Segments(main)[0].Offset + Segments(main)[0].Length;
+            var segment = new List<byte> { 0xFF, 0xE1 };
+            byte[] payload = [.. XmpSignature, .. System.Text.Encoding.UTF8.GetBytes(xmp)];
+            segment.Add((byte)((payload.Length + 2) >> 8));
+            segment.Add((byte)(payload.Length + 2));
+            segment.AddRange(payload);
+            main = [.. main[..exifEnd], .. segment, .. main[exifEnd..]];
+        }
+        var jpeg = MultiPicture(main, gainMap, bigEndian: false, mpfAt: withXmp ? 2 : 1);
+        var sizeAt = Segments(jpeg).First(x => x.Marker == 0xE2).Offset + 8 + 50 + 4;
+        jpeg[sizeAt + 1] -= 1;  // 256 bytes short
+        var before = Index(jpeg);
+
+        var changed = JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = "A dog on a beach.", AltText = "A dog." });
+        var order = Segments(changed).Select(x => x.Marker == 0xE2 ? "MPF" : IsXmp(changed, x) ? "XMP" : x.Marker == 0xE1 ? "EXIF" : $"{x.Marker:X2}").ToList();
+        Assert.True(order.IndexOf("XMP") < order.IndexOf("MPF"), string.Join(",", order));
+        Assert.True(order.IndexOf("EXIF") < order.IndexOf("XMP"), string.Join(",", order));
+        var after = Index(changed);
+        Assert.Equal(before.Size + (uint)(changed.Length - jpeg.Length), after.Size);
+        Assert.Equal(gainMap, changed[after.Second..]);
+        if (withXmp) Assert.Contains("hdrgm:Version=\"1.0\"", System.Text.Encoding.UTF8.GetString(changed));
     }
 
     [Fact]
