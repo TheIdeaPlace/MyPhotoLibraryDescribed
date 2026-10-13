@@ -5,8 +5,9 @@
 #   scripts/release-mac.sh --publish  and then attaches it to the draft release v<version>
 #
 # One tag releases both apps (Kelly, 13 Oct): pushing v<version> runs .github/workflows/release.yml, which builds and
-# signs the Windows installer and makes the draft release. This attaches the Mac's disk image to that draft (or makes
-# the draft, if the Mac is first). The draft is published when Kelly says go.
+# signs the Windows installer and makes the draft release. This attaches the Mac's disk image to that draft, built from
+# the tagged commit, and only once the Windows files are on it: a published release without them would break every
+# Windows install and update, which read the latest release. The draft is published when Kelly says go.
 #
 # Built here rather than in GitHub Actions: the Apple Intelligence code needs the macOS 27 SDK, and GitHub's runners
 # don't have Xcode 27 yet, so a release built there couldn't describe photos. It uses what's already on Kelly's Mac:
@@ -35,10 +36,14 @@ IDENTITIES=$(security find-identity -v -p codesigning)
 if [ "$PUBLISH" = "--publish" ]; then
   # Checked before ten minutes of notarizing, not after.
   gh auth status >/dev/null 2>&1 || { echo "Sign in to GitHub first: gh auth login"; exit 1; }
-  if gh release view "$TAG" >/dev/null 2>&1; then
-    [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true" ] || { echo "$TAG is already published. Raise MARKETING_VERSION in project.yml (and windows/VERSION) first."; exit 1; }
-    if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -q '[.]dmg$'; then echo "$TAG already has a Mac disk image."; exit 1; fi
-  fi
+  git fetch -q origin "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
+  git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "Push the tag $TAG first: it builds the Windows installer and makes the draft."; exit 1; }
+  [ "$(git rev-parse "$TAG^{commit}")" = "$(git rev-parse HEAD)" ] || { echo "Check out $TAG first, so the Mac and Windows builds come from the same commit."; exit 1; }
+  gh release view "$TAG" >/dev/null 2>&1 || { echo "There's no draft $TAG yet. Wait for the Release workflow to finish."; exit 1; }
+  [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true" ] || { echo "$TAG is already published. Raise MARKETING_VERSION in project.yml (and windows/VERSION) first."; exit 1; }
+  ASSETS=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+  if ! printf '%s\n' "$ASSETS" | grep -qx 'PhotoFinder.appinstaller'; then echo "The draft $TAG doesn't have the Windows installer yet. Wait for the Release workflow."; exit 1; fi
+  if printf '%s\n' "$ASSETS" | grep -q '[.]dmg$'; then echo "$TAG already has a Mac disk image."; exit 1; fi
   git fetch -q origin
   git merge-base --is-ancestor HEAD origin/main || { echo "Release from a commit that's on origin/main (pull, or merge first)."; exit 1; }
 fi
@@ -81,10 +86,6 @@ spctl --assess --type open --context context:primary-signature -v "$OUT/$FILE"
 echo "Ready: $OUT/$FILE"
 
 if [ "$PUBLISH" = "--publish" ]; then
-  if gh release view "$TAG" >/dev/null 2>&1; then
-    gh release upload "$TAG" "$OUT/$FILE"
-  else
-    gh release create "$TAG" "$OUT/$FILE" --draft --title "$NAME $VERSION" --target "$(git rev-parse HEAD)" --generate-notes
-  fi
+  gh release upload "$TAG" "$OUT/$FILE"
   echo "Attached $FILE to the draft release $TAG. It's published when Kelly says go."
 fi

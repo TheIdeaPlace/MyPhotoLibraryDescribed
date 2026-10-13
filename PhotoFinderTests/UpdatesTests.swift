@@ -15,11 +15,15 @@ final class UpdatesTests: XCTestCase {
          "html_url": "https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/tag/\(tag)"]
     }
 
-    func testTheNewestMacReleaseIsFoundAndOthersAreIgnored() {
-        let list = [release("mac-v0.2.0"), release("mac-v0.3.0", draft: true), release("mac-v0.4.0", prerelease: true),
-                    release("v0.9.0"), release("mac-v0.2.5"), release("mac-v0.1.0")]
-        XCTAssertEqual(Updates.newer(than: "0.1.0", in: list)?.version, "0.2.5")
-        XCTAssertNil(Updates.newer(than: "0.2.5", in: list), "up to date")
+    func testTheNewestReleaseIsFound_FromBothTheSharedTagsAndTheMacsEarlierOnes() {
+        let list = [release("mac-v0.1.1"), release("v0.3.0", draft: true), release("v0.4.0", prerelease: true),
+                    release("v0.2.0"), release("windows-v0.9.0"), release("mac-v0.1.0"), release("vNext")]
+        XCTAssertEqual(Updates.newer(than: "0.1.0", in: list)?.version, "0.2.0")
+        XCTAssertNil(Updates.newer(than: "0.2.0", in: list), "up to date")
+        XCTAssertEqual(Updates.version(fromTag: "mac-v0.1.1"), "0.1.1")
+        XCTAssertEqual(Updates.version(fromTag: "v0.2.0"), "0.2.0")
+        XCTAssertNil(Updates.version(fromTag: "windows-v0.2.0"))
+        XCTAssertNil(Updates.version(fromTag: "vNext"))
     }
 
     func testTheMenuAlwaysSaysWhatsRunning() {
@@ -37,7 +41,7 @@ final class UpdatesTests: XCTestCase {
     func testTheRepositoryIsNamedOnce() {
         XCTAssertTrue(Updates.releasesAPI.absoluteString.contains(AppInfo.repository))
         XCTAssertTrue(AppInfo.issuesURL.absoluteString.contains(AppInfo.repository))
-        XCTAssertEqual(AppInfo.releaseNotesURL("0.1.1").lastPathComponent, "mac-v0.1.1")
+        XCTAssertEqual(AppInfo.releaseNotesURL("0.2.0").lastPathComponent, "v0.2.0")
     }
 
     func testAFoundUpdateIsRememberedUntilItsInstalled() throws {

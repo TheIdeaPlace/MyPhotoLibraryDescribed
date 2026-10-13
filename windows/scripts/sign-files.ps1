@@ -39,7 +39,7 @@ $files = @(foreach ($p in $Path) { (Resolve-Path -LiteralPath $p).Path })
 # ARTIFACT_SIGNING_DLIB.
 $dlib = if ($env:ARTIFACT_SIGNING_DLIB) { $env:ARTIFACT_SIGNING_DLIB } else { Join-Path $env:LOCALAPPDATA 'Microsoft\MicrosoftTrustedSigningClientTools\Azure.CodeSigning.Dlib.dll' }
 if (-not (Test-Path -LiteralPath $dlib)) {
-    throw "The Artifact Signing add-on isn't installed. Run: winget install Microsoft.Azure.TrustedSigningClientTools"
+    throw "The Artifact Signing add-on isn't at $dlib. On a PC, run: winget install Microsoft.Azure.TrustedSigningClientTools"
 }
 $packages = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $env:USERPROFILE '.nuget\packages' }
 $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin", (Join-Path $packages 'microsoft.windows.sdk.buildtools') `
