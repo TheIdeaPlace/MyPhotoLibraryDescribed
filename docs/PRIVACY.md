@@ -29,9 +29,9 @@ Photo Finder connects to the internet only for these things:
 - Saved descriptions, and which ones you edited.
 - Your settings (the description prompt or type, the columns shown, and the switches in the menus and Settings).
 - The folders you added to the library.
-- On Windows, a diagnostic log of what went wrong, kept for two weeks (Help > Open Log Folder). It isn't sent anywhere. You can attach it to a bug report if you choose, but it names files and folders, so look at it first: issues are public.
+- A diagnostic log of what went wrong, kept for two weeks (Help > Open Log Folder). On the Mac its lines also go to macOS's own log, which stays on the Mac. It isn't sent anywhere. You can attach it to a bug report if you choose, but it names files and folders, so look at it first: issues are public.
 
-On Windows, all of this is in the data folder, so deleting it removes everything. On the Mac, descriptions are in the data folder, and settings and the list of added folders are in Photo Finder's preferences (`~/Library/Preferences`, under its bundle identifier). Your photos are never stored in either.
+On Windows, all of this is in the data folder, so deleting it removes everything. On the Mac, descriptions and the log are in the data folder, and settings and the list of added folders are in Photo Finder's preferences (`~/Library/Preferences`, under its bundle identifier). Your photos are never stored in either.
 
 ## Data sharing
 

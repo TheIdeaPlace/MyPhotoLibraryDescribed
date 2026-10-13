@@ -91,6 +91,7 @@ final class BackgroundDescriber {
         guard queuedIn == generation, isOn() else { return }
         let added = queue.add(ids.filter { !failedIDs.contains($0) }, first: first)
         guard added > 0 else { return }
+        DiagnosticLog.write("background", "Queued \(BackgroundQueue.plural(added))\(first ? " ahead of the rest" : "")")
         if sayFinish { announceFinish = true }
         if let text {
             announce(text.replacingOccurrences(of: "{count}", with: BackgroundQueue.plural(added)))
@@ -145,6 +146,7 @@ final class BackgroundDescriber {
                 // Apple Intelligence limits apps that aren't in front: wait, then try the same photo again.
                 queue.putBack(id)
                 progress("Background describing waiting for Apple Intelligence")
+                if busyWaits == 0 { DiagnosticLog.write("background", "Waiting: Apple Intelligence is rate-limiting") }
                 let waits = [30, 60, 120, 300]
                 try? await Task.sleep(for: .seconds(waits[min(busyWaits, waits.count - 1)]))
                 busyWaits += 1
@@ -152,6 +154,7 @@ final class BackgroundDescriber {
             }
             busyWaits = 0
             failedIDs.insert(id)
+            if failure is BackgroundError { DiagnosticLog.write("background", "Couldn't read a photo to describe it") }
             if Self.isAboutThisPhoto(failure) {
                 queue.finished(described: false)
                 continue
@@ -166,11 +169,13 @@ final class BackgroundDescriber {
                 let message = BackgroundQueue.stoppedMessage(left: left, reason: reason)
                 announceFinish = false
                 stopped(message)
+                DiagnosticLog.write("background", message)
                 announce(message)
                 return
             }
         }
         guard run == generation else { return }
+        DiagnosticLog.write("background", "Run ended: \(queue.described) described, \(queue.notOnThisMac) only in iCloud, \(queue.done) of \(queue.total) done")
         if announceFinish, let summary = queue.summary { announce(summary) }
         announceFinish = false
         queue.reset()
