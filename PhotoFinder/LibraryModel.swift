@@ -79,12 +79,27 @@ final class LibraryModel {
         }
     }
     var selection: Set<String> = [] {
-        didSet { if selection != oldValue { movedSelection() } }
+        didSet { if selection != oldValue, !keepingSelectionShowing { movedSelection() } }
     }
     var searchText = "" {
         didSet {
-            if searchText != oldValue { announceResultsAfterPause() }
+            guard searchText != oldValue else { return }
+            keepSelectionShowing()
+            announceResultsAfterPause()
         }
+    }
+    /// Set while a search drops hidden rows from the selection, which isn't a move to describe.
+    @ObservationIgnored private var keepingSelectionShowing = false
+
+    /// Rows a search hides leave the selection, as on Windows, so Favorite, Rating, Edit Caption and the rest never
+    /// act on a photo out of sight, and the status bar's count is what they act on (#159's review).
+    private func keepSelectionShowing() {
+        guard !selection.isEmpty, !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let showing = selection.intersection(visibleRows.map(\.id))
+        guard showing != selection else { return }
+        keepingSelectionShowing = true
+        selection = showing
+        keepingSelectionShowing = false
     }
     @ObservationIgnored private var resultsAnnouncement: Task<Void, Never>?
     var searchFocusRequest = 0
@@ -511,7 +526,7 @@ final class LibraryModel {
         if showingPhotosNoAccess { return "No access to Photos" }
         let visible = visibleRows
         let items = visible.count == 1 ? "1 item" : "\(visible.count.formatted()) items"
-        // Only what's showing counts: a selection that search hides isn't "2 of 1 item selected" (#21).
+        // Only rows showing count (search drops hidden ones from the selection; a reload can leave ids no longer listed).
         let selected = selection.isEmpty ? 0 : visible.reduce(0) { $0 + (selection.contains($1.id) ? 1 : 0) }
         return selected == 0 ? items : "\(selected.formatted()) of \(items) selected"
     }
