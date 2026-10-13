@@ -1,12 +1,23 @@
 import AppKit
 import Foundation
 
-/// Help > Check for Updates (#22, #33): the Mac version's releases are GitHub releases tagged `mac-v<version>`, with a
-/// signed, notarized disk image. The app looks for a newer one quietly once a day and, if there is one, the menu item
+/// Help > Check for Updates (#22, #33): releases are GitHub releases tagged `v<version>`, one tag for both apps (Kelly,
+/// 13 Oct), with the Mac's signed, notarized disk image; the Mac's earlier ones were tagged `mac-v<version>`. The app looks for a newer one quietly once a day and, if there is one, the menu item
 /// says so ("Update to 0.2.0…"), without taking focus or interrupting, as the app kit asks. Choosing it opens the
 /// release to download. No updater framework: a person drags the new app into Applications, as with most Mac apps.
 enum Updates {
-    static let tagPrefix = "mac-v"
+    static let tagPrefix = "v"
+    /// The Mac's own tags before both apps shared one (0.1.x), still read so nothing is missed.
+    static let earlierTagPrefix = "mac-v"
+
+    /// The version a release's tag names, or nil for a tag that isn't a release's.
+    static func version(fromTag tag: String) -> String? {
+        for prefix in [earlierTagPrefix, tagPrefix] where tag.hasPrefix(prefix) {
+            let version = String(tag.dropFirst(prefix.count))
+            return version.first?.isNumber == true ? version : nil
+        }
+        return nil
+    }
     static var releasesAPI: URL { URL(string: "https://api.github.com/repos/\(AppInfo.repository)/releases?per_page=30")! }
 
     /// The Help menu's item, which always says what's running, as the apps' shared update experience asks
@@ -32,9 +43,9 @@ enum Updates {
     static func newer(than current: String, in releases: [[String: Any]]) -> Release? {
         releases.compactMap { release -> Release? in
             guard release["draft"] as? Bool != true, release["prerelease"] as? Bool != true,
-                  let tag = release["tag_name"] as? String, tag.hasPrefix(tagPrefix),
+                  let tag = release["tag_name"] as? String, let version = version(fromTag: tag),
                   let page = (release["html_url"] as? String).flatMap(URL.init(string:)) else { return nil }
-            return Release(version: String(tag.dropFirst(tagPrefix.count)), page: page)
+            return Release(version: version, page: page)
         }
         .filter { isNewer($0.version, than: current) }
         .max { isNewer($1.version, than: $0.version) }

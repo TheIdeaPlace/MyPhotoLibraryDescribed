@@ -46,6 +46,15 @@ dotnet test --solution PhotoFinder.sln
 
 Windows AI only works from the packaged helper on a Copilot+ PC, so tests use fakes for it.
 
+## Releasing
+
+One tag releases both apps (Kelly, 13 Oct). Both carry one version: `windows/VERSION` and `MARKETING_VERSION` in `project.yml` must match.
+
+1. Raise both versions in a PR and merge it. The first public release is 0.2.0.
+2. Push the tag `v<version>` on a commit on main. `.github/workflows/release.yml` checks the versions match the tag, then builds the Windows installer, signs it with Azure Artifact Signing and attaches it to a **draft** GitHub release: `PhotoFinder.appinstaller`, the bundle and the Windows App Runtime packages, at the top level. Windows installs and updates from `releases/latest/download/`.
+3. On Kelly's Mac (Xcode 27, which GitHub's runners don't have), check out the tag and run `scripts/release-mac.sh --publish`. It builds, signs, notarizes and staples the DMG, and attaches it to the same draft. It refuses unless the tag is checked out and the draft already has the Windows files.
+4. Kelly says go, and the draft is published. Never publish a release without `PhotoFinder.appinstaller`: the latest release is where every Windows copy looks for its updates. The signing environment `azure-signing` only accepts `v*` tags.
+
 ## Accessibility is the product
 
 Every change is judged by how it works with VoiceOver on the Mac and with JAWS, NVDA and Narrator on Windows. That means keyboard access for everything, clear names and labels, announcements that are short and not repeated, and focus that lands somewhere sensible. Kelly checks with a screen reader. When a change needs that check, list the exact steps in the PR.

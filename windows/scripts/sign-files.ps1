@@ -35,9 +35,11 @@ $files = @(foreach ($p in $Path) { (Resolve-Path -LiteralPath $p).Path })
 # The add-on is x64, and signtool has to match it, so the x64 signtool is used on Arm PCs too. The newest one: an
 # older signtool (10.0.22621) can't sign an MSIX bundle ("file format cannot be signed"). Restoring the projects puts
 # a current one in the NuGet cache.
-$dlib = Join-Path $env:LOCALAPPDATA 'Microsoft\MicrosoftTrustedSigningClientTools\Azure.CodeSigning.Dlib.dll'
+# On a PC, the add-on winget installs; in the release workflow, the one from Microsoft's NuGet package, named by
+# ARTIFACT_SIGNING_DLIB.
+$dlib = if ($env:ARTIFACT_SIGNING_DLIB) { $env:ARTIFACT_SIGNING_DLIB } else { Join-Path $env:LOCALAPPDATA 'Microsoft\MicrosoftTrustedSigningClientTools\Azure.CodeSigning.Dlib.dll' }
 if (-not (Test-Path -LiteralPath $dlib)) {
-    throw "The Artifact Signing add-on isn't installed. Run: winget install Microsoft.Azure.TrustedSigningClientTools"
+    throw "The Artifact Signing add-on isn't at $dlib. On a PC, run: winget install Microsoft.Azure.TrustedSigningClientTools"
 }
 $packages = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $env:USERPROFILE '.nuget\packages' }
 $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin", (Join-Path $packages 'microsoft.windows.sdk.buildtools') `
