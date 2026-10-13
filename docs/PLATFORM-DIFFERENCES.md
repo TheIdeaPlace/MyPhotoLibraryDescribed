@@ -41,6 +41,8 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 
 ### On Windows, from the Mac
 
+- **A preview of the photo in the Description panel, in list view (#120's Mac side).** The Mac shows the photo you're on (up to 240 points high) above its name and description in list view, hidden from VoiceOver, using only what's on the Mac (an iCloud-only photo shows its thumbnail). Windows: to match.
+
 - **Next and previous photo from anywhere.** The Mac's Go > Next Photo (Command-Right Arrow) and Previous Photo (Command-Left) step through photos in the list or gallery without moving focus, so you can stay in the Description panel (reading with a braille display, say) and step from photo to photo (Kelly, 13 Oct). Windows: to match, with keys of its choosing.
 
 - **Follow-up questions about a photo.** The Mac's Apple Intelligence answers follow-up questions after describing. Windows' image description model takes no questions; Phi Silica (a Windows text model) could answer from the description, but is a separate piece of work.

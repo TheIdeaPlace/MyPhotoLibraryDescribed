@@ -17,6 +17,9 @@ struct DescriptionPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let row = model.focusedRow, !row.isContainer, model.isDescribable(row.id) {
+                // The photo itself, in list view, as Finder's and File Explorer's preview panes show it (Kelly, 13 Oct).
+                // The gallery already shows it large.
+                if model.viewMode == .list { PanelPreview(id: row.id) }
                 Text(row.name)
                     .font(.headline)
                     .lineLimit(2)
@@ -129,5 +132,38 @@ struct DescriptionPanel: View {
 enum DescriptionDraft {
     static func isChanged(_ draft: String, from loaded: String) -> Bool {
         draft.trimmingCharacters(in: .whitespacesAndNewlines) != loaded.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// The photo you're on, above its description in list view, for anyone looking at the screen with you. Hidden from
+/// VoiceOver: the description below says what's in it, and the photo's name is the heading under it.
+private struct PanelPreview: View {
+    let id: String
+    @Environment(LibraryModel.self) private var model
+    @State private var image: NSImage?
+    @State private var loadedID: String?
+
+    var body: some View {
+        Group {
+            if let image, loadedID == id {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            } else {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.quaternary)
+                    .overlay { ProgressView().controlSize(.small) }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: 240)
+        .frame(height: 240)
+        .accessibilityHidden(true)
+        .task(id: id) {
+            let loaded = await model.previewImage(for: id)
+            guard !Task.isCancelled else { return }
+            image = loaded
+            loadedID = id
+        }
     }
 }
