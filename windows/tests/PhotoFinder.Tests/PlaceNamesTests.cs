@@ -39,6 +39,151 @@ public sealed class PlaceNamesTests : IDisposable
         return Task.FromResult(answer);
     });
 
+    private const string SwitchedOff = """{"placeNames":{"windows":{"enabled":false,"message":"Place names are paused while we move to another service."}}}""";
+    private const string SwitchedOn = """{"placeNames":{"windows":{"enabled":true,"message":""}}}""";
+
+    [Fact]
+    public async Task SwitchedOffRemotely_NothingGoesToNominatim_AndGetInfoIsToldWhy()
+    {
+        var switchReads = 0;
+        var places = new PlaceNames(_lib.PathOf(@"data\PlaceNames.json"), (uri, _) => { _asked.Add(uri); return Task.FromResult(Seattle); },
+            _ => { switchReads++; return Task.FromResult(SwitchedOff); });
+        Assert.Null(await places.LookUpAsync(47.6097, -122.3422));
+        Assert.Empty(_asked);
+        Assert.Equal("Place names are paused while we move to another service.", places.Paused);
+        // Read once a day, not for every lookup.
+        Assert.Null(await places.LookUpAsync(1, 1));
+        Assert.Equal(1, switchReads);
+    }
+
+    [Fact]
+    public async Task TheSwitch_IsReadAgainAfterADay_AndALaterOnIsHonoured_ButAnUnreadableAnswerChangesNothing()
+    {
+        var answers = new Queue<string>([SwitchedOff, "<html>Sign in</html>", SwitchedOn]);
+        var places = new PlaceNames(_lib.PathOf(@"data\PlaceNames.json"), (uri, _) => { _asked.Add(uri); return Task.FromResult(Seattle); },
+            _ => Task.FromResult(answers.Dequeue()));
+        PlaceNames.SwitchMaxAge = TimeSpan.Zero;
+        PlaceNames.SwitchRetry = TimeSpan.Zero;
+        try
+        {
+            Assert.Null(await places.LookUpAsync(1, 1));
+            // A sign-in page can't switch it back on: the last setting, off, stands.
+            Assert.Null(await places.LookUpAsync(2, 2));
+            Assert.Empty(_asked);
+            Assert.Equal("85 Pike Street, Seattle, Washington, United States", await places.LookUpAsync(3, 3));
+            Assert.Single(_asked);
+            Assert.Null(places.Paused);
+        }
+        finally
+        {
+            PlaceNames.SwitchMaxAge = TimeSpan.FromDays(1);
+            PlaceNames.SwitchRetry = TimeSpan.FromHours(1);
+        }
+    }
+
+    [Fact]
+    public async Task TheSwitchUnreadable_AndNeverReadBefore_LeavesLookupsOn_AndANameAlreadyFoundStillShows()
+    {
+        var places = new PlaceNames(_lib.PathOf(@"data\PlaceNames.json"), (uri, _) => { _asked.Add(uri); return Task.FromResult(Seattle); },
+            _ => throw new System.Net.Http.HttpRequestException("Offline"));
+        Assert.Equal("85 Pike Street, Seattle, Washington, United States", await places.LookUpAsync(47.6097, -122.3422));
+
+        // Later switched off: a spot already named is still named, since nothing is sent for it.
+        var off = new PlaceNames(_lib.PathOf(@"data\PlaceNames.json"), (uri, _) => { _asked.Add(uri); return Task.FromResult(Seattle); },
+            _ => Task.FromResult(SwitchedOff));
+        Assert.Equal("85 Pike Street, Seattle, Washington, United States", await off.LookUpAsync(47.6097, -122.3422));
+        Assert.Single(_asked);
+    }
+
+    [Fact]
+    public async Task Off_StaysOffAfterARestart_WhenGitHubCantBeReached()
+    {
+        var first = new PlaceNames(_lib.PathOf(@"data\PlaceNames.json"), (uri, _) => { _asked.Add(uri); return Task.FromResult(Seattle); },
+            _ => Task.FromResult(SwitchedOff));
+        Assert.Null(await first.LookUpAsync(1, 1));
+        PlaceNames.SwitchMaxAge = TimeSpan.Zero;
+        try
+        {
+            var later = new PlaceNames(_lib.PathOf(@"data\PlaceNames.json"), (uri, _) => { _asked.Add(uri); return Task.FromResult(Seattle); },
+                _ => throw new System.Net.Http.HttpRequestException("Offline"));
+            Assert.Null(await later.LookUpAsync(2, 2));
+            Assert.Empty(_asked);
+            Assert.NotNull(later.Paused);
+        }
+        finally
+        {
+            PlaceNames.SwitchMaxAge = TimeSpan.FromDays(1);
+        }
+    }
+
+    [Fact]
+    public async Task AFailedRead_IsntRetriedForEveryLookup_AndASavedTimeInTheFuture_IsReadAgain()
+    {
+        var reads = 0;
+        var places = new PlaceNames(_lib.PathOf(@"data\PlaceNames.json"), (uri, _) => Task.FromResult(Seattle),
+            _ => { reads++; throw new System.Net.Http.HttpRequestException("Blocked here"); });
+        await places.LookUpAsync(1, 1);
+        await places.LookUpAsync(2, 2);
+        Assert.Equal(1, reads);
+
+        // Saved while the clock was a year ahead: read again now, not in a year.
+        Directory.CreateDirectory(_lib.PathOf("data"));
+        File.WriteAllText(_lib.PathOf(@"data\ServiceSwitch.json"), $$"""{"read":"{{DateTime.UtcNow.AddYears(1):O}}","on":false,"message":""}""");
+        var fresh = new PlaceNames(_lib.PathOf(@"data\PlaceNames.json"), (uri, _) => Task.FromResult(Seattle), _ => Task.FromResult(SwitchedOn));
+        Assert.Equal("85 Pike Street, Seattle, Washington, United States", await fresh.LookUpAsync(3, 3));
+    }
+
+    [Fact]
+    public async Task ASpotKnownToHaveNoName_IsntSaidToBePaused()
+    {
+        var places = new PlaceNames(_lib.PathOf(@"data\PlaceNames.json"), (uri, _) => Task.FromResult("""{"error":"Unable to geocode"}"""),
+            _ => Task.FromResult(SwitchedOn));
+        Assert.Null(await places.LookUpAsync(0, -30));
+        Assert.Null(places.Paused);
+        Assert.Null(await places.LookUpAsync(0, -30));
+        Assert.Null(places.Paused);
+    }
+
+    [Fact]
+    public void TheSwitch_ReadsOnlyItsOwnEntry()
+    {
+        Assert.Equal((false, "Paused."), PlaceNames.SwitchFrom("""{"placeNames":{"windows":{"enabled":false,"message":" Paused. "}}}"""));
+        Assert.Equal((true, ""), PlaceNames.SwitchFrom("""{"placeNames":{"windows":{}}}"""));
+        Assert.Null(PlaceNames.SwitchFrom("""{"placeNames":{"mac":{"enabled":false}}}"""));
+        Assert.Null(PlaceNames.SwitchFrom("not json"));
+        // A slip when switching it off isn't read as on.
+        Assert.Null(PlaceNames.SwitchFrom("""{"placeNames":{"windows":{"enabled":"false"}}}"""));
+        Assert.Null(PlaceNames.SwitchFrom("[1]"));
+        Assert.Null(PlaceNames.SwitchFrom("""{"placeNames":"x"}"""));
+        // The file in the repository reads as a setting, whatever it's set to, so switching it off never breaks a build.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "config", "services.json"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        Assert.NotNull(PlaceNames.SwitchFrom(File.ReadAllText(Path.Combine(dir!.FullName, "config", "services.json"))));
+        Assert.Equal(new Uri($"https://raw.githubusercontent.com/{AppInfo.Repository}/main/config/services.json"), PlaceNames.SwitchUrl);
+    }
+
+    [WpfFact]
+    public async Task GetInfo_SwitchedOff_SaysSoWhereThePlaceWouldBe_WithoutTheCredit()
+    {
+        var places = new PlaceNames(_lib.PathOf(@"data\PlaceNames.json"), (uri, _) => { _asked.Add(uri); return Task.FromResult(Seattle); },
+            _ => Task.FromResult("""{"placeNames":{"windows":{"enabled":false}}}"""));
+        var window = new InfoWindow(RowWithCoordinates(), new Settings { LookUpPlaceNames = true }, () => { }, describeNow: false, placeNames: places)
+            { ShowActivated = false };
+        window.Show();
+        try
+        {
+            var until = DateTime.UtcNow.AddSeconds(5);
+            while (!window.GeneralList.Items.Cast<InfoLine>().Any(l => l.Label == "Place Taken") && DateTime.UtcNow < until) await Task.Delay(20);
+            Assert.Equal(PlaceNames.PausedText, window.GeneralList.Items.Cast<InfoLine>().Single(l => l.Label == "Place Taken").Value);
+            Assert.Empty(_asked);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [Fact]
     public void TheName_IsThePlaceTownStateAndCountry_WithoutRepeats()
     {
