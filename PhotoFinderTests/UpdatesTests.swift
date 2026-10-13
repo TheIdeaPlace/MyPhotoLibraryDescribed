@@ -26,6 +26,19 @@ final class UpdatesTests: XCTestCase {
         XCTAssertNil(Updates.version(fromTag: "vNext"))
     }
 
+    func testCopiesOnTheEarlierMacTagsFindTheSharedOne_OnceItsPublished() {
+        // 0.2.0 is the first release under the shared `v` tag: a copy running 0.1.x must find it, but not while it's
+        // the draft that the Windows installer and the Mac's disk image are being attached to.
+        let draft = [release("v0.2.0", draft: true), release("mac-v0.1.1"), release("mac-v0.1.0")]
+        XCTAssertNil(Updates.newer(than: "0.1.1", in: draft))
+        let published = [release("v0.2.0"), release("mac-v0.1.1"), release("mac-v0.1.0")]
+        for running in ["0.1.0", "0.1.1"] {
+            let found = Updates.newer(than: running, in: published)
+            XCTAssertEqual(found?.version, "0.2.0")
+            XCTAssertEqual(found?.page.lastPathComponent, "v0.2.0")
+        }
+    }
+
     func testTheMenuAlwaysSaysWhatsRunning() {
         XCTAssertEqual(Updates.menuTitle(running: "0.1.1", available: nil), "Check for Updates (running 0.1.1)…")
         XCTAssertEqual(Updates.menuTitle(running: "0.1.1", available: "0.2.0"), "Update to 0.2.0 available…")
