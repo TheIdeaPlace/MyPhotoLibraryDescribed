@@ -16,4 +16,12 @@ final class PlaceNamesTests: XCTestCase {
         XCTAssertTrue(PlaceNames.explanation.contains("Apple"))
         XCTAssertTrue(PlaceNames.explanation.contains("turn it off"))
     }
+
+    func testAPlaceIsNamedWithoutRepeatsOrGaps() {
+        XCTAssertEqual(PlaceNames.joined(["Golden Gate Park", "San Francisco", "CA", "United States"]),
+                       "Golden Gate Park, San Francisco, CA, United States")
+        XCTAssertEqual(PlaceNames.joined(["Cupertino", "Cupertino", "CA", "United States"]), "Cupertino, CA, United States")
+        XCTAssertEqual(PlaceNames.joined([nil, "Paris", " ", "France"]), "Paris, France")
+        XCTAssertNil(PlaceNames.joined([nil, ""]))
+    }
 }

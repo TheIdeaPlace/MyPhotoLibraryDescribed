@@ -1,5 +1,6 @@
 import CoreLocation
 import ImageIO
+import MapKit
 import Photos
 import SwiftUI
 import UniformTypeIdentifiers
@@ -257,14 +258,25 @@ enum PhotoMetadata {
     }
 
     /// The place's name, only when Look Up Place Names is on: finding it sends the coordinates to Apple (#105).
+    /// MapKit's MKReverseGeocodingRequest from macOS 26 (#115), CLGeocoder (deprecated in 26) before that. Both ask
+    /// the same Apple service.
     private static func placeName(for location: CLLocation) async -> String? {
-        guard PlaceNames.isOn(in: .standard),
-              let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }
-        var parts: [String] = []
-        for part in [placemark.name, placemark.locality, placemark.administrativeArea, placemark.country] {
-            if let part, !parts.contains(part) { parts.append(part) }
+        guard PlaceNames.isOn(in: .standard) else { return nil }
+        if #available(macOS 26, *) {
+            guard let request = MKReverseGeocodingRequest(location: location),
+                  let item = try? await request.mapItems.first else { return nil }
+            // Not MKAddress's fullAddress (a multi-line street address with the postcode) or its shortAddress
+            // (street and city, no state or country): neither is the place, city, state, country that Get Info has
+            // always read, and Windows reads too. The item's name is the landmark or street address, as the
+            // placemark's name was, and cityWithContext(.full) is "Cupertino, CA, United States": city, state
+            // and country, with the country always there, as CLGeocoder gave it.
+            let address = item.addressRepresentations
+            let context: [String?] = address?.cityWithContext(.full)?.components(separatedBy: ", ")
+                ?? [address?.cityName, address?.regionName]
+            return PlaceNames.joined([item.name] + context)
         }
-        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+        guard let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }
+        return PlaceNames.joined([placemark.name, placemark.locality, placemark.administrativeArea, placemark.country])
     }
 
     private static func exifFields(_ data: Data) -> [InfoField] {
