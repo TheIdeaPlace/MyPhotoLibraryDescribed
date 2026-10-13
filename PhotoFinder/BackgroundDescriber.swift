@@ -16,9 +16,11 @@ import SwiftUI
 /// - Photos only in iCloud aren't downloaded for this; the summary says how many were skipped.
 /// - The photo you're on always comes first; it waits on Low Power Mode and while the Mac is running hot.
 /// - When Apple Intelligence is busy (it limits apps that aren't in front), it waits and tries the same photo again.
-///   Other failures leave the photo out of later runs (BackgroundFailures remembers it across launches, until the next
-///   version), and five in a row stop the run, saying why. A refusal by Apple Intelligence's guardrails is a verdict
-///   on that photo, not a sign describing doesn't work, so it doesn't count towards the five (#163).
+///   Other failures leave the photo out of this session's later runs, and five in a row stop the run, saying why. A
+///   refusal by Apple Intelligence's guardrails is a verdict on that photo, not a sign describing doesn't work, so it
+///   doesn't count towards the five (#163).
+/// - Photos it declines or can't read, and photos that fail while a later one in the same run is described, are also
+///   remembered across launches (BackgroundFailures, until the next version), so the same few can't stop every run.
 /// - Stopping takes effect at once: the photo in progress is still saved, but nothing more is said.
 /// - It speaks only when My Photo Library Described is in front.
 @available(macOS 27, *)
@@ -33,6 +35,8 @@ final class BackgroundDescriber {
     private var failedIDs = Set<String>()
     /// The same, across launches (#163), by the photo's description key and date, so an edited photo is tried again.
     private let failures: BackgroundFailures
+    /// This run's failures not yet known to be about the photo: remembered once a later photo is described.
+    private var failureRun = BackgroundFailures.Run()
     /// Whether this run was started by something the person did, so its finish is said (as on Windows).
     private var announceFinish = false
     private var running = false
@@ -114,6 +118,7 @@ final class BackgroundDescriber {
     @discardableResult
     func stop() -> Int {
         let left = queue.stop()
+        failureRun.ended()
         generation += 1
         running = false
         announceFinish = false
@@ -138,6 +143,7 @@ final class BackgroundDescriber {
             guard run == generation else { return }
             progress(queue.progress)
             let failed: Failed?
+            let describedBefore = queue.described
             if id.hasPrefix(Self.filePrefix) {
                 failed = await describeFile(String(id.dropFirst(Self.filePrefix.count)), run: run)
             } else {
@@ -146,6 +152,8 @@ final class BackgroundDescriber {
             guard run == generation else { return }
             guard let failed else {
                 busyWaits = 0
+                // Described (not just skipped): describing works, so this run's earlier failures were about those photos.
+                if queue.described > describedBefore { failures.insert(failureRun.described()) }
                 continue
             }
             if Self.isBusy(failed.error) {
@@ -161,7 +169,8 @@ final class BackgroundDescriber {
             busyWaits = 0
             let failure = failed.error
             failedIDs.insert(id)
-            failures.insert(failed.key, stamp: failed.stamp)
+            failures.insert(failureRun.failed(BackgroundFailure(key: failed.key, stamp: failed.stamp),
+                                              Self.outcome(of: failure)))
             if failure is BackgroundError {
                 let name = id.hasPrefix(Self.filePrefix) ? (String(id.dropFirst(Self.filePrefix.count)) as NSString).lastPathComponent
                     : "a photo in the Photos library"
@@ -173,6 +182,8 @@ final class BackgroundDescriber {
             }
             if queue.failed() {
                 let left = queue.stop()
+                // Five in a row may be the Mac rather than the photos: none of the unproven ones are remembered.
+                failureRun.ended()
                 generation += 1
                 running = false
                 progress(nil)
@@ -191,12 +202,21 @@ final class BackgroundDescriber {
         if announceFinish, let summary = queue.summary { announce(summary) }
         announceFinish = false
         queue.reset()
+        failureRun.ended()
         running = false
         progress(nil)
     }
 
     /// Apple Intelligence is busy rather than unable: worth trying the same photo again after a wait.
     private static func isBusy(_ error: Error) -> Bool { PhotoDescriber.isRateLimited(error) }
+
+    /// Whether a failure is remembered at once (about the photo), only once describing is shown to work (anything
+    /// else), or not at all (cancelled).
+    private static func outcome(of error: Error) -> BackgroundFailures.Outcome {
+        if error is CancellationError || Task.isCancelled { return .cancelled }
+        if isAboutThisPhoto(error) || error is BackgroundError { return .aboutThePhoto }
+        return .other
+    }
 
     /// Apple Intelligence wouldn't describe this one photo (its content), which says nothing about the next.
     private static func isAboutThisPhoto(_ error: Error) -> Bool {
