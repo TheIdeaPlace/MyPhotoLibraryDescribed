@@ -24,7 +24,7 @@ struct SettingsView: View {
                 Text("Describing Photos")
                     .accessibilityAddTraits(.isHeader)
             } footer: {
-                Text("What Apple Intelligence is asked when it describes a photo with Describe Photo, Get Info or in the background. Left empty, the standard prompt (shown in the field) is used. Descriptions already saved are kept; Photo > Describe Again replaces one.")
+                Text("What Apple Intelligence is asked when it describes a photo with Describe Photo, Get Info or in the background. Left empty, the standard prompt (shown in the field) is used. Descriptions already saved are kept; Photo > Redescribe replaces one.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

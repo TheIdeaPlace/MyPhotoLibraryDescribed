@@ -1950,7 +1950,7 @@ final class LibraryModel {
         }
         // Describe Again is replacing this one: the saved description is the old one, so wait for the new (#58).
         if (describingAgain[row.id] ?? 0) > 0 {
-            announce("Describing \(row.name) again")
+            announce("Redescribing \(row.name)")
             return
         }
         if let saved = descriptions.description(forKey: key) {
@@ -2000,7 +2000,7 @@ final class LibraryModel {
             let alert = NSAlert()
             alert.messageText = "Replace the description you edited?"
             alert.informativeText = "\(row.name) will be described again, and the new description replaces yours."
-            alert.addButton(withTitle: "Describe Again")
+            alert.addButton(withTitle: "Redescribe")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
@@ -2011,7 +2011,7 @@ final class LibraryModel {
         describeAgainTask?.cancel()
         // A Describe Photo still running on this photo would save and speak an older description after this one.
         if describeTaskID == id { describeTask?.cancel() }
-        announce("Describing \(row.name) again")
+        announce("Redescribing \(row.name)")
         describeAgainTask = Task { [weak self] in
             let text = await self?.describeAndRemember(id, allowNetwork: true, replacingEdit: agreed)
             self?.describingAgain[id, default: 1] -= 1

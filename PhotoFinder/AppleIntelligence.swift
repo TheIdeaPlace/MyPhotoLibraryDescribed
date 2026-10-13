@@ -268,7 +268,7 @@ struct AppleIntelligenceSection: View {
             }
             if let conversation, conversation.startedFromSaved, !conversation.isWorking {
                 // A saved description may be stale (the photo was edited) or poor: describing again replaces it.
-                Button("Describe Again") {
+                Button("Redescribe") {
                     // As Photo > Describe Again: a description the person corrected is replaced only if they agree.
                     let agreed = model.descriptions.isEdited(forKey: descriptionKey)
                         ? model.descriptions.description(forKey: descriptionKey) : nil
@@ -276,7 +276,7 @@ struct AppleIntelligenceSection: View {
                         let alert = NSAlert()
                         alert.messageText = "Replace the description you edited?"
                         alert.informativeText = "The photo will be described again, and the new description replaces yours."
-                        alert.addButton(withTitle: "Describe Again")
+                        alert.addButton(withTitle: "Redescribe")
                         alert.addButton(withTitle: "Cancel")
                         guard alert.runModal() == .alertFirstButtonReturn else { return }
                     }

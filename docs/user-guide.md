@@ -47,7 +47,7 @@ The window has a sidebar (the library, albums on the Mac, and folders), the list
 While you step through photos one at a time, Photo Finder quietly describes the next one in the direction you're going, so it's ready when you get there. It doesn't do this on Low Power Mode / energy saver.
 
 - **Describe Photo** (Command-D / Ctrl+Shift+D, becoming Ctrl+D) describes the photo you're on and reads it, whether or not automatic descriptions are on.
-- **Describe Again** (Option-Shift-Command-D / Ctrl+Alt+Shift+D) describes it afresh and replaces the saved description.
+- **Redescribe** (Command-R / Ctrl+Alt+Shift+D, becoming Ctrl+R) describes it afresh and replaces the saved description. (On Windows it's still called Redescribe for now.)
 - **Describe in the background:** Photo > Describe Photos in the Background describes photos that haven't been described yet behind the scenes, so their descriptions are ready when you get to them. Photo > Stop Background Describing stops it for now.
 
 How photos are described: on the Mac, Settings has the prompt Apple Intelligence is given (leave it empty for the standard one). On Windows, Photo > Description Type chooses Accessible, Detailed, Brief or Diagram.
@@ -56,7 +56,7 @@ How photos are described: on the Mac, Settings has the prompt Apple Intelligence
 
 In list view, the panel starts with a picture of the photo you're on, as Finder's and File Explorer's preview panes do, for anyone looking at the screen with you; screen readers skip it, since the description says what's in it. (The gallery already shows the photo large.) It never downloads a photo that's only in iCloud or OneDrive; those show their small thumbnail, or a placeholder when there isn't one.
 
-**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Describe Again, Use as Caption and Copy, and the photo's caption with Edit Caption. Shift-Command-D on the Mac goes straight to the description, showing the panel if it's hidden, and pressed again goes back to the list or gallery. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow on the Mac) and Previous Photo (Command-Left): the photo changes and focus stays where it is.
+**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Redescribe, Use as Caption and Copy, and the photo's caption with Edit Caption. Shift-Command-D on the Mac goes straight to the description, showing the panel if it's hidden, and pressed again goes back to the list or gallery. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow on the Mac) and Previous Photo (Command-Left): the photo changes and focus stays where it is.
 
 ## Read-only, and changing your photos
 
@@ -82,7 +82,7 @@ On the Mac, a photo in your Photos library gets a Photos caption, which syncs wi
 
 ## Get Info
 
-**Get Info** (Command-I / Ctrl+I) lists everything known about a photo: its dates, size, camera settings, caption, keywords, rating, coordinates, and its saved description, with Describe Again. On the Mac you can also ask Apple Intelligence follow-up questions about the photo. Escape closes it.
+**Get Info** (Command-I / Ctrl+I) lists everything known about a photo: its dates, size, camera settings, caption, keywords, rating, coordinates, and its saved description, with Redescribe. On the Mac you can also ask Apple Intelligence follow-up questions about the photo. Escape closes it.
 
 ## Place names
 
@@ -111,7 +111,7 @@ On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save
 | Get Info | Command-I | Ctrl+I or Alt+Enter |
 | Describe Photo | Command-D | Ctrl+Shift+D (Ctrl+D coming) |
 | Go to the description, and back to the list or gallery | Shift-Command-D | Coming |
-| Describe Again | Option-Shift-Command-D | Ctrl+Alt+Shift+D |
+| Redescribe | Command-R | Ctrl+Alt+Shift+D (Ctrl+R coming) |
 | Turn automatic descriptions on or off | Photo menu | Ctrl+Shift+U |
 | Export | Command-E | Ctrl+E |
 | Toggle Favorite | Shift-Command-F | Ctrl+Shift+F |
@@ -123,7 +123,7 @@ On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save
 | Show or hide the Description panel | Option-Command-I | Ctrl+Shift+I |
 | Read the status bar / go to it | Control-F9 / Control-Shift-F9 | Ctrl+F9 / Ctrl+Shift+F9 |
 | Go to All Photos | Shift-Command-A | Ctrl+Shift+A |
-| Refresh | Command-R | F5 |
+| Refresh | Shift-Command-R | F5 |
 
 ## Privacy
 

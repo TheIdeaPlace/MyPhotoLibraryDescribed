@@ -27,7 +27,7 @@ struct AIDescriptionCheckView: View {
                 .focused($listFocused)
                 .accessibilityLabel("Result")
                 HStack {
-                    Button("Describe Again") { run() }
+                    Button("Redescribe") { run() }
                     Spacer()
                     Button("Copy to Clipboard") {
                         NSPasteboard.general.clearContents()

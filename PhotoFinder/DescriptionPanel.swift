@@ -99,7 +99,7 @@ struct DescriptionPanel: View {
     }
 
     @ViewBuilder private func actions(for id: String) -> some View {
-        Button("Describe Again") { model.describeFocusedPhotoAgain() }
+        Button("Redescribe") { model.describeFocusedPhotoAgain() }
             .fixedSize()
         Button("Use as Caption") { model.useDescriptionAsCaption([id]) }
             .disabled(model.savedDescription(for: id) == nil)
