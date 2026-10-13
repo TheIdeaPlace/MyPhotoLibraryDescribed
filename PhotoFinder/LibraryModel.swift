@@ -235,6 +235,7 @@ final class LibraryModel {
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.recheckPhotosAccess()
                 self.autoDescriber.refocused(currentID: self.autoDescribeCandidate)
             }
         }
@@ -472,6 +473,7 @@ final class LibraryModel {
 
     var statusText: String {
         if isLoading { return "Loading…" }
+        if showingPhotosNoAccess { return "No access to Photos" }
         let count = visibleRows.count
         let items = count == 1 ? "1 item" : "\(count.formatted()) items"
         return selection.isEmpty ? items : "\(selection.count.formatted()) of \(items) selected"
@@ -479,37 +481,87 @@ final class LibraryModel {
 
     // MARK: - Startup
 
+    /// Whether Photos access is given (full or limited). Without it the browser still works for added folders (#47).
+    var photosAllowed: Bool { authState == .authorized }
+
+    /// Whether the place showing is the "Photos library: no access" row.
+    var showingPhotosNoAccess: Bool { currentItem?.kind == .photosNoAccess }
+
+    /// Without Photos access, the first added folder is shown once its scan is in, rather than the no-access row.
+    @ObservationIgnored private var showFirstFolderWhenScanned = false
+
     func start() async {
         guard authState == .unknown else { return }
         DiagnosticLog.started(appleIntelligence: describeUnavailableReason ?? "available")
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        try? FileManager.default.removeItem(at: PhotoExporter.temporaryRoot)
         guard status == .authorized || status == .limited else {
-            DiagnosticLog.write("start", "Photos access not given")
+            // The browser still opens: added folders, describing and Get Info for files don't need Photos (#47).
+            DiagnosticLog.write("start", "Photos access not given; \(folderRoots.count) added folders")
             authState = .denied
+            rebuildSidebar()
+            selectedSourceID = SidebarID.photosNoAccess
+            showFirstFolderWhenScanned = !folderRoots.isEmpty
+            refreshFolders()
             return
         }
         DiagnosticLog.write("start", "Photos access: \(status == .limited ? "limited" : "full"); \(folderRoots.count) added folders")
-        authState = .authorized
-        try? FileManager.default.removeItem(at: PhotoExporter.temporaryRoot)
+        await startPhotos(afterNoAccess: false)
+    }
 
+    /// Everything that reads the Photos library: its sections, the change observer, background describing of its
+    /// photos. At launch, or when access is given while the app is running (`afterNoAccess`).
+    private func startPhotos(afterNoAccess: Bool) async {
+        authState = .authorized
         let observer = LibraryObserver { [weak self] change in
             Task { @MainActor in self?.libraryDidChange(change.value) }
         }
         self.observer = observer
         PHPhotoLibrary.shared().register(observer)
 
-        rebuildSidebar()
-        selectedSourceID = SidebarID.allPhotos
-        refreshFolders()
+        if afterNoAccess {
+            // On the no-access row: to All Photos, said. In a folder: stay there, and say the library is there now.
+            if selectedSourceID == SidebarID.photosNoAccess {
+                loadAnnouncementPrefix = "Showing "
+            } else {
+                announce("Photos library added to the sidebar", queued: true)
+            }
+            rebuildSidebar()
+            if selectedSourceID == nil { selectedSourceID = SidebarID.allPhotos }
+        } else {
+            rebuildSidebar()
+            selectedSourceID = SidebarID.allPhotos
+            refreshFolders()
+        }
         // Watched for new photos only while describing them in the background is on: it's a whole-library fetch.
-        // The photos not described yet carry on from where the last run left off (#102).
+        // The photos not described yet carry on from where the last run left off (#102). The added folders' photos
+        // are already queued when access comes later.
         if describeInBackground {
             allPhotosFetch = PHAsset.fetchAssets(with: .image, options: nil)
-            describeLibraryBacklog(announce: false)
+            describeLibraryBacklog(announce: false, includeFolders: !afterNoAccess)
         }
         await refreshDateBuckets()
         rebuildSidebar()
         warmNameCache()
+    }
+
+    /// Back from another app (System Settings, say): if Photos access was given meanwhile, the library joins the
+    /// sidebar without reopening the app.
+    private func recheckPhotosAccess() {
+        guard authState == .denied else { return }
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard status == .authorized || status == .limited else { return }
+        DiagnosticLog.write("start", "Photos access given while running: \(status == .limited ? "limited" : "full")")
+        // Set now, not in the task: a second return to the app before it runs mustn't start the library twice.
+        authState = .authorized
+        Task { await startPhotos(afterNoAccess: true) }
+    }
+
+    /// Opens System Settings at Privacy & Security, Photos.
+    func openPhotosPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     // MARK: - Sidebar
@@ -549,6 +601,15 @@ final class LibraryModel {
     @discardableResult
     private func rebuildSidebar() -> Bool {
         let previousItem = currentItem
+
+        // Without Photos access, one row stands in for Photos' sections; nothing is fetched from Photos (#47).
+        guard photosAllowed else {
+            let row = SidebarItem(id: SidebarID.photosNoAccess, title: SidebarID.photosNoAccessTitle, kind: .photosNoAccess,
+                                  systemImage: "photo.badge.exclamationmark", count: 0, children: nil, parentID: nil,
+                                  containerKind: "Library")
+            photoSections = [SidebarSection(id: "library", title: "Photos", items: [row])]
+            return applySidebar(previousItem: previousItem)
+        }
 
         allPhotosCount = PHAsset.fetchAssets(with: nil).count
         var library = [SidebarItem(id: SidebarID.allPhotos, title: "All Photos", kind: .allPhotos,
@@ -630,14 +691,14 @@ final class LibraryModel {
         if let id = selectedSourceID, index[id] == nil {
             // A subfolder whose last photo was deleted in Finder drops out: go to the nearest folder above it that's
             // still listed and say so ("Showing Pictures, 12 items"), rather than to All Photos without a word (#47).
-            if let path = previousItem?.directoryPath,
-               let parent = FolderRoots.nearestListed(above: path, roots: folderRoots,
-                                                      isListed: { index[FolderID.folder($0)] != nil }) {
+            // Without Photos access, to the first added folder still listed, or the no-access row.
+            let place = FolderRoots.fallbackPlace(previousPath: previousItem?.directoryPath, roots: folderRoots,
+                                                  photosAllowed: photosAllowed,
+                                                  isListed: { index[FolderID.folder($0)] != nil })
+            if previousItem?.isDirectory == true, place != SidebarID.allPhotos {
                 loadAnnouncementPrefix = loadAnnouncementPrefix ?? "Showing "
-                selectedSourceID = FolderID.folder(parent)
-            } else {
-                selectedSourceID = SidebarID.allPhotos
             }
+            selectedSourceID = place
         } else if let item = currentItem, item.children != nil || item.isDirectory, item != previousItem {
             // A folder's contents changed while it was showing.
             loadSelectedSource(keepSelection: true)
@@ -733,7 +794,7 @@ final class LibraryModel {
                   let end = calendar.date(byAdding: .month, value: 1, to: start) else { return nil }
             options.predicate = NSPredicate(format: "creationDate >= %@ AND creationDate < %@", start as NSDate, end as NSDate)
             return PHAsset.fetchAssets(with: options)
-        case .collectionList, .year, .directory:
+        case .collectionList, .year, .directory, .photosNoAccess:
             return nil
         }
     }
@@ -766,6 +827,16 @@ final class LibraryModel {
         }
         filesByID = [:]
         watchFolder(nil)
+
+        // The no-access row lists nothing; the browser shows how to give access instead (#47).
+        if item.kind == .photosNoAccess {
+            currentFetch = nil
+            assetsByID = [:]
+            rows = []
+            isLoading = false
+            finishLoad(previousSelection: [], item: item, slow: false)
+            return
+        }
 
         if let children = item.children {
             currentFetch = nil
@@ -851,7 +922,9 @@ final class LibraryModel {
             announceNextLoad = false
             let prefix = loadAnnouncementPrefix ?? ""
             loadAnnouncementPrefix = nil
-            announce("\(prefix)\(item.title), \(rows.count == 1 ? "1 item" : "\(rows.count.formatted()) items")")
+            // The no-access row has no items to count: just its name ("Showing Photos library: no access").
+            announce(item.kind == .photosNoAccess ? "\(prefix)\(item.title)"
+                     : "\(prefix)\(item.title), \(rows.count == 1 ? "1 item" : "\(rows.count.formatted()) items")")
         }
     }
 
@@ -975,6 +1048,15 @@ final class LibraryModel {
             folderNodes = folderRoots.compactMap { fresh[$0.lowercased()] ?? old[$0.lowercased()] }
             // Only the Folders section: Photos' album counts are left alone (#47).
             let reloaded = rebuildFolderSection()
+            // Without Photos access, the first added folder rather than the no-access row, once it's listed (#47).
+            if showFirstFolderWhenScanned {
+                showFirstFolderWhenScanned = false
+                if selectedSourceID == SidebarID.photosNoAccess,
+                   let root = folderRoots.first(where: { itemsByID[FolderID.folder($0)] != nil }) {
+                    selectedSourceID = FolderID.folder(root)
+                    return
+                }
+            }
             if reloadCurrent, !reloaded, currentItem?.isDirectory == true {
                 loadSelectedSource(keepSelection: true)
             }
@@ -1083,8 +1165,10 @@ final class LibraryModel {
         justAddedFolders.remove(root.lowercased())
         // You're always in the folder being removed: go to All Photos first, so its place going away isn't announced
         // as if it happened by itself. Said as on Windows: "Removed Pictures from My Photo Library Described. Showing All Photos, 12 items".
+        // Without Photos access, to the next added folder, or the no-access row (#47).
         loadAnnouncementPrefix = "Removed \(name) from \(AppInfo.name). Showing "
-        selectedSourceID = SidebarID.allPhotos
+        selectedSourceID = FolderRoots.fallbackPlace(previousPath: nil, roots: folderRoots, photosAllowed: photosAllowed,
+                                                     isListed: { self.itemsByID[FolderID.folder($0)] != nil })
         rebuildSidebar()
         refreshFolders()
     }
@@ -1764,7 +1848,7 @@ final class LibraryModel {
             captionFileFromNewDescription(text, key: key, policy: policy)
             return
         }
-        guard canEditCaptions else { return }
+        guard canEditCaptions, photosAllowed else { return }
         let names = self.names
         Task.detached(priority: .utility) {
             // The caption as Photos has it now: never the list's copy, which is empty until its details load, so
@@ -1828,7 +1912,8 @@ final class LibraryModel {
     func setDescribeInBackground(_ on: Bool) {
         describeInBackground = on
         backgroundProblem = nil
-        allPhotosFetch = on ? PHAsset.fetchAssets(with: .image, options: nil) : nil
+        // Photos' own photos only with access to them; added folders either way (#47).
+        allPhotosFetch = on && photosAllowed ? PHAsset.fetchAssets(with: .image, options: nil) : nil
         guard on else {
             let left = stopBackgroundDescribing(announce: false)
             announce(left > 0 ? "Background describing off. Stopped with \(left == 1 ? "1 photo" : "\(left) photos") not described."
@@ -1844,14 +1929,17 @@ final class LibraryModel {
         describeLibraryBacklog(announce: true)
     }
 
-    /// Queues every photo not described yet: the Photos library's newest first, then the added folders' photos.
-    private func describeLibraryBacklog(announce: Bool) {
+    /// Queues every photo not described yet: the Photos library's newest first (with access to it), then the added
+    /// folders' photos (unless `includeFolders` is false: they're queued already).
+    private func describeLibraryBacklog(announce: Bool, includeFolders: Bool = true) {
         guard backgroundUnavailableReason == nil else { return }
-        let folderPaths = folderMediaPaths.keys.sorted().flatMap { folderMediaPaths[$0].map { Array($0).sorted() } ?? [] }
-        folderBacklogQueued.formUnion(folderMediaPaths.keys)
+        let folderPaths = includeFolders
+            ? folderMediaPaths.keys.sorted().flatMap { folderMediaPaths[$0].map { Array($0).sorted() } ?? [] } : []
+        if includeFolders { folderBacklogQueued.formUnion(folderMediaPaths.keys) }
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        let fetch = PHAsset.fetchAssets(with: .image, options: options)
+        // Nothing is asked of Photos without access to it (#47).
+        let fetch = photosAllowed ? PHAsset.fetchAssets(with: .image, options: options) : nil
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         guard #available(macOS 27, *) else { return }
         let describer = makeBackgroundDescriber()
@@ -1860,7 +1948,7 @@ final class LibraryModel {
         Task {
             // In batches, so a big library doesn't hold up the window.
             var index = 0
-            while index < fetch.count, describeInBackground, describer.generation == generation {
+            while let fetch, index < fetch.count, describeInBackground, describer.generation == generation {
                 let end = min(index + 500, fetch.count)
                 describer.enqueue(fetch.objects(at: IndexSet(integersIn: index..<end)), sayFinish: announce,
                                   since: generation)

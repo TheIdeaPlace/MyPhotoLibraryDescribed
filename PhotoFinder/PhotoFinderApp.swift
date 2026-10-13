@@ -196,6 +196,8 @@ struct PhotoCommands: Commands {
             Divider()
             Button("All Photos") { model.navigate(to: SidebarID.allPhotos) }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
+                // Without Photos access there's no All Photos to go to (#142's review).
+                .disabled(!model.photosAllowed)
             Divider()
             // From anywhere, focus staying where it is: the Description panel follows the photo (Kelly, 13 Oct).
             Button("Next Photo") { model.stepPhoto(by: 1) }

@@ -5,6 +5,9 @@ import UniformTypeIdentifiers
 
 enum SidebarID {
     static let allPhotos = "library:all"
+    /// The one row standing in for Photos' sections while Photos access isn't given (#47).
+    static let photosNoAccess = "library:noaccess"
+    static let photosNoAccessTitle = "Photos library: no access"
 }
 
 /// Where the rows in the file list come from.
@@ -16,6 +19,8 @@ enum SourceKind: Hashable {
     case month(year: Int, month: Int)
     /// A folder added to the library from outside Photos, or a folder inside one (#36).
     case directory(String)
+    /// The "Photos library: no access" row, shown instead of Photos' sections without access (#47). Lists nothing.
+    case photosNoAccess
 }
 
 /// A place in the sidebar. Items with `children` behave like folders: selecting one lists its children.
