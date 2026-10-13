@@ -59,9 +59,14 @@ struct AIDescriptionCheckView: View {
         // The list goes while it works, so the new one appears afresh and focus reads its first line, the description.
         result = nil
         selected = nil
-        // Not when Apple Intelligence can't describe here: the result, at once, says why.
+        // Reset, so setting it again once the new list appears moves focus there.
+        listFocused = false
+        // Not when Apple Intelligence can't describe here: the result, at once, says why. Queued behind the window's
+        // title, which VoiceOver is reading as it opens, rather than cutting it off.
         if model.describeUnavailableReason == nil {
-            AccessibilityNotification.Announcement("Describing the sample photo").post()
+            var starting = AttributedString("Describing the sample photo")
+            starting.accessibilitySpeechAnnouncementPriority = .low
+            AccessibilityNotification.Announcement(starting).post()
         }
         running = Task { @MainActor in
             let check = await model.runAIDescriptionCheck()

@@ -130,6 +130,9 @@ struct PhotoCommands: Commands {
                 model.aiDescriptionCheckRequest += 1
                 openWindow(id: "aiDescriptionCheck")
             }
+            Divider()
+            Button("\(AppInfo.name) User Guide") { NSWorkspace.shared.open(AppInfo.userGuideURL) }
+            Button("Privacy Policy") { NSWorkspace.shared.open(AppInfo.privacyPolicyURL) }
         }
         CommandMenu("Go") {
             Button("Enclosing Folder") { model.goToEnclosingFolder() }
@@ -172,7 +175,7 @@ struct PhotoCommands: Commands {
                 get: { model.describeAutomatically },
                 set: { model.setDescribeAutomatically($0) }
             ))
-            Toggle("Describe New Photos in the Background", isOn: Binding(
+            Toggle("Describe Photos in the Background", isOn: Binding(
                 get: { model.describeInBackground },
                 set: { model.setDescribeInBackground($0) }
             ))

@@ -439,7 +439,7 @@ private struct StatusBar: View {
         switch section {
         case .status: model.statusText
         case .activity: model.activity ?? model.nameProgress
-        case .background: model.backgroundProgress
+        case .background: model.backgroundStatus
         }
     }
 

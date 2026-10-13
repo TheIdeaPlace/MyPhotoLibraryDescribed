@@ -61,6 +61,8 @@ final class AIDetailsTests: XCTestCase {
 
     func testRedactionReplacesTheHomeFolder() {
         XCTAssertEqual(Privacy.redact("At /Users/kelly/Library/x.", home: "/Users/kelly"), "At ~/Library/x.")
+        // Another account whose name starts with this one's isn't half replaced.
+        XCTAssertEqual(Privacy.redact("At /Users/kellyford/x", home: "/Users/kelly"), "At /Users/…/x")
     }
 
     func testRedactionRemovesOtherAccountNames() {

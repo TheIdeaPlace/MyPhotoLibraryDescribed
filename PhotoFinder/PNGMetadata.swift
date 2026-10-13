@@ -124,16 +124,39 @@ enum PNGMetadata {
         return output
     }
 
-    /// Sets each field through its `[x-default]` path, as FileMetadataWriter does, or removes it for nil.
-    private static func set(_ values: [String: String?], in metadata: CGMutableImageMetadata) {
+    /// Sets each field through its `[x-default]` path, as FileMetadataWriter does, or removes it for nil. Other
+    /// languages holding the text being replaced (the default's, or the only language's when there's no default) are
+    /// the same caption, so they change too; translations that differ are kept, as on Windows (#89).
+    static func set(_ values: [String: String?], in metadata: CGMutableImageMetadata) {
         _ = CGImageMetadataRegisterNamespaceForPrefix(metadata, FileMetadataWriter.iptcNamespace, "Iptc4xmpCore" as CFString, nil)
         for (path, text) in values {
             if let text {
+                for language in languages(holdingDefaultOf: path, in: metadata) {
+                    _ = CGImageMetadataSetValueWithPath(metadata, nil, "\(path)[\(language)]" as CFString, text as CFString)
+                }
                 _ = CGImageMetadataSetValueWithPath(metadata, nil, "\(path)[x-default]" as CFString, text as CFString)
             } else {
                 _ = CGImageMetadataRemoveTagWithPath(metadata, nil, path as CFString)
             }
         }
+    }
+
+    /// The languages other than x-default in a language alternative holding the same text as its default, or as its
+    /// only language when it has no default.
+    private static func languages(holdingDefaultOf path: String, in metadata: CGImageMetadata) -> [String] {
+        guard let tag = CGImageMetadataCopyTagWithPath(metadata, nil, path as CFString),
+              let items = CGImageMetadataTagCopyValue(tag) as? [CGImageMetadataTag] else { return [] }
+        let languages: [(language: String, text: String?)] = items.map { item in
+            let qualifiers = (CGImageMetadataTagCopyQualifiers(item) as? [CGImageMetadataTag]) ?? []
+            let language = qualifiers.first { CGImageMetadataTagCopyName($0) as String? == "lang" }
+                .flatMap { CGImageMetadataTagCopyValue($0) as? String } ?? ""
+            return (language, CGImageMetadataTagCopyValue(item) as? String)
+        }
+        let others = languages.filter { !$0.language.isEmpty && $0.language.lowercased() != "x-default" }
+        let old = languages.first { $0.language.lowercased() == "x-default" }?.text
+            ?? (languages.count == 1 ? languages[0].text : nil)
+        guard let old else { return [] }
+        return others.filter { $0.text == old }.map(\.language)
     }
 
     // MARK: - XMP
@@ -256,29 +279,44 @@ enum PNGMetadata {
         return exif
     }
 
-    /// Whether any other IFD0 entry's out-of-line value, or a directory IFD0 points to (Exif, GPS, Interop, the next
-    /// IFD), overlaps `range`.
+    /// Whether anything else in the EXIF overlaps `range`: another IFD0 entry's out-of-line value, or a directory
+    /// reached from IFD0 (Exif, GPS, Interop, the next IFD with the embedded thumbnail), its values, or the thumbnail.
     static func usedElsewhere(_ range: Range<Int>, in exif: [UInt8], ifd: Int, count: Int, except skip: Int,
                               bigEndian big: Bool) -> Bool {
         let sizes: [UInt16: Int] = [1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8]
         let pointerTags: Set<UInt16> = [0x8769, 0x8825, 0xA005]
         var used: [Range<Int>] = []
-        func directory(at offset: Int) {
-            guard offset >= 8, offset + 2 <= exif.count else { return }
+        var visited: Set<Int> = [ifd]
+        func clamp(_ start: Int, _ length: Int) {
+            guard start >= 0, start < exif.count, length > 0 else { return }
+            used.append(start..<(start + min(length, exif.count - start)))
+        }
+        /// The directory's table, its entries' values and the directories they lead to; IFD0's own entry `skip` aside.
+        func directory(at offset: Int, skipping skip: Int? = nil) {
+            guard offset >= 8, offset + 2 <= exif.count, visited.count < 16 else { return }
+            if offset != ifd { guard visited.insert(offset).inserted else { return } }
             let n = Int(readUInt16(exif, offset, bigEndian: big))
-            used.append(offset..<min(exif.count, offset + 2 + n * 12 + 4))
+            let tableEnd = offset + 2 + n * 12
+            clamp(offset, 2 + n * 12 + 4)
+            guard tableEnd + 4 <= exif.count else { return }
+            var thumbnail: (at: Int?, length: Int?) = (nil, nil)
+            for i in 0..<n where i != skip {
+                let entry = offset + 2 + i * 12
+                let tag = readUInt16(exif, entry, bigEndian: big)
+                let value = Int(readUInt32(exif, entry + 8, bigEndian: big))
+                if pointerTags.contains(tag) { directory(at: value); continue }
+                if tag == 0x0201 { thumbnail.at = value }
+                if tag == 0x0202 { thumbnail.length = value }
+                guard let size = sizes[readUInt16(exif, entry + 2, bigEndian: big)] else { continue }
+                let (bytes, overflow) = Int(readUInt32(exif, entry + 4, bigEndian: big)).multipliedReportingOverflow(by: size)
+                if !overflow, bytes > 4 { clamp(value, bytes) }
+            }
+            if let at = thumbnail.at, let length = thumbnail.length { clamp(at, length) }
+            directory(at: Int(readUInt32(exif, tableEnd, bigEndian: big)))
         }
-        for i in 0..<count where i != skip {
-            let entry = ifd + 2 + i * 12
-            let tag = readUInt16(exif, entry, bigEndian: big)
-            let value = Int(readUInt32(exif, entry + 8, bigEndian: big))
-            if pointerTags.contains(tag) { directory(at: value); continue }
-            guard let size = sizes[readUInt16(exif, entry + 2, bigEndian: big)] else { continue }
-            let (bytes, overflow) = Int(readUInt32(exif, entry + 4, bigEndian: big)).multipliedReportingOverflow(by: size)
-            if !overflow, bytes > 4, value >= 0, value < exif.count { used.append(value..<min(exif.count, value + bytes)) }
-        }
-        directory(at: Int(readUInt32(exif, ifd + 2 + count * 12, bigEndian: big)))
-        return used.contains { $0.overlaps(range) }
+        directory(at: ifd, skipping: skip)
+        // IFD0's own table is where the entry is removed, which is never "used elsewhere".
+        return used.dropFirst().contains { $0.overlaps(range) }
     }
 
     // MARK: - Bytes

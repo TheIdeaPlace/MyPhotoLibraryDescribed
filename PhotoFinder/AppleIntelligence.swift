@@ -198,7 +198,9 @@ enum PhotoDescriber {
 
     /// Asks the model to describe the image, and counts the outcome for Check System (#94): how long it took, or why it
     /// failed. One photo, counted once; giving up (moving on, closing a window) isn't a failure.
-    static func respond(_ session: LanguageModelSession, prompt: String, image: CGImage) async throws -> String {
+    /// `countsBusy` false leaves a rate limit out of the failures: background describing waits and tries again.
+    static func respond(_ session: LanguageModelSession, prompt: String, image: CGImage,
+                        countsBusy: Bool = true) async throws -> String {
         let start = ContinuousClock.now
         do {
             let answer = try await session.respond {
@@ -208,12 +210,18 @@ enum PhotoDescriber {
             DescribeStats.session.described(seconds: seconds(since: start))
             return answer
         } catch {
-            if !(error is CancellationError), !Task.isCancelled {
+            if !(error is CancellationError), !Task.isCancelled, countsBusy || !isRateLimited(error) {
                 DescribeStats.session.failed(code: ImageConversation.failureCode(for: error),
                                              message: ImageConversation.message(for: error))
             }
             throw error
         }
+    }
+
+    static func isRateLimited(_ error: Error) -> Bool {
+        if let error = error as? LanguageModelError, case .rateLimited = error { return true }
+        if let error = error as? LanguageModelSession.GenerationError, case .rateLimited = error { return true }
+        return false
     }
 
     static func seconds(since start: ContinuousClock.Instant) -> Double {

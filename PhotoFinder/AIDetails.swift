@@ -58,7 +58,11 @@ final class DescribeStats {
 enum Privacy {
     static func redact(_ text: String, home: String = NSHomeDirectory()) -> String {
         var text = text
-        if home.count > 1 { text = text.replacingOccurrences(of: home, with: "~") }
+        // Only the whole folder: /Users/kelly mustn't turn /Users/kellyford/x into ~ford/x.
+        if home.count > 1 {
+            let escaped = NSRegularExpression.escapedPattern(for: home)
+            text = text.replacingOccurrences(of: escaped + #"(?=[/\s:;,)"']|$)"#, with: "~", options: .regularExpression)
+        }
         // Another account's folder, or this one spelled differently: the name goes, the shape stays. A full stop after
         // it ends the sentence, not the name.
         return text.replacingOccurrences(of: #"/Users/[^/\s:;,]+?(?=\.?(?:[/\s:;,)"']|$))"#, with: "/Users/…", options: .regularExpression)
