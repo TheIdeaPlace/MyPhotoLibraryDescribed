@@ -47,7 +47,7 @@ Requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew inst
 ```bash
 xcodegen generate
 xcodebuild -project PhotoFinder.xcodeproj -scheme PhotoFinder -configuration Debug -derivedDataPath build build
-open "build/Build/Products/Debug/My Photo Library Described.app"
+open "build/Build/Products/Debug/Photo Finder.app"   # "My Photo Library Described.app" once #125 lands
 ```
 
 The app is signed with an Apple Development certificate. Don't switch it to ad hoc signing: macOS can't remember Photos permission for ad hoc apps and will prompt over and over.

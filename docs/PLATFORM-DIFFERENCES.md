@@ -39,6 +39,10 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 - **Favorites and ratings in files in added folders.** Windows sets favorites (a five-star rating) and ratings in the files themselves. On the Mac, Toggle Favorite says it isn't available for files yet. Captions are written into files on the Mac too (#31).
 - **Folders without Photos access.** The Mac shows nothing until Photos access is given, so added folders can't be browsed without it. Windows has no such permission.
 
+### The name (#125)
+
+- **Windows is My Photo Library Described** (Kelly, 13 Oct); **the Mac still shows and says Photo Finder** (its app menu, window titles and messages) until #125. This file and the user guide already use the new name for both.
+
 ### On Windows, from the Mac
 
 - **Follow-up questions about a photo.** The Mac's Apple Intelligence answers follow-up questions after describing. Windows' image description model takes no questions; Phi Silica (a Windows text model) could answer from the description, but is a separate piece of work.

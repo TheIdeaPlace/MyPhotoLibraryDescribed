@@ -1,4 +1,4 @@
-﻿<Project>
+<Project>
 
   <!-- WPF compiles XAML through a temporary project whose obj/ isn't the real one, so without this
        the generated .g.cs files are picked up twice (NETSDK1022). -->
@@ -18,7 +18,7 @@
     <Product>My Photo Library Described</Product>
     <Company>Kelly Ford</Company>
     <Authors>Kelly Ford</Authors>
-    <Copyright>Copyright Â© Kelly Ford</Copyright>
+    <Copyright>Copyright © Kelly Ford</Copyright>
     <!-- VERSION is the one place the Windows version lives. -->
     <_VersionFromFile>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION'))</_VersionFromFile>
     <VersionPrefix>$(_VersionFromFile.Trim())</VersionPrefix>

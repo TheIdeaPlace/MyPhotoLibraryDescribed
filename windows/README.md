@@ -101,7 +101,7 @@ This writes `PhotoFinder.appinstaller`, `PhotoFinder_<version>.msixbundle` (x64 
 
 The package is laid out from `packaging\AppxManifest.xml` and `packaging\Assets` (the logos, drawn to match `src\PhotoFinder\PhotoFinder.ico`). The .appinstaller doesn't ask Windows to check for updates at every launch: that check stopped the helper's `photofinder-ai.exe` alias from starting. The installed app starts the helper from its own package folder instead of through the alias, so an older test install's helper or a development registration can't stand in for it.
 
-If you used the earlier test installer (Install.cmd), remove it once, from PowerShell: `Get-AppxPackage TheIdeaPlace.PhotoFinder.WindowsAI | Remove-AppxPackage`, then delete `%LOCALAPPDATA%\Programs\My Photo Library Described` and the My Photo Library Described shortcut in the Start menu's Programs folder. Your settings and descriptions in `%LOCALAPPDATA%\PhotoFinder` are kept and used by the installed app.
+If you used the earlier test installer (Install.cmd), remove it once, from PowerShell: `Get-AppxPackage TheIdeaPlace.PhotoFinder.WindowsAI | Remove-AppxPackage`, then delete `%LOCALAPPDATA%\Programs\Photo Finder` and the Photo Finder shortcut (its old name) in the Start menu's Programs folder. Your settings and descriptions in `%LOCALAPPDATA%\PhotoFinder` are kept and used by the installed app.
 
 ## Notes
 
