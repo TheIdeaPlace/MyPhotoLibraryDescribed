@@ -177,7 +177,7 @@ final class FileMetadataWriterTests: XCTestCase {
             let untitled = try makePhoto("untitled.\(ext)", type: type, title: nil)
             try FileMetadataWriter.write(.init(caption: "Two dogs"), to: untitled)
             XCTAssertEqual(title(untitled), "Two dogs", ext)
-            // A title that was the caption (as Photo Finder on Windows wrote) keeps following it.
+            // A title that was the caption (as the Windows app wrote) keeps following it.
             let windows = try makePhoto("windows.\(ext)", type: type, caption: "Rex", title: "Rex")
             try FileMetadataWriter.write(.init(caption: "Rex on the beach"), to: windows)
             XCTAssertEqual(title(windows), "Rex on the beach", ext)

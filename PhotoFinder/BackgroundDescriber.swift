@@ -18,7 +18,7 @@ import SwiftUI
 /// - When Apple Intelligence is busy (it limits apps that aren't in front), it waits and tries the same photo again.
 ///   Other failures leave the photo for the next run, and five in a row stop the run, saying why.
 /// - Stopping takes effect at once: the photo in progress is still saved, but nothing more is said.
-/// - It speaks only when Photo Finder is in front.
+/// - It speaks only when My Photo Library Described is in front.
 @available(macOS 27, *)
 @MainActor
 final class BackgroundDescriber {
@@ -285,7 +285,7 @@ final class BackgroundDescriber {
         var errorDescription: String? { "The photos couldn't be read." }
     }
 
-    /// Spoken only when Photo Finder is the app in front: new photos usually arrive while it isn't.
+    /// Spoken only when My Photo Library Described is the app in front: new photos usually arrive while it isn't.
     private func announce(_ text: String) {
         guard NSApplication.shared.isActive else { return }
         AccessibilityNotification.Announcement(text).post()

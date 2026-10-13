@@ -1,13 +1,13 @@
 import Foundation
 
-/// The app's name and version, in one place. "Photo Finder" is a working name (#34): the display name is set once,
+/// The app's name and version, in one place. "My Photo Library Described" is the name for now (Kelly, 13 Oct; #34, #125): the display name is set once,
 /// in project.yml (CFBundleDisplayName), and everything the app says or shows uses `AppInfo.name`. Identifiers that
 /// are costly to change (the bundle ID, the Application Support folder) are kept separately and on purpose.
 enum AppInfo {
     static var name: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
-            ?? "Photo Finder"
+            ?? "My Photo Library Described"
     }
 
     /// The version people see, "0.1.0", which releases and update checks compare.
@@ -24,7 +24,7 @@ enum AppInfo {
     /// The GitHub repo, in one place: moving it to TheIdeaPlace for release (The-Idea-Place-Projects'
     /// MOVING-TO-THEIDEAPLACE.md), or renaming it, changes only this. Copies already installed keep working through
     /// GitHub's redirect from the old address.
-    static let repository = "kellylford/PhotoFinder"
+    static let repository = "TheIdeaPlace/MyPhotoLibraryDescribed"
 
     /// Where Report a Bug files issues, until the app kit's relay is set up for this app (#33).
     static let issuesURL = URL(string: "https://github.com/\(repository)/issues/new")!

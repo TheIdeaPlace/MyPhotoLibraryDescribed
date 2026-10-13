@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Photo Finder > Settings (Command-,): the prompt Apple Intelligence describes photos with.
+/// My Photo Library Described > Settings (Command-,): the prompt Apple Intelligence describes photos with.
 struct SettingsView: View {
     @AppStorage(DescriptionPrompt.key) private var prompt = ""
     @Environment(LibraryModel.self) private var model

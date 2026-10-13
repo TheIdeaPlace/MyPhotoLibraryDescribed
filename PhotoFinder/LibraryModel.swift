@@ -301,7 +301,7 @@ final class LibraryModel {
         return false
     }
 
-    /// The window's title, with the mode: "All Photos - Photo Finder - Read-Only Mode". "Mode", so a screen reader
+    /// The window's title, with the mode: "All Photos - My Photo Library Described - Read-Only Mode". "Mode", so a screen reader
     /// doesn't sound as if the window or a control is read-only (Kelly, 13 Oct).
     var windowTitle: String { "\(currentTitle) - \(AppInfo.name) - \(readOnly ? "Read-Only Mode" : "Editing Mode")" }
 
@@ -1075,7 +1075,7 @@ final class LibraryModel {
         folderMediaPaths[root.lowercased()] = nil
         justAddedFolders.remove(root.lowercased())
         // You're always in the folder being removed: go to All Photos first, so its place going away isn't announced
-        // as if it happened by itself. Said as on Windows: "Removed Pictures from Photo Finder. Showing All Photos, 12 items".
+        // as if it happened by itself. Said as on Windows: "Removed Pictures from My Photo Library Described. Showing All Photos, 12 items".
         loadAnnouncementPrefix = "Removed \(name) from \(AppInfo.name). Showing "
         selectedSourceID = SidebarID.allPhotos
         rebuildSidebar()
@@ -1714,7 +1714,7 @@ final class LibraryModel {
         return outcome
     }
 
-    /// A file Photo Finder just wrote into: its description moves to the file's new key, and its row shows the new
+    /// A file My Photo Library Described just wrote into: its description moves to the file's new key, and its row shows the new
     /// caption and alt text. The folder watcher lists the folder again shortly after, and finds all this in place.
     private func fileWritten(_ old: MediaFile, now: MediaFile, metadata: FileMetadata) {
         fileMetadata[now.descriptionKey] = metadata

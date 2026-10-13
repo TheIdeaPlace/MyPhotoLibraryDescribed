@@ -126,7 +126,7 @@ enum FileMetadataWriter {
         var expected: [String: String?] = [:]
         if let caption = changes.caption?.trimmingCharacters(in: .whitespacesAndNewlines) {
             expected[captionPath] = caption.isEmpty ? nil : caption
-            // dc:title is what Windows' File Explorer shows as the title, and what Photo Finder on Windows used as the
+            // dc:title is what Windows' File Explorer shows as the title, and what the Windows app used as the
             // caption. It's kept in step when it's empty or still the caption being replaced, never over a real title.
             // A PNG's or JPEG's own XMP counts too: ImageIO reads an EXIF description as the caption ahead of it.
             let current = CGImageSourceCopyMetadataAtIndex(source, 0, nil)
@@ -272,7 +272,7 @@ enum FileMetadataWriter {
                 _ = CGImageMetadataRemoveTagWithPath(metadata, nil, path as CFString)
             } else {
                 // Merging doesn't remove a field set to null in TIFF and HEIC files, so an empty text takes its place,
-                // which readers (Photo Finder's too) treat as none, and which also empties the IPTC and TIFF copies of
+                // which readers (ours too) treat as none, and which also empties the IPTC and TIFF copies of
                 // the caption that ImageIO keeps in step with it.
                 _ = CGImageMetadataSetValueWithPath(metadata, nil, "\(path)[x-default]" as CFString, "" as CFString)
             }

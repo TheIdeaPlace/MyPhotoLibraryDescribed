@@ -89,7 +89,7 @@ final class AIDetailsTests: XCTestCase {
 
     private func facts() -> SystemCheck.Facts {
         var facts = SystemCheck.Facts(
-            appName: "Photo Finder", appVersion: "0.1.1 (1)",
+            appName: "My Photo Library Described", appVersion: "0.1.1 (1)",
             osVersion: OperatingSystemVersion(majorVersion: 27, minorVersion: 1, patchVersion: 0),
             appleSilicon: true, aiUnavailableReason: nil, photosAccess: .authorized, savedDescriptions: 3,
             describeAutomatically: true, describeInBackground: false)
@@ -131,7 +131,7 @@ final class AIDetailsTests: XCTestCase {
 
     func testDetailsThatCouldNotBeReadAreLeftOut() {
         let check = SystemCheck(.init(
-            appName: "Photo Finder", appVersion: "0.1.1 (1)",
+            appName: "My Photo Library Described", appVersion: "0.1.1 (1)",
             osVersion: OperatingSystemVersion(majorVersion: 27, minorVersion: 1, patchVersion: 0),
             appleSilicon: true, aiUnavailableReason: nil, photosAccess: .authorized, savedDescriptions: 0,
             describeAutomatically: false, describeInBackground: false))
@@ -164,7 +164,7 @@ final class AIDetailsTests: XCTestCase {
             "Time: 4.2 seconds.",
             "Prompt: Standard. Change it in Settings.",
             "Model: Apple Intelligence's on-device model, from macOS 27.1 (27B42).",
-            "Sample photo: A red mug on a wooden table beside a sign reading OPEN. Drawn for Photo Finder; nothing on this Mac was changed or saved.",
+            "Sample photo: A red mug on a wooden table beside a sign reading OPEN. Drawn for My Photo Library Described; nothing on this Mac was changed or saved.",
         ])
         XCTAssertEqual(check.summary, "Apple Intelligence described the sample photo in 4.2 seconds.")
         XCTAssertEqual(check.reportSummary, "Worked in 4.2 seconds, and mentions what the sample shows.")
@@ -186,6 +186,12 @@ final class AIDetailsTests: XCTestCase {
         XCTAssertFalse(AIDescriptionCheck.mentions("The shop reopened.", "open"))
         XCTAssertFalse(AIDescriptionCheck.mentions("A timetable.", "table"))
         XCTAssertEqual(result("A coffee shop reopened beside a timetable.").missing, ["the mug", "the table", "the OPEN sign"])
+    }
+
+    /// As on Windows (#122): Apple Intelligence said "a wooden surface" for the table.
+    func testATableCanBeASurfaceOrCounter() {
+        XCTAssertEqual(result("A red mug on a wooden surface beside a sign reading OPEN.").missing, [])
+        XCTAssertEqual(result("A red mug on a countertop beside a sign reading OPEN.").missing, [])
     }
 
     func testAFailureSaysWhyWithItsCode() {

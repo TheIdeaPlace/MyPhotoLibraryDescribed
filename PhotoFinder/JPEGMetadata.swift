@@ -5,7 +5,7 @@ import ImageIO
 /// which can drop a JPEG's comment segment and most of its EXIF, the embedded thumbnail included.
 ///
 /// Only the XMP segment (APP1 "http://ns.adobe.com/xap/1.0/") is replaced, where it was or, when there was none, after
-/// the JFIF and EXIF segments at the start. It's written with about 2 KB of padding, as Photo Finder on Windows writes
+/// the JFIF and EXIF segments at the start. It's written with about 2 KB of padding, as the Windows app writes
 /// it (#89), so other tools can change it in place. When the caption changes, the EXIF description (IFD0's
 /// ImageDescription) is taken out within its segment, which keeps its size and every offset in it, because ImageIO
 /// reads it as the caption ahead of the XMP. Every other segment (the rest of the EXIF with its thumbnail and maker
