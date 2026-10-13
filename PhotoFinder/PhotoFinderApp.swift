@@ -143,8 +143,10 @@ struct PhotoCommands: Commands {
             // From anywhere, focus staying where it is: the Description panel follows the photo (Kelly, 13 Oct).
             Button("Next Photo") { model.stepPhoto(by: 1) }
                 .keyboardShortcut(.rightArrow, modifiers: .command)
+                .disabled(!model.canStepPhotos)
             Button("Previous Photo") { model.stepPhoto(by: -1) }
                 .keyboardShortcut(.leftArrow, modifiers: .command)
+                .disabled(!model.canStepPhotos)
             Divider()
             // F6 and Shift-F6, as on Windows: sidebar, list or gallery, Search, status bar.
             Button("Next Pane") { model.movePane(by: 1) }

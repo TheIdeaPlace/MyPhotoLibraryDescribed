@@ -176,46 +176,50 @@ struct FileListView: View {
         @Bindable var model = model
         // Built from the chosen columns, in the chosen order (View > Columns), which is also the order
         // VoiceOver reads a row's cells in.
-        Table(of: FileRow.self, selection: $model.selection, sortOrder: $model.sortOrder) {
-            TableColumnForEach(model.shownColumns) { column in
-                TableColumn(column.title, sortUsing: ColumnOrder.comparator(column.id)) { (row: FileRow) in
-                    cell(column.id, row)
+        ScrollViewReader { proxy in
+            Table(of: FileRow.self, selection: $model.selection, sortOrder: $model.sortOrder) {
+                TableColumnForEach(model.shownColumns) { column in
+                    TableColumn(column.title, sortUsing: ColumnOrder.comparator(column.id)) { (row: FileRow) in
+                        cell(column.id, row)
+                    }
+                    .width(min: ColumnOrder.width(column.id).min, ideal: ColumnOrder.width(column.id).ideal)
                 }
-                .width(min: ColumnOrder.width(column.id).min, ideal: ColumnOrder.width(column.id).ideal)
+            } rows: {
+                ForEach(model.visibleRows) { row in
+                    TableRow(row)
+                        .itemProvider { model.itemProvider(for: row) }
+                }
             }
-        } rows: {
-            ForEach(model.visibleRows) { row in
-                TableRow(row)
-                    .itemProvider { model.itemProvider(for: row) }
+            .contextMenu(forSelectionType: String.self) { ids in
+                if !ids.isEmpty {
+                    Button("Open") { model.open(ids) }
+                    Button("Quick Look") { model.quickLook(ids) }
+                    Button("Get Info") { model.showInfo(ids) }
+                    Button("Edit Caption…") { model.editCaption(ids) }
+                    Divider()
+                    Button("Copy") { model.copySelection(ids) }
+                    Button("Export…") { model.exportSelection(ids) }
+                    Divider()
+                    Button("Toggle Favorite") { model.toggleFavorite(ids) }
+                }
+            } primaryAction: { ids in
+                model.open(ids)
             }
-        }
-        .contextMenu(forSelectionType: String.self) { ids in
-            if !ids.isEmpty {
-                Button("Open") { model.open(ids) }
-                Button("Quick Look") { model.quickLook(ids) }
-                Button("Get Info") { model.showInfo(ids) }
-                Button("Edit Caption…") { model.editCaption(ids) }
-                Divider()
-                Button("Copy") { model.copySelection(ids) }
-                Button("Export…") { model.exportSelection(ids) }
-                Divider()
-                Button("Toggle Favorite") { model.toggleFavorite(ids) }
+            .onKeyPress(.space) {
+                model.quickLook()
+                return .handled
             }
-        } primaryAction: { ids in
-            model.open(ids)
+            .onKeyPress(.return) {
+                model.open()
+                return .handled
+            }
+            .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
+            .focused(pane, equals: .content)
+            .accessibilityLabel(model.currentTitle)
+            .overlay { emptyState }
+            // Next Photo and Previous Photo change the selection without the list: it's scrolled into view.
+            .onChange(of: model.scrollRequest) { if let id = model.scrollRequest.id { proxy.scrollTo(id) } }
         }
-        .onKeyPress(.space) {
-            model.quickLook()
-            return .handled
-        }
-        .onKeyPress(.return) {
-            model.open()
-            return .handled
-        }
-        .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
-        .focused(pane, equals: .content)
-        .accessibilityLabel(model.currentTitle)
-        .overlay { emptyState }
     }
 
     @ViewBuilder private func cell(_ column: String, _ row: FileRow) -> some View {
