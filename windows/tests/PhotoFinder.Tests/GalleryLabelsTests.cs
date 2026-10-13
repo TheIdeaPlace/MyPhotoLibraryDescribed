@@ -79,6 +79,34 @@ public sealed class GalleryLabelsTests : IDisposable
             Assert.Equal(["position"], dialog.ShownGalleryLabels);
             Assert.Equal("Labels reset to the default: Position.", _announced[^1]);
             Assert.Equal("Available labels", System.Windows.Automation.AutomationProperties.GetName(gallery.AvailableList));
+
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    }
+
+    [WpfFact]
+    public void TheExplanation_IsSaidOnceOnOpening_AndOnChangingTab_NeverWithTheListsItems()
+    {
+        var dialog = new LabelsDialog(Columns.DefaultOrder, GalleryLabels.DefaultOrder, Row("IMG_1.jpg"), 2, 5, galleryFirst: false) { ShowActivated = false };
+        _announced.Clear();
+        dialog.Show();
+        try
+        {
+            Assert.Single(_announced, a => a.StartsWith("Choose which columns", StringComparison.Ordinal));
+            foreach (var editor in new[] { dialog.ListEditor, dialog.GalleryEditor })
+                foreach (var list in new System.Windows.Controls.ListBox[] { editor.ShownList, editor.AvailableList })
+                    Assert.Equal("", System.Windows.Automation.AutomationProperties.GetHelpText(list));
+            Assert.Equal("", System.Windows.Automation.AutomationProperties.GetHelpText(dialog.ListTab));
+            _announced.Clear();
+            dialog.Tabs.SelectedItem = dialog.GalleryTab;
+            Assert.Equal(["Choose what's read, and in what order, when you move to a photo in the gallery. The description follows after a pause when Describe Photos Automatically is on."], _announced);
+            // Moving in a list says nothing more.
+            _announced.Clear();
+            dialog.GalleryEditor.ShownList.SelectedIndex = 0;
+            Assert.Empty(_announced);
         }
         finally
         {
