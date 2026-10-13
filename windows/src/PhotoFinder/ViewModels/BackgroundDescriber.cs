@@ -31,14 +31,18 @@ public sealed class BackgroundDescriber : IDisposable
     private int _total;
     private int _done;
 
+    /// <param name="failuresPath">Where the photos that couldn't be described are remembered between starts; none in
+    /// tests unless given.</param>
     public BackgroundDescriber(LibraryModel model, DescriptionStore store, AutoDescriber.DescribeFunc describe,
-        Func<CancellationToken, Task<AIReadiness>> check, Func<CancellationToken, Task<AIReadiness>> prepare)
+        Func<CancellationToken, Task<AIReadiness>> check, Func<CancellationToken, Task<AIReadiness>> prepare, string? failuresPath = null)
     {
         _model = model;
         _store = store;
         _describe = describe;
         _check = check;
         _prepare = prepare;
+        _failuresPath = failuresPath;
+        LoadFailures();
         _resume = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token);
         _model.FolderAdded += (folder, paths) => Busy(FolderAddedAsync(folder, paths));
     }
@@ -307,13 +311,54 @@ public sealed class BackgroundDescriber : IDisposable
     /// <summary>The photo being described now.</summary>
     private string? _current;
 
-    /// <summary>Photos that couldn't be described this session, by path, size and date, so a new run doesn't try them
-    /// again.</summary>
+    /// <summary>Photos that couldn't be described, by path, size and date, so a new run doesn't try them again: not this
+    /// session, and not after a restart either, or the same few photos at the front of the queue (newest first) would
+    /// fail again at every start and stop the run before it reached the rest (Kelly, 13 Oct). Kept per version of the app:
+    /// an update may describe them, so they're tried once more then. An edited photo has a new date, so it's tried too.</summary>
     private readonly HashSet<string> _failed = new(StringComparer.OrdinalIgnoreCase);
     private static string FailureKey(MediaItem item) => $"{item.Path}|{item.Size}|{item.Modified.Ticks}";
+    private readonly string? _failuresPath;
+
+    private sealed record Failures(string Version, List<string> Keys);
+
+    public static string DefaultFailuresPath => Path.Combine(AppPaths.DataFolder, "BackgroundFailures.json");
+
+    private void LoadFailures()
+    {
+        if (_failuresPath is null || !File.Exists(_failuresPath)) return;
+        try
+        {
+            var saved = System.Text.Json.JsonSerializer.Deserialize<Failures>(File.ReadAllText(_failuresPath));
+            if (saved?.Version == Updates.AppVersion) _failed.UnionWith(saved.Keys);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            Log.Write("background", $"The photos that couldn't be described before weren't read ({ex.GetType().Name}); they'll be tried again");
+        }
+    }
+
+    private void SaveFailures()
+    {
+        if (_failuresPath is null) return;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_failuresPath)!);
+            var temp = _failuresPath + ".tmp";
+            File.WriteAllText(temp, System.Text.Json.JsonSerializer.Serialize(new Failures(Updates.AppVersion, [.. _failed])));
+            File.Move(temp, _failuresPath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Tried again next start; nothing lost but a little time.
+        }
+    }
+
+    /// <summary>Windows' verdict on the photo itself, not a sign that describing doesn't work: its content filter
+    /// declining what's in the picture. These don't count towards stopping the run.</summary>
+    internal static bool IsAboutThePhoto(Exception ex) => ex is DescriptionException { Code: "content_filtered" };
 
     /// <summary>After this many photos in a row fail, the run stops and says why, rather than failing through thousands
-    /// of photos (a missing HEIF codec, a broken helper).</summary>
+    /// of photos (a missing HEIF codec, a broken helper). Photos Windows' content filter declines don't count.</summary>
     internal const int FailuresInARow = 5;
 
     /// <summary>Whether it's a good time to work: not on energy saver. Set by the app; it waits meanwhile.</summary>
@@ -435,11 +480,13 @@ public sealed class BackgroundDescriber : IDisposable
                 }
                 catch (Exception ex)
                 {
-                    // One photo that can't be described (filtered, unreadable, timed out) doesn't stop the rest, but many
-                    // in a row means something's wrong with every photo: stop and say what, once.
+                    // One photo that can't be described (filtered, unreadable, timed out) doesn't stop the rest, and is
+                    // remembered so it isn't tried at every start; but many in a row means something's wrong with every
+                    // photo: stop and say what, once.
                     _failed.Add(FailureKey(item));
+                    SaveFailures();
                     Log.Write("background", $"Couldn't describe {item.Name}: {(ex is DescriptionException d ? $"{d.Code}: " : ex.GetType().Name + ": ")}{ex.Message}");
-                    if (run == _run && ++failedInARow >= FailuresInARow)
+                    if (run == _run && !IsAboutThePhoto(ex) && ++failedInARow >= FailuresInARow)
                     {
                         var left = StopQueue();
                         Log.Write("background", $"Stopped after {FailuresInARow} failures in a row; {left} not tried");

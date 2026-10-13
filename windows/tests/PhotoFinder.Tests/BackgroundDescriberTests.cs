@@ -32,7 +32,7 @@ public sealed class BackgroundDescriberTests : IDisposable
     private static readonly AIReadiness Ready = new(true, "Ready", null);
 
     private async Task<(LibraryModel Model, BackgroundDescriber Background, DescriptionStore Store)> StartAsync(
-        bool enabled, AIReadiness? readiness = null, Func<MediaItem, Task<string>>? describe = null, Func<AIReadiness>? check = null)
+        bool enabled, AIReadiness? readiness = null, Func<MediaItem, Task<string>>? describe = null, Func<AIReadiness>? check = null, string? failuresPath = null)
     {
         var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
         var settings = new Settings { DescribeInBackground = enabled };
@@ -45,7 +45,7 @@ public sealed class BackgroundDescriberTests : IDisposable
                 _described.Add(item.Name);
                 return describe is null ? $"About {item.Name}" : await describe(item);
             },
-            _ => Task.FromResult(check?.Invoke() ?? readiness ?? Ready), _ => Task.FromResult(Ready));
+            _ => Task.FromResult(check?.Invoke() ?? readiness ?? Ready), _ => Task.FromResult(Ready), failuresPath);
         return (model, background, store);
     }
 
@@ -404,6 +404,46 @@ public sealed class BackgroundDescriberTests : IDisposable
             // After the photo already being described, the added folder's photos come before the rest of the library.
             Assert.Equal(["a.jpg", "b.jpg"], _described.Skip(1).Take(2).Order());
             Assert.Contains(_announced, s => s.StartsWith("Finished describing the photos in"));
+        }
+    }
+
+    [WpfFact]
+    public async Task PhotosTheContentFilterDeclines_DontStopTheRun_AndArentTriedAgainAfterARestart()
+    {
+        // Kelly, 13 Oct: the newest photos included some Windows' filter declines and some it couldn't describe, so every
+        // start stopped after the same five and never reached the rest.
+        for (var i = 0; i < 8; i++) _lib.AddJpeg($"filtered{i}.jpg");
+        _lib.AddJpeg("fine.jpg");
+        var failures = _lib.PathOf(@"data\BackgroundFailures.json");
+        Task<string> Describe(MediaItem item) => item.Name.StartsWith("filtered", StringComparison.Ordinal)
+            ? throw new DescriptionException("content_filtered", "Windows' content filter declined the text in this picture.")
+            : Task.FromResult($"About {item.Name}");
+        var (model, background, store) = await StartAsync(enabled: false, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Contains("fine.jpg", _described);
+            Assert.DoesNotContain(_announced, s => s.StartsWith("Background describing stopped:"));
+        }
+        // After a restart, the declined photos aren't tried again.
+        _described.Clear();
+        (model, background, store) = await StartAsync(enabled: true, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.DoesNotContain(_described, n => n.StartsWith("filtered", StringComparison.Ordinal));
+        }
+        // A new version of the app tries them once more.
+        File.WriteAllText(failures, File.ReadAllText(failures).Replace(Updates.AppVersion, "0.0.1"));
+        _described.Clear();
+        (model, background, store) = await StartAsync(enabled: true, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Contains(_described, n => n.StartsWith("filtered", StringComparison.Ordinal));
         }
     }
 
