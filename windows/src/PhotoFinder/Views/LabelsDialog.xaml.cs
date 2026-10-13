@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using PhotoFinder.Models;
+using PhotoFinder.Services;
 
 namespace PhotoFinder.Views;
 
@@ -18,25 +19,36 @@ public partial class LabelsDialog : Window
     {
         InitializeComponent();
         const string none = "There's no photo here to preview.";
+        const string listExplanation = "Choose which columns the list shows, and in what order. Each photo is read in this order too: put Caption or Date Taken first to hear it before the file name.";
+        const string galleryExplanation = "Choose what's read, and in what order, when you move to a photo in the gallery. The description follows after a pause when Describe Photos Automatically is on.";
         ListEditor.Set(new OrderChoice(
             Columns.All.Select(c => c.Id).ToList(), id => Columns.Find(id)!.Title, Columns.DefaultOrder, ids => Columns.Clean(ids),
             "column", Columns.Name, $"Columns reset to the default: {Columns.DefaultOrder.Count} shown, Name first.",
-            "Choose which columns the list shows, and in what order. Each photo is read in this order too: put Caption or Date Taken first to hear it before the file name.",
+            listExplanation,
             "Available columns", "Shown columns, in the order they're read", "Every column is shown.",
             "Preview of the selected photo's line",
             shown => sample is null ? none : sample.SpokenWith(shown)), Columns.Clean(columns));
         GalleryEditor.Set(new OrderChoice(
             GalleryLabels.All.Select(a => a.Id).ToList(), GalleryLabels.Title, GalleryLabels.DefaultOrder, ids => GalleryLabels.Clean(ids),
             "label", null, "Labels reset to the default: Position.",
-            "Choose what's read, and in what order, when you move to a photo in the gallery. The description follows after a pause when Describe Photos Automatically is on.",
+            galleryExplanation,
             "Available labels", "Shown labels, in the order they're read", "Every label is shown.",
             "Preview of how the selected photo reads in the gallery",
             shown => sample is null ? none : GalleryLabels.Text(sample, number, Math.Max(count, 1), shown)), GalleryLabels.Clean(gallery));
-        // Said with the tab, once, rather than with every item in its lists (Kelly, with JAWS).
-        System.Windows.Automation.AutomationProperties.SetHelpText(ListTab, ListEditor.Explanation.Text);
-        System.Windows.Automation.AutomationProperties.SetHelpText(GalleryTab, GalleryEditor.Explanation.Text);
         Tabs.SelectedItem = galleryFirst ? GalleryTab : ListTab;
-        Loaded += (_, _) => (galleryFirst ? GalleryEditor : ListEditor).FocusShown();
+        // The tab's explanation is said once: as the dialog opens, after what's read for the item focus lands on, and
+        // again on moving to the other tab. It isn't any control's help text, which JAWS read again with every item
+        // arrowed to in the lists (Kelly).
+        string Explanation() => Tabs.SelectedItem == GalleryTab ? galleryExplanation : listExplanation;
+        Loaded += (_, _) =>
+        {
+            (galleryFirst ? GalleryEditor : ListEditor).FocusShown();
+            Announcer.AnnounceAfter(Explanation(), "PhotoFinderLabels");
+        };
+        Tabs.SelectionChanged += (_, e) =>
+        {
+            if (e.OriginalSource == Tabs && IsLoaded) Announcer.AnnounceAfter(Explanation(), "PhotoFinderLabels");
+        };
     }
 
     /// <summary>The list's shown column ids, in the order they're read.</summary>

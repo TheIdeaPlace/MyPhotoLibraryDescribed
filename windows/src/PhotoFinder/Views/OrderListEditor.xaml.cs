@@ -58,8 +58,7 @@ public partial class OrderListEditor : UserControl
         AutomationProperties.SetName(AvailableList, choice.AvailableTitle);
         AutomationProperties.SetName(ShownList, choice.ShownTitle);
         AutomationProperties.SetName(PreviewBox, choice.PreviewTitle);
-        // Not the lists' help text: inside the tabs, JAWS reads a list's help text again with every item arrowed to.
-        // The tab carries it instead (LabelsDialog), and it's the first text in the tab.
+        // Not the lists' help text: JAWS read it again with every item arrowed to. LabelsDialog says it once instead.
         Fill(shownIndex: 0, availableIndex: 0);
     }
 
