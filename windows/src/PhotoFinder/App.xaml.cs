@@ -32,6 +32,9 @@ public partial class App : Application
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             args.Handled = true;
         };
+        // Whether the last run quit cleanly (#33): offered as a report once the window is up.
+        UncleanLaunch = CrashCheck.Begin();
+        if (UncleanLaunch is not null) Log.Write("start", "The last run didn't quit cleanly");
         var settings = Settings.Load(Settings.DefaultPath);
         // Every launch starts read-only (#83): nothing may change a photo until the person allows it.
         PhotoChanges.Allowed = !settings.ReadOnly;
@@ -79,8 +82,12 @@ public partial class App : Application
         }
     }
 
+    /// <summary>When the last run started, if it didn't quit cleanly; cleared once the offer to report it is made.</summary>
+    public static DateTime? UncleanLaunch { get; set; }
+
     protected override void OnExit(ExitEventArgs e)
     {
+        CrashCheck.End();
         _windowsAI?.Dispose();
         base.OnExit(e);
     }
