@@ -49,11 +49,21 @@ if [ "$PUBLISH" = "--publish" ]; then
 fi
 [ -z "$(git status --porcelain -- PhotoFinder project.yml)" ] || { echo "Commit the app's changes first, so the release matches a commit."; exit 1; }
 
+# Report a Bug's relay key (#33), which isn't in the repo: from the environment, or the signing kit's file (the PC
+# keeps the same key as appkit-relay-photofinder.key, so that name is read too). Without it the release still builds,
+# and its Report a Bug opens the GitHub page instead. Never echoed.
+RELAY_KEY=${APPKIT_RELAY_KEY:-}
+for f in "$KIT/appkit-relay-key-photofinder" "$KIT/appkit-relay-photofinder.key"; do
+  if [ -z "$RELAY_KEY" ] && [ -f "$f" ]; then RELAY_KEY=$(tr -d ' \r\n' < "$f"); fi
+done
+[ -n "$RELAY_KEY" ] || echo "Warning: no relay key (APPKIT_RELAY_KEY or $KIT/appkit-relay-key-photofinder), so Report a Bug will open the GitHub page instead of filing reports."
+
 echo "Building $NAME $VERSION"
 rm -rf "$OUT" && mkdir -p "$OUT"
 xcodegen generate --quiet
 xcodebuild -project PhotoFinder.xcodeproj -scheme PhotoFinder -configuration Release \
-  -destination 'generic/platform=macOS' -archivePath "$OUT/app.xcarchive" -allowProvisioningUpdates archive -quiet
+  -destination 'generic/platform=macOS' -archivePath "$OUT/app.xcarchive" -allowProvisioningUpdates \
+  APPKIT_RELAY_KEY="$RELAY_KEY" archive -quiet
 cat > "$OUT/export.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -104,11 +104,18 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 ## Help menu
 
 - **Check for Updates** says whether there's a newer version. My Photo Library Described also checks quietly once a day, and the item then reads "Update to *version* available…".
-- **Report a Bug…** opens a new GitHub issue in your browser with the details filled in. GitHub issues are public, and nothing is sent until you submit it.
+- **Report a Bug…** opens a form. Choose Bug or Suggestion, give it a title, and say what happened, what you expected and the steps (or, for a suggestion, what you'd like). Contact is optional. "Include the system check" adds Check System's results, without folder paths, and is on to start with. The preview shows exactly what will be sent. On Windows, Report a Bug still opens a new GitHub issue in your browser with the details filled in.
+  - On the Mac, Send files the report as a GitHub issue for you, through The Idea Place's bug-report service, so you don't need a GitHub account. The form then says "Report filed as issue" and the number, with a button to open it.
+  - If the report can't be sent that way, the form says so and the whole report is copied; Open in Browser opens a new GitHub issue with the details filled in, for you to submit.
+  - **Everything in a report is public on GitHub, including the contact.**
+  - Check System and Check AI Description have Report a Bug… buttons too, which open the same form; Check AI Description's adds its result.
+  - If the app didn't quit cleanly last time, the Mac asks once when it starts whether to report it. Report… opens the form with a summary of macOS's crash report (versions, the kind of crash and where it happened, nothing that identifies your Mac) and the end of the log, without folder paths, for you to read, or leave out, before sending.
 - **Check System…** checks that your computer can describe photos, and says what to do if it can't.
 - **Check AI Description…** describes a sample photo that comes with the app (a red mug on a table beside a sign reading OPEN), to show describing works end to end. It saves nothing.
 - **Open Log Folder** shows the diagnostic log: one file a day, kept two weeks, of what went wrong. It stays on your computer unless you attach it to a bug report; it names files and folders, so look at it first.
 - **User Guide** opens this guide, and **Privacy Policy** opens the privacy policy, on GitHub.
+
+On the Mac, **About My Photo Library Described** is in the app menu, with links to the source code, this guide and the privacy policy.
 
 ## Keyboard shortcut reference
 
@@ -146,4 +153,4 @@ Your photos are never touched by removing the app, and descriptions saved into p
 
 ## Privacy
 
-Photos are described on your computer and never uploaded to describe them. My Photo Library Described uses the internet only to check for updates, to look up place names if you turn that on, and to open GitHub when you report a bug or open this guide. The [privacy policy](PRIVACY.md) has the details.
+Photos are described on your computer and never uploaded to describe them. My Photo Library Described uses the internet only to check for updates, to look up place names if you turn that on, to send a bug report when you choose Send (or open GitHub to file it), and to open this guide. The [privacy policy](PRIVACY.md) has the details.

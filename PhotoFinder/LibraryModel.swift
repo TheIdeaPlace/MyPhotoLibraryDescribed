@@ -2281,20 +2281,61 @@ final class LibraryModel {
         }
     }
 
-    /// Help > Report a Bug…: a new GitHub issue with the system check filled in, and the same text on the clipboard
-    /// in case the page doesn't take it all. The app kit's relay replaces this once it's set up for the app (#33).
-    /// From Check AI Description, its whole result follows the system check.
-    func reportBug(aiCheck: AIDescriptionCheck? = nil) {
-        let systemText = systemCheck().reportText + (aiCheck.map { "\n\nCheck AI Description: \($0.reportText)" } ?? "")
-        let body = SystemCheck.bugReportTemplate(systemText: systemText)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(body, forType: .string)
-        var components = URLComponents(url: AppInfo.issuesURL, resolvingAgainstBaseURL: false)!
-        // GitHub only applies labels for people who can triage the repo, so the title says it's from the Mac too.
-        components.queryItems = [URLQueryItem(name: "title", value: "[Mac] "), URLQueryItem(name: "body", value: body),
-                                 URLQueryItem(name: "labels", value: "bug,user-reported,mac")]
-        if let url = components.url { NSWorkspace.shared.open(url) }
-        announce("Opening a new bug report in your browser. The details are also on the clipboard.")
+    /// The report Report a Bug's form starts from (#33): the system check, and Check AI Description's result or the
+    /// last crash when it came from there. Set just before the form opens.
+    private(set) var bugReportDraft = BugReport()
+    /// Bumped with each new draft, so a form that's already open takes the new details.
+    private(set) var bugReportRequest = 0
+    /// Bumped to have the main window open the form, for the crash offer, which isn't in a view.
+    private(set) var bugReportWindowRequest = 0
+
+    /// Help > Report a Bug…, and the Report a Bug… buttons in Check System and Check AI Description: a fresh draft
+    /// for the form. From Check AI Description, its whole result goes with it, as before.
+    func prepareBugReport(aiCheck: AIDescriptionCheck? = nil, attachments: [BugReport.Attachment] = [], title: String = "") {
+        var report = BugReport()
+        report.title = title
+        report.systemText = systemCheck().reportText
+        if let aiCheck { report.attachments.append(.init(name: "the AI description check", heading: "Check AI Description", text: aiCheck.reportText)) }
+        report.attachments += attachments
+        bugReportDraft = report
+        bugReportRequest += 1
+    }
+
+    /// Sends the report through the relay. When that can't be done (no key in this copy, or the relay refused or
+    /// couldn't be reached), opens the prefilled GitHub page instead, with the whole report on the clipboard in case
+    /// the page doesn't take it all.
+    func sendBugReport(_ report: BugReport) async -> BugReportRelay.Result {
+        let result = await BugReportRelay.send(report, key: AppInfo.relayKey)
+        if BugReportRelay.needsBrowser(result) {
+            // On the clipboard now; the page opens when the person chooses Open in Browser.
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(report.clipboardText, forType: .string)
+        } else if case .filed(let number, _) = result {
+            DiagnosticLog.write("report", "Filed as issue #\(number)")
+        }
+        return result
+    }
+
+    /// The prefilled GitHub issue page, for a report the relay didn't file.
+    func openBugReportPage(_ report: BugReport) {
+        NSWorkspace.shared.open(report.issuePageURL())
+    }
+
+    /// At launch, when the last run didn't quit cleanly (#33): asks once whether to report it. Report… opens the form
+    /// with the start of macOS's crash report and the end of today's log, for the person to read before sending.
+    func offerCrashReport() {
+        guard let since = CrashCheck.uncleanLaunch else { return }
+        CrashCheck.uncleanLaunch = nil
+        DiagnosticLog.write("start", "The last run didn't quit cleanly")
+        let alert = NSAlert()
+        alert.messageText = "\(AppInfo.name) quit unexpectedly last time. Report it?"
+        alert.informativeText = "The report opens in a form, where you can read and change it before it's sent. Reports are public."
+        alert.addButton(withTitle: "Report…")
+        // Escape answers Not Now, as it would Cancel.
+        alert.addButton(withTitle: "Not Now").keyEquivalent = "\u{1b}"
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        prepareBugReport(attachments: CrashCheck.attachments(since: since), title: "Quit unexpectedly")
+        bugReportWindowRequest += 1
     }
 
     /// Why photos can't be described on this Mac right now, or nil when they can. Never sets anything up.

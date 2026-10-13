@@ -43,12 +43,6 @@ final class SystemCheckTests: XCTestCase {
         XCTAssertEqual(SystemCheck(facts(photos: .limited)).summary, "1 thing needs attention.")
     }
 
-    func testTheBugReportIncludesTheSystemCheck() {
-        let body = SystemCheck.bugReportTemplate(systemText: "macOS: OK. macOS 27.1.")
-        XCTAssertTrue(body.contains("**What happened**"))
-        XCTAssertTrue(body.contains("macOS: OK. macOS 27.1."))
-    }
-
     func testCoverageSaysHowMuchOfTheLibraryIsDescribed() {
         XCTAssertEqual(SystemCheck.coverageText(described: 159, total: 400), "39% described, 159 of 400 photos.")
         XCTAssertEqual(SystemCheck.coverageText(described: 400, total: 400), "100% described, 400 of 400 photos.")
