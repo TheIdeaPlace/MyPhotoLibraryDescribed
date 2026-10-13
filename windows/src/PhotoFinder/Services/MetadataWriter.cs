@@ -156,7 +156,7 @@ public static class MetadataWriter
 
     private static string Reason(MediaItem item, Exception ex) => ex switch
     {
-        SecondPictureException => $"{item.Name} holds a second picture, such as an HDR map, and there's no room to change it without breaking that, so it was left as it is.",
+        SecondPictureException => $"{item.Name} holds a second picture, such as an HDR map, laid out in a way that can't be updated safely, so it was left as it is.",
         InvalidDataException => $"{item.Name} isn't the kind of file its name says, so it was left as it is.",
         MetadataRefusedException => $"{item.Name}: {ex.Message} It was left as it is.",
         UnauthorizedAccessException => $"{item.Name} is read-only or in use.",

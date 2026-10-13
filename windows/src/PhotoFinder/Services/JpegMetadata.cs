@@ -11,8 +11,9 @@ namespace PhotoFinder.Services;
 /// which re-encodes the thumbnail, drops tags and moves MakerNotes whose offsets then point at the wrong bytes.
 ///
 /// - The XMP keeps its size when the new text fits in its padding, and otherwise grows with room left for next time.
-/// - A file with a Multi-Picture index (Ultra HDR, MPO) must keep its size: the index records the main picture's
-///   length. When the change doesn't fit, <see cref="SecondPictureException"/>.
+/// - A file with a Multi-Picture index (Ultra HDR, MPO, #90) has the index patched: it records the main picture's
+///   size, and where the other pictures start, counted from the index itself. When the index can't be followed, or
+///   doesn't point at the pictures before and after the change, <see cref="SecondPictureException"/>.
 /// - Extended XMP (spread over several segments) isn't edited.
 /// </summary>
 public static class JpegMetadata
@@ -35,7 +36,7 @@ public static class JpegMetadata
 
     /// <summary>The JPEG with the changes made. Throws <see cref="MetadataRefusedException"/> for a file it can't safely
     /// change (not a JPEG it can follow, unreadable XMP, Extended XMP, too much metadata) and
-    /// <see cref="SecondPictureException"/> for a multi-picture file the change won't fit in.</summary>
+    /// <see cref="SecondPictureException"/> for a multi-picture file whose index can't be kept right.</summary>
     public static byte[] Apply(byte[] jpeg, MetadataChanges changes)
     {
         var segments = Segments(jpeg);
@@ -43,6 +44,8 @@ public static class JpegMetadata
         if (segments.Any(s => IsApp1With(jpeg, s, ExtendedSignature)))
             throw new MetadataRefusedException("Its metadata is spread over several parts (Extended XMP), which isn't changed.");
         var mpf = segments.FindIndex(s => s.Marker == 0xE2 && Has(jpeg, s.Offset + 4, MpfSignature));
+        // Only one index is patched, so a file with two (one would be left wrong) isn't grown.
+        var twoIndexes = segments.Count(s => s.Marker == 0xE2 && Has(jpeg, s.Offset + 4, MpfSignature)) > 1;
 
         XDocument document;
         var oldPacketLength = 0;
@@ -86,7 +89,15 @@ public static class JpegMetadata
         jpeg.AsSpan(0, cut).CopyTo(result);
         segment.CopyTo(result, cut);
         jpeg.AsSpan(keep).CopyTo(result.AsSpan(cut + segment.Length));
-        if (mpf >= 0 && result.Length != jpeg.Length) throw new SecondPictureException();
+        if (mpf >= 0 && result.Length != jpeg.Length)
+        {
+            if (twoIndexes) throw new SecondPictureException();
+            var index = MultiPictureIndex.Read(jpeg, segments[mpf].Offset + 4 + MpfSignature.Length, segments[mpf].End);
+            // The XMP comes before the index (as it's placed) or after it: the index moves with the change in the first
+            // case, so only the main picture's size changes; in the second the other pictures move away from it too.
+            var delta = result.Length - jpeg.Length;
+            index.Patch(result, delta, movesWithChange: cut <= segments[mpf].Offset);
+        }
 
         // EXIF values patched in place, at the same offsets (the EXIF segment comes before the XMP, or moved with it).
         var exif = Segments(result).FirstOrDefault(s => IsApp1With(result, s, ExifSignature));
