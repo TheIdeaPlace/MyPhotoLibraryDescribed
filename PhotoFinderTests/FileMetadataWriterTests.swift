@@ -9,11 +9,14 @@ final class FileMetadataWriterTests: XCTestCase {
     private var temp: URL!
 
     override func setUpWithError() throws {
+        // These tests write into files, so changes are allowed while they run (#84); the app starts read-only.
+        PhotoChanges.allowed = true
         temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
     }
 
     override func tearDownWithError() throws {
+        PhotoChanges.allowed = false
         try? FileManager.default.removeItem(at: temp)
     }
 

@@ -42,7 +42,7 @@ struct BrowserView: View {
                     .inspectorColumnWidth(min: 220, ideal: 300, max: 520)
             }
         }
-        .navigationTitle(model.currentTitle)
+        .navigationTitle(model.windowTitle)
         .navigationSubtitle(model.statusText)
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search names, kinds and dates")
         .searchFocused($searchFocused)
@@ -50,8 +50,9 @@ struct BrowserView: View {
         // Go > Next Pane (F6) and Previous Pane (Shift-F6): sidebar, list or gallery, Description, Search, status bar,
         // and round.
         .onChange(of: model.paneRequest) {
-            let target = Pane.next(from: searchFocused ? .search : pane, by: model.paneRequest.direction,
-                                   showingDescription: model.showDescriptionPanel)
+            let target = model.paneRequest.target ?? Pane.next(from: searchFocused ? .search : pane,
+                                                               by: model.paneRequest.direction,
+                                                               showingDescription: model.showDescriptionPanel)
             if target == .search {
                 searchFocused = true
             } else if case .status = target {

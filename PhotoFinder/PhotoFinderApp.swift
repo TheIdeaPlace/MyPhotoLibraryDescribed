@@ -41,9 +41,16 @@ struct PhotoCommands: Commands {
     let model: LibraryModel
     @Environment(\.openWindow) private var openWindow
     private static let f6 = KeyEquivalent(Character(UnicodeScalar(NSF6FunctionKey)!))
+    private static let f9 = KeyEquivalent(Character(UnicodeScalar(NSF9FunctionKey)!))
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
+            // Read-only (#84): checked at every launch; unchecking asks first.
+            Toggle("Read-Only", isOn: Binding(
+                get: { model.readOnly },
+                set: { model.setReadOnly($0) }
+            ))
+            Divider()
             // As on Windows (#36). Remove is always enabled and says when you're not in an added folder.
             Button("Add Folder to Library…") { model.addFolder() }
             Button("Remove Folder from Library") { model.removeCurrentFolder() }
@@ -75,6 +82,11 @@ struct PhotoCommands: Commands {
             .keyboardShortcut("4")
             Button("Columns…") { model.columnsSheetShown = true }
             // The Description panel (#50); Option-Command-I, as Finder's Show Inspector.
+            // The status bar from anywhere (#84), as on Windows: Control-F9 reads it, Control-Shift-F9 goes to it.
+            Button("Read Status Bar") { model.readStatusBar() }
+                .keyboardShortcut(Self.f9, modifiers: .control)
+            Button("Go to Status Bar") { model.goToStatusBar() }
+                .keyboardShortcut(Self.f9, modifiers: [.control, .shift])
             Toggle("Show Description", isOn: Binding(
                 get: { model.showDescriptionPanel },
                 set: { model.showDescriptionPanel = $0 }
@@ -135,8 +147,10 @@ struct PhotoCommands: Commands {
             Button("Edit Caption…") { model.editCaption() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             Button("Use Description as Caption") { model.useDescriptionAsCaption() }
-            Toggle("Save Descriptions in Photos", isOn: Binding(
-                get: { model.saveInPhotos },
+            // Paused, and shown unchecked, while read-only (as on Windows).
+            Toggle(model.readOnly && model.saveInPhotos ? "Save Descriptions in Photos (Paused While Read-Only)"
+                                                         : "Save Descriptions in Photos", isOn: Binding(
+                get: { model.saveInPhotos && !model.readOnly },
                 set: { model.setSaveInPhotos($0) }
             ))
             Divider()

@@ -259,6 +259,55 @@ final class LibraryModel {
 
     // MARK: - Describe Photos Automatically
 
+    // MARK: - Read-only (#84)
+
+    /// File > Read-Only: on at every launch; allowing changes lasts until the app quits (Kelly, 12 Oct).
+    private(set) var readOnly = true
+
+    /// Turns Read-Only off, after asking every time, or back on.
+    func setReadOnly(_ on: Bool) {
+        if !on {
+            let alert = NSAlert()
+            alert.messageText = "Let \(AppInfo.name) change your photos?"
+            alert.informativeText = "\(AppInfo.name) will be able to write captions, alt text and ratings into your photos, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to read-only at any time."
+            alert.window.title = "Allow Changes to Photos"
+            // Keep Read-Only first, so it's the default: Return alone never allows changes.
+            alert.addButton(withTitle: "Keep Read-Only")
+            alert.addButton(withTitle: "Allow Changes")
+            let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard event.keyCode == 53 else { return event }
+                NSApp.stopModal(withCode: .alertFirstButtonReturn)
+                return nil
+            }
+            defer { if let escape { NSEvent.removeMonitor(escape) } }
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
+        }
+        readOnly = on
+        PhotoChanges.allowed = !on
+        announce(on ? "Read-only. Photos won't be changed" : "Editing. Photos can be changed")
+    }
+
+    /// Whether a command may change photos; says why not while read-only.
+    private func changesAllowed() -> Bool {
+        guard readOnly else { return true }
+        announce(PhotoChanges.readOnlyMessage)
+        return false
+    }
+
+    /// The window's title, with the mode, as on Windows: "All Photos - Photo Finder - Read-Only".
+    var windowTitle: String { "\(currentTitle) - \(AppInfo.name) - \(readOnly ? "Read-Only" : "Editing")" }
+
+    /// View > Read Status Bar (Control-F9): says what the status bar says, without moving.
+    func readStatusBar() {
+        let parts = [statusText, activity ?? nameProgress, backgroundProgress].compactMap { $0 }.filter { !$0.isEmpty }
+        announce(parts.isEmpty ? "Status bar is empty" : parts.joined(separator: ". "))
+    }
+
+    /// View > Go to Status Bar (Control-Shift-F9).
+    func goToStatusBar() {
+        paneRequest = PaneRequest(direction: 0, serial: paneRequest.serial + 1, target: .status(.status))
+    }
+
     /// Photo > Describe Photos Automatically.
     func setDescribeAutomatically(_ on: Bool) {
         describeAutomatically = on
@@ -1195,6 +1244,7 @@ final class LibraryModel {
     }
 
     func toggleFavorite(_ ids: Set<String>? = nil) {
+        guard changesAllowed() else { return }
         let assets = assets(for: ids ?? selection)
         guard !assets.isEmpty else {
             // Windows makes a file a favorite by rating it five stars; writing file metadata on the Mac is to come.
@@ -1204,7 +1254,7 @@ final class LibraryModel {
         let makeFavorite = !assets.allSatisfy(\.isFavorite)
         let box = UncheckedBox(value: assets)
         perform("Updating favorites…") {
-            try await PHPhotoLibrary.shared().performChanges {
+            try await PhotoChanges.performLibraryChanges {
                 for asset in box.value {
                     PHAssetChangeRequest(for: asset).isFavorite = makeFavorite
                 }
@@ -1216,6 +1266,7 @@ final class LibraryModel {
     /// Photo > Rating (#20): sets the star rating of the chosen photos in Photos (macOS 27 lets apps write it), as
     /// Windows does for files. 0 removes it. Files in added folders aren't rated yet.
     func setRating(_ stars: Int, _ ids: Set<String>? = nil) {
+        guard changesAllowed() else { return }
         guard canEditCaptions else {
             errorMessage = "Rating photos requires macOS 27 or later."
             return
@@ -1231,7 +1282,7 @@ final class LibraryModel {
         let skippedFiles = !files(for: ids).isEmpty
         let box = UncheckedBox(value: assets)
         perform("Saving rating…") {
-            try await PHPhotoLibrary.shared().performChanges {
+            try await PhotoChanges.performLibraryChanges {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
                 if #available(macOS 27, *) {
                     for asset in box.value {
@@ -1290,6 +1341,7 @@ final class LibraryModel {
     }
 
     func editCaption(_ ids: Set<String>? = nil) {
+        guard changesAllowed() else { return }
         let ids = ids ?? selection
         // Files in an added folder have their caption written into the file (#31).
         let files = files(for: ids)
@@ -1362,7 +1414,7 @@ final class LibraryModel {
     private func writeCaptions(_ captions: [(PHAsset, String)], label: String, done: String?) {
         let box = UncheckedBox(value: captions)
         perform(label) {
-            try await PHPhotoLibrary.shared().performChanges {
+            try await PhotoChanges.performLibraryChanges {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
                 if #available(macOS 27, *) {
                     for (asset, caption) in box.value {
@@ -1383,6 +1435,10 @@ final class LibraryModel {
 
     /// Turns Save Descriptions in Photos on, after asking, or off. Asking is the permission to change people's photos.
     func setSaveInPhotos(_ on: Bool) {
+        if on, readOnly {
+            announce(PhotoChanges.readOnlyMessage)
+            return
+        }
         if on {
             let alert = NSAlert()
             alert.messageText = "Save descriptions in your photos?"
@@ -1403,6 +1459,7 @@ final class LibraryModel {
     /// Photo > Use Description as Caption: each selected photo's saved description becomes its caption. Asks before
     /// replacing captions people wrote.
     func useDescriptionAsCaption(_ ids: Set<String>? = nil) {
+        guard changesAllowed() else { return }
         let ids = ids ?? selection
         let files = files(for: ids)
         if !files.isEmpty {
@@ -1621,6 +1678,8 @@ final class LibraryModel {
 
     /// A description was just saved: with Save Descriptions in Photos on, it fills an empty caption too, quietly.
     private func captionFromNewDescription(_ text: String, key: String) {
+        // Read-only: descriptions made now aren't saved into photos, then or later (as on Windows).
+        guard !readOnly else { return }
         let policy = captionPolicy
         guard policy != .never else { return }
         if key.hasPrefix("file:") {
@@ -1669,7 +1728,7 @@ final class LibraryModel {
     /// while describing in the background, and one dialog each would bury the person. Failures are logged.
     nonisolated private static func writeCaptionQuietly(_ asset: UncheckedBox<PHAsset>, _ caption: String) async {
         do {
-            try await PHPhotoLibrary.shared().performChanges {
+            try await PhotoChanges.performLibraryChanges {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
                 if #available(macOS 27, *) {
                     PHAssetChangeRequest(for: asset.value).caption = caption
