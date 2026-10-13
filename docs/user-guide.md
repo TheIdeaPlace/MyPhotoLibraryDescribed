@@ -84,7 +84,7 @@ On the Mac, a photo in your Photos library gets a Photos caption, which syncs wi
 
 ## Place names
 
-Photos often record where they were taken, as coordinates. Get Info always shows the coordinates. On the Mac, **Settings > Look Up Place Names** also names the place, such as "Pike Place Market, Seattle, Washington, United States". To find the name, the coordinates (nothing else) are sent to Apple's location service, so it's off until you turn it on, and it asks first. The Windows app shows coordinates only for now.
+Photos often record where they were taken, as coordinates. Get Info always shows the coordinates. **Look Up Place Names** (in Settings on the Mac) also names the place, such as "Pike Place Market, Seattle, Washington, United States". To find the name, the coordinates (nothing else) are sent to a location service when you open Get Info: Apple's on the Mac, and OpenStreetMap's Nominatim on Windows. So it's off until you turn it on, and it asks first. The two services sometimes name the same place a little differently. Place names on Windows are coming; until then it shows coordinates only.
 
 ## Settings
 
