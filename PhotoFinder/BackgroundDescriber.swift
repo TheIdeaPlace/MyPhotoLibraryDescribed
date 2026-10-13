@@ -16,7 +16,9 @@ import SwiftUI
 /// - Photos only in iCloud aren't downloaded for this; the summary says how many were skipped.
 /// - The photo you're on always comes first; it waits on Low Power Mode and while the Mac is running hot.
 /// - When Apple Intelligence is busy (it limits apps that aren't in front), it waits and tries the same photo again.
-///   Other failures leave the photo for the next run, and five in a row stop the run, saying why.
+///   Other failures leave the photo out of later runs (BackgroundFailures remembers it across launches, until the next
+///   version), and five in a row stop the run, saying why. A refusal by Apple Intelligence's guardrails is a verdict
+///   on that photo, not a sign describing doesn't work, so it doesn't count towards the five (#163).
 /// - Stopping takes effect at once: the photo in progress is still saved, but nothing more is said.
 /// - It speaks only when My Photo Library Described is in front.
 @available(macOS 27, *)
@@ -27,8 +29,10 @@ final class BackgroundDescriber {
     private var queue = BackgroundQueue()
     /// Changes when a run stops, so a run still finishing its last photo knows it's been superseded.
     private(set) var generation = 0
-    /// Photos that couldn't be described this session, so a new run doesn't try them again; the next launch does.
+    /// Photos that couldn't be described this session, so a new run doesn't try them again.
     private var failedIDs = Set<String>()
+    /// The same, across launches (#163), by the photo's description key and date, so an edited photo is tried again.
+    private let failures: BackgroundFailures
     /// Whether this run was started by something the person did, so its finish is said (as on Windows).
     private var announceFinish = false
     private var running = false
@@ -50,8 +54,9 @@ final class BackgroundDescriber {
     /// The run stopped after too many failures in a row; says why, for the status bar.
     var stopped: @MainActor (String) -> Void = { _ in }
 
-    init(cache: DescriptionCache, progress: @escaping @MainActor (String?) -> Void) {
+    init(cache: DescriptionCache, failures: BackgroundFailures, progress: @escaping @MainActor (String?) -> Void) {
         self.cache = cache
+        self.failures = failures
         self.progress = progress
     }
 
@@ -63,6 +68,7 @@ final class BackgroundDescriber {
         guard ImageConversation.unavailableReason == nil else { return }
         let ids = assets
             .filter { $0.mediaType == .image && cache.description(for: $0) == nil }
+            .filter { !failures.contains($0.localIdentifier, stamp: BackgroundFailures.stamp(modified: $0.modificationDate)) }
             .map(\.localIdentifier)
         add(ids, first: first, announce: text, sayFinish: sayFinish, generation: since ?? generation)
     }
@@ -75,12 +81,12 @@ final class BackgroundDescriber {
         guard ImageConversation.unavailableReason == nil else { return }
         // Stopped, or turned off, while the files were being looked at: they're dropped.
         let generation = since ?? generation
-        let cache = cache
+        let cache = cache, failures = failures
         let todo = await Task.detached(priority: .utility) {
             paths.filter { path in
                 guard !MediaFiles.isVideo((path as NSString).lastPathComponent) else { return false }
                 guard let file = FolderScanner.file(at: path) else { return false }
-                return cache.description(forKey: file.descriptionKey) == nil
+                return cache.description(forKey: file.descriptionKey) == nil && !failures.contains(file.descriptionKey)
             }
         }.value
         add(todo.map(FolderID.file), first: first, announce: text, sayFinish: false, generation: generation)
@@ -131,18 +137,18 @@ final class BackgroundDescriber {
             }
             guard run == generation else { return }
             progress(queue.progress)
-            let failure: Error?
+            let failed: Failed?
             if id.hasPrefix(Self.filePrefix) {
-                failure = await describeFile(String(id.dropFirst(Self.filePrefix.count)), run: run)
+                failed = await describeFile(String(id.dropFirst(Self.filePrefix.count)), run: run)
             } else {
-                failure = await describeAsset(id, run: run)
+                failed = await describeAsset(id, run: run)
             }
             guard run == generation else { return }
-            guard let failure else {
+            guard let failed else {
                 busyWaits = 0
                 continue
             }
-            if Self.isBusy(failure) {
+            if Self.isBusy(failed.error) {
                 // Apple Intelligence limits apps that aren't in front: wait, then try the same photo again.
                 queue.putBack(id)
                 progress("Background describing waiting for Apple Intelligence")
@@ -153,7 +159,9 @@ final class BackgroundDescriber {
                 continue
             }
             busyWaits = 0
+            let failure = failed.error
             failedIDs.insert(id)
+            failures.insert(failed.key, stamp: failed.stamp)
             if failure is BackgroundError {
                 let name = id.hasPrefix(Self.filePrefix) ? (String(id.dropFirst(Self.filePrefix.count)) as NSString).lastPathComponent
                     : "a photo in the Photos library"
@@ -207,8 +215,15 @@ final class BackgroundDescriber {
         return false
     }
 
+    /// Why a photo couldn't be described, and how BackgroundFailures knows it.
+    private struct Failed {
+        var error: Error
+        var key: String
+        var stamp = ""
+    }
+
     /// Describes a photo in the Photos library. Nil when it was described or skipped, or why it couldn't be.
-    private func describeAsset(_ id: String, run: Int) async -> Error? {
+    private func describeAsset(_ id: String, run: Int) async -> Failed? {
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
               cache.description(for: asset) == nil,
               ImageConversation.unavailableReason == nil else {
@@ -222,7 +237,8 @@ final class BackgroundDescriber {
         }
         // Decoded off the main actor: a 2048-pixel decode for every photo would stall the window.
         let image = await Task.detached(priority: .utility) { ImageConversation.makeImage(from: data) }.value
-        guard let image else { return BackgroundError.unreadable }
+        let stamp = BackgroundFailures.stamp(modified: asset.modificationDate)
+        guard let image else { return Failed(error: BackgroundError.unreadable, key: id, stamp: stamp) }
         let session = LanguageModelSession(instructions: ImageConversation.instructions)
         let prompt = ImageConversation.describePrompt
         do {
@@ -233,7 +249,7 @@ final class BackgroundDescriber {
             if run == generation { queue.finished(described: true) }
             return nil
         } catch {
-            return error
+            return Failed(error: error, key: id, stamp: stamp)
         }
     }
 
@@ -242,7 +258,7 @@ final class BackgroundDescriber {
     /// A photo in an added folder: read from disk off the main actor, described, and saved to the description cache
     /// under its file key. Nothing is written into the file here; with Save Descriptions in Photos on, the saved
     /// description goes into a listed file's caption through the usual path. Nil when it was described or skipped.
-    private func describeFile(_ path: String, run: Int) async -> Error? {
+    private func describeFile(_ path: String, run: Int) async -> Failed? {
         guard isWanted(path) else {
             queue.finished(described: false)
             return nil
@@ -265,18 +281,18 @@ final class BackgroundDescriber {
             guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
             return ImageConversation.makeImage(from: data)
         }.value
-        guard let image else { return BackgroundError.unreadable }
+        let key = file.descriptionKey
+        guard let image else { return Failed(error: BackgroundError.unreadable, key: key) }
         let session = LanguageModelSession(instructions: ImageConversation.instructions)
         let prompt = ImageConversation.describePrompt
         do {
             // Through PhotoDescriber, so Check System's timings and failures count it (#94).
             let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image, countsBusy: false)
-            let key = file.descriptionKey
             if !cache.isEdited(forKey: key) { cache.remember(answer, forKey: key) }
             if run == generation { queue.finished(described: true) }
             return nil
         } catch {
-            return error
+            return Failed(error: error, key: key)
         }
     }
 

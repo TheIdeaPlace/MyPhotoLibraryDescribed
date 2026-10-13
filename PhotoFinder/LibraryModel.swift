@@ -2081,7 +2081,7 @@ final class LibraryModel {
     @available(macOS 27, *)
     private func makeBackgroundDescriber() -> BackgroundDescriber {
         if let describer = backgroundDescriber as? BackgroundDescriber { return describer }
-        let describer = BackgroundDescriber(cache: descriptions) { [weak self] text in
+        let describer = BackgroundDescriber(cache: descriptions, failures: BackgroundFailures(beside: descriptions)) { [weak self] text in
             self?.backgroundProgress = text
             if text != nil { self?.backgroundProblem = nil }
         }

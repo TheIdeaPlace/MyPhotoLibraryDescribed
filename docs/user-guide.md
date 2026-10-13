@@ -57,7 +57,7 @@ While you step through photos one at a time, My Photo Library Described quietly 
 
 - **Describe Photo** (Command-D / Ctrl+D) describes the photo you're on and reads it, whether or not automatic descriptions are on.
 - **Redescribe** (Command-R / Ctrl+R) describes it afresh and replaces the saved description.
-- **Describe in the background:** Photo > Describe Photos in the Background describes photos that haven't been described yet behind the scenes, so their descriptions are ready when you get to them. Photo > Stop Background Describing stops it for now.
+- **Describe in the background:** Photo > Describe Photos in the Background describes photos that haven't been described yet behind the scenes, so their descriptions are ready when you get to them. If several photos in a row can't be described, it stops and says why. A photo that couldn't be described is left out until the next update (or until it's edited), so the same few can't stop it every time; Describe Photo still describes it when you ask. Photo > Stop Background Describing stops it for now.
 
 How photos are described: on the Mac, Settings has the prompt Apple Intelligence is given (leave it empty for the standard one). On Windows, Photo > Description Type chooses Accessible, Detailed, Brief or Diagram.
 
