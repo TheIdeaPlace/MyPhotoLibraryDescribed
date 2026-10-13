@@ -35,6 +35,8 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.photography
+        # The app kit's relay key (#33), from the build setting below; empty unless the build is given one.
+        AppKitRelayKey: $(APPKIT_RELAY_KEY)
         NSPhotoLibraryUsageDescription: My Photo Library Described lists the photos and videos in your library so you can browse, preview and export them like files.
         # Folders added with File > Add Folder to Library… can be in these places (#36); macOS asks once for each.
         NSDesktopFolderUsageDescription: My Photo Library Described lists the photos and videos in folders you add to its library.
@@ -53,6 +55,9 @@ targets:
         DEVELOPMENT_TEAM: P887QF74N8
         ENABLE_HARDENED_RUNTIME: NO
         GENERATE_INFOPLIST_FILE: NO
+        # Report a Bug's relay key (#33) isn't in the repo: scripts/release-mac.sh passes APPKIT_RELAY_KEY=… to
+        # xcodebuild, which overrides this empty default. Without it, Report a Bug opens the GitHub page instead.
+        APPKIT_RELAY_KEY: ""
       configs:
         # Notarization needs the hardened runtime; releases are built in Release (scripts/release-mac.sh, #22).
         Release:

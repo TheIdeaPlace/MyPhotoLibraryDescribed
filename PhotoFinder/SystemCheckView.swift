@@ -5,6 +5,7 @@ import SwiftUI
 struct SystemCheckView: View {
     @Environment(LibraryModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
     @State private var check: SystemCheck?
     /// The check you're on, so the arrow keys move through them and VoiceOver reads each one.
     @State private var selected: SystemCheck.Item.ID?
@@ -41,7 +42,10 @@ struct SystemCheckView: View {
                         NSPasteboard.general.setString(check.text, forType: .string)
                         AccessibilityNotification.Announcement("Copied").post()
                     }
-                    Button("Report a Bug…") { model.reportBug() }
+                    Button("Report a Bug…") {
+                        model.prepareBugReport()
+                        openWindow(id: BugReportView.windowID)
+                    }
                 }
             } else {
                 ProgressView("Checking…")

@@ -8,6 +8,7 @@ struct PhotoFinderApp: App {
     var body: some Scene {
         Window(AppInfo.name, id: "main") {
             ContentView()
+                .modifier(OpensBugReportWindow())
                 .environment(model)
                 .frame(minWidth: 720, minHeight: 420)
                 .task {
@@ -16,6 +17,7 @@ struct PhotoFinderApp: App {
                     await model.start()
                     model.checkForUpdatesQuietly()
                     model.sayIfJustUpdated()
+                    model.offerCrashReport()
                 }
         }
         .commands { PhotoCommands(model: model) }
@@ -36,11 +38,54 @@ struct PhotoFinderApp: App {
                 .environment(model)
         }
         .windowResizability(.contentSize)
+
+        // Help > Report a Bug… (#33). Not reopened at launch: a form left open last time would be empty.
+        Window("Report a Bug", id: BugReportView.windowID) {
+            BugReportView()
+                .environment(model)
+        }
+        .windowResizability(.contentSize)
+        .restorationBehavior(.disabled)
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Unit tests run inside the app and end without quitting it, so they'd look like a crash every time.
+    private var testing: Bool { ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    // The crash check (#33): a flag written now and removed on a normal quit; still there next time means the app
+    // didn't quit cleanly, and the main window offers once to report it.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !testing else { return }
+        CrashCheck.uncleanLaunch = CrashCheck.begin()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        guard !testing else { return }
+        CrashCheck.end()
+    }
+}
+
+/// The app menu's About (#33, as the app kit asks): what the app is for, and links to the repo, the user guide and
+/// the privacy policy. The standard panel gives the name, version and icon.
+enum AboutPanel {
+    static func show() {
+        let centred = NSMutableParagraphStyle()
+        centred.alignment = .center
+        let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        let credits = NSMutableAttributedString(
+            string: "Describes your photos on your own Mac, for people using VoiceOver.\n",
+            attributes: [.font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: centred])
+        for (title, url) in [("Source code on GitHub", AppInfo.repositoryURL), ("User Guide", AppInfo.userGuideURL),
+                             ("Privacy Policy", AppInfo.privacyPolicyURL)] {
+            credits.append(NSAttributedString(string: "\n"))
+            credits.append(NSAttributedString(string: title, attributes: [.font: font, .link: url, .paragraphStyle: centred]))
+        }
+        NSApplication.shared.orderFrontStandardAboutPanel(options: [.credits: credits])
+        NSApplication.shared.activate()
+    }
 }
 
 struct PhotoCommands: Commands {
@@ -50,6 +95,9 @@ struct PhotoCommands: Commands {
     private static let f9 = KeyEquivalent(Character(UnicodeScalar(NSF9FunctionKey)!))
 
     var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About \(AppInfo.name)") { AboutPanel.show() }
+        }
         CommandGroup(after: .newItem) {
             // Read-only (#84): checked at every launch; unchecking asks first.
             // "Mode", so a screen reader doesn't sound as if something on screen is read-only (Kelly, 13 Oct).
@@ -117,7 +165,10 @@ struct PhotoCommands: Commands {
             Button(Updates.menuTitle(running: AppInfo.shortVersion, available: model.availableUpdate?.version)) {
                 model.checkForUpdates()
             }
-            Button("Report a Bug…") { model.reportBug() }
+            Button("Report a Bug…") {
+                model.prepareBugReport()
+                openWindow(id: BugReportView.windowID)
+            }
             Button("Check System…") {
                 model.systemCheckRequest += 1
                 openWindow(id: "systemCheck")
