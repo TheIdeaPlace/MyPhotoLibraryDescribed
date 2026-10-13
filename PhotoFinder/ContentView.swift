@@ -110,7 +110,7 @@ struct BrowserView: View {
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .sheet(item: $model.infoTarget) { InfoView(target: $0) }
         .sheet(item: $model.captionTarget) { CaptionEditor(target: $0, model: model) }
-        .sheet(isPresented: $model.columnsSheetShown) { ColumnsSheet(model: model) }
+        .sheet(isPresented: $model.labelsSheetShown) { LabelsSheet(model: model) }
         .alert("Something went wrong", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
@@ -190,7 +190,7 @@ struct FileListView: View {
 
     var body: some View {
         @Bindable var model = model
-        // Built from the chosen columns, in the chosen order (View > Columns), which is also the order
+        // Built from the chosen columns, in the chosen order (View > Labels, List tab), which is also the order
         // VoiceOver reads a row's cells in.
         ScrollViewReader { proxy in
             Table(of: FileRow.self, selection: $model.selection, sortOrder: $model.sortOrder) {
@@ -346,6 +346,11 @@ private struct GalleryImage: View {
     @State private var image: NSImage?
     @State private var loadedID: String?
 
+    private var label: String {
+        guard let position = model.galleryPosition else { return row.name }
+        return model.galleryText(for: row, at: position.index, of: position.count)
+    }
+
     var body: some View {
         Group {
             if row.isContainer {
@@ -362,10 +367,13 @@ private struct GalleryImage: View {
                 ProgressView("Loading image…")
             }
         }
-        // One image element named just for the photo, so arrowing says which photo and its description follows,
-        // and VoiceOver's image descriptions (VO-Shift-L) look at the full-size picture. The rest is in the footer.
+        // One image element, so VoiceOver's image descriptions (VO-Shift-L) look at the full-size picture. It's named
+        // with the same words the move announcement says, the items chosen in View > Labels > Gallery (#38), and
+        // nothing more. Arrowing keeps focus where it is, and VoiceOver doesn't read a label again when it changes
+        // under it, so a move is heard once, as the announcement. Landing on the image afresh (F6, VO-arrows) reads
+        // the same chosen words, never a name that wasn't chosen. The rest is in the footer.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(row.name)
+        .accessibilityLabel(label)
         .accessibilityAddTraits(.isImage)
         .task(id: row.id) {
             guard !row.isContainer else { return }

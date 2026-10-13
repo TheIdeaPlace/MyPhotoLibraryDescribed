@@ -117,8 +117,12 @@ final class LibraryModel {
             if showsDescriptionColumn, !oldValue.contains("description") { fillDescriptions() }
         }
     }
-    var columnsSheetShown = false {
-        didSet { if !columnsSheetShown, oldValue { autoDescriber.refocused(currentID: autoDescribeCandidate) } }
+    /// What the gallery says, in order, when you move to a photo (View > Labels > Gallery, #38). Position by default.
+    var galleryLabels: [GalleryItem] = GalleryLabels.defaultOrder {
+        didSet { UserDefaults.standard.set(galleryLabels.map(\.rawValue), forKey: GalleryLabels.defaultsKey) }
+    }
+    var labelsSheetShown = false {
+        didSet { if !labelsSheetShown, oldValue { autoDescriber.refocused(currentID: autoDescribeCandidate) } }
     }
     /// What describing in the background is doing, shown in the status bar.
     var backgroundProgress: String?
@@ -218,6 +222,9 @@ final class LibraryModel {
                   let migrated = ColumnOrder.migrate(customization: data) {
             // Columns from before they could be reordered: keep which were on, in the default order.
             columnOrder = migrated
+        }
+        if let saved = UserDefaults.standard.stringArray(forKey: GalleryLabels.defaultsKey) {
+            galleryLabels = GalleryLabels.clean(saved)
         }
         // Descriptions are saved a couple of seconds after each change; don't lose one made just before quitting.
         let cache = descriptions
@@ -380,7 +387,7 @@ final class LibraryModel {
         describer.isStillOn = { [weak self] id in
             // Not while another app, Get Info or a sheet is in front: you've moved on from the photo for now.
             guard let self, NSApplication.shared.isActive, NSApplication.shared.keyWindow?.isSheet == false,
-                  self.infoTarget == nil, self.captionTarget == nil, !self.columnsSheetShown else { return false }
+                  self.infoTarget == nil, self.captionTarget == nil, !self.labelsSheetShown else { return false }
             // Redescribe is working on it: leave it alone, even if you arrow away and back, so the old
             // description isn't spoken first (as on Windows). Redescribe speaks the new one.
             guard (self.describingAgain[id] ?? 0) == 0 else { return false }
@@ -2455,8 +2462,8 @@ final class LibraryModel {
     /// Asks the list to scroll to a row chosen without it (Next Photo, Previous Photo).
     private(set) var scrollRequest = PaneScroll()
 
-    /// Whether Next Photo and Previous Photo apply: not while Get Info, a caption or Columns is in front.
-    var canStepPhotos: Bool { infoTarget == nil && captionTarget == nil && !columnsSheetShown }
+    /// Whether Next Photo and Previous Photo apply: not while Get Info, a caption or Labels is in front.
+    var canStepPhotos: Bool { infoTarget == nil && captionTarget == nil && !labelsSheetShown }
 
     func moveSelection(by delta: Int) {
         let rows = visibleRows
@@ -2470,7 +2477,14 @@ final class LibraryModel {
     private func select(at index: Int, in rows: [FileRow]) {
         selection = [rows[index].id]
         cacheNeighbors(of: index, in: rows)
-        announce("\(rows[index].name), \(index + 1) of \(rows.count)")
+        // The gallery says what View > Labels > Gallery chooses (#38); the list keeps its name and position.
+        announce(viewMode == .gallery ? galleryText(for: rows[index], at: index, of: rows.count)
+                                      : "\(rows[index].name), \(index + 1) of \(rows.count)")
+    }
+
+    /// The photo as the gallery reads it, from the items chosen in View > Labels > Gallery.
+    func galleryText(for row: FileRow, at index: Int, of count: Int) -> String {
+        GalleryLabels.text(for: row, position: (index + 1, count), items: galleryLabels)
     }
 
     /// Starts loading the images on either side so moving through the gallery feels instant. Only in the gallery:

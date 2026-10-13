@@ -139,7 +139,7 @@ struct PhotoCommands: Commands {
                 set: { _ in model.viewMode = .gallery }
             ))
             .keyboardShortcut("4")
-            Button("Columns…") { model.columnsSheetShown = true }
+            Button("Labels…") { model.labelsSheetShown = true }
             // The Description panel (#50); Option-Command-I, as Finder's Show Inspector.
             Toggle("Show Description", isOn: Binding(
                 get: { model.showDescriptionPanel },
@@ -255,7 +255,7 @@ struct PhotoCommands: Commands {
                 get: { model.describeInBackground },
                 set: { model.setDescribeInBackground($0) }
             ))
-            // Always enabled (it says when nothing is running), like the Columns sheet's buttons.
+            // Always enabled (it says when nothing is running), like the Labels sheet's buttons.
             Button("Stop Background Describing") { model.stopBackgroundDescribing() }
         }
     }

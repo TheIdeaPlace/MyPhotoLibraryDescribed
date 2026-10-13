@@ -26,9 +26,9 @@ final class ColumnOrderTests: XCTestCase {
     }
 }
 
-final class ColumnsEditorTests: XCTestCase {
+final class OrderEditorTests: XCTestCase {
     func testMovingSaysWhereTheColumnWent() {
-        var editor = ColumnsEditor(shown: ["name", "date", "caption"])
+        var editor = OrderEditor(.columns, shown: ["name", "date", "caption"])
         editor.shownSelection = "caption"
         XCTAssertEqual(editor.move(by: -1), "Caption moved up, 2 of 3.")
         XCTAssertEqual(editor.shown, ["name", "caption", "date"])
@@ -39,7 +39,7 @@ final class ColumnsEditorTests: XCTestCase {
     }
 
     func testAddingAndRemoving() {
-        var editor = ColumnsEditor(shown: ["name", "date"])
+        var editor = OrderEditor(.columns, shown: ["name", "date"])
         editor.availableSelection = "rating"
         XCTAssertEqual(editor.add(), "Rating added, 3 of 3.")
         XCTAssertEqual(editor.shown, ["name", "date", "rating"])
@@ -52,7 +52,7 @@ final class ColumnsEditorTests: XCTestCase {
     }
 
     func testEveryColumnShownAndReset() {
-        var editor = ColumnsEditor(shown: ColumnOrder.all.map(\.id))
+        var editor = OrderEditor(.columns, shown: ColumnOrder.all.map(\.id))
         XCTAssertEqual(editor.add(), "Every column is shown already.")
         XCTAssertEqual(editor.reset(), "Columns reset to the default: \(ColumnOrder.defaultOrder.count) shown, Name first.")
         XCTAssertEqual(editor.shown, ColumnOrder.defaultOrder)
