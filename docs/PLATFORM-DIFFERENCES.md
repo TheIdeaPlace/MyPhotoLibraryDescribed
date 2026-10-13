@@ -27,6 +27,7 @@ These follow from what each operating system offers apps, and aren't gaps to clo
 | Columns from the source | Source (My Library, Shared Album, Synced; the folder's name for files in added folders) | Size and Folder |
 | Unavailable menu items | macOS menus already let VoiceOver reach them | WPF skips disabled items, so My Photo Library Described's menu items stay reachable and are read as unavailable |
 | Show the file | Not applicable | Show in File Explorer (Ctrl+Shift+R) |
+| Permission to read photos | Asks for Photos access at the first launch. Without it (#47) the browser still opens: the Photos sections are one sidebar row, "Photos library: no access", which shows why and Open Privacy Settings (Return on the row opens it too), and added folders work as usual (browsing, Get Info, describing, in the background too). Access given later in System Settings adds the library when you come back to the app. | No such permission: files on disk are read directly |
 
 ## Gaps to close
 
@@ -37,7 +38,6 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 - **Moving between panes.** Both have F6 and Shift+F6 (Go > Next Pane and Previous Pane on the Mac) for the sidebar, the list or gallery, search and the status bar, with Left and Right Arrow between status bar sections. On Windows the status bar is reached only with F6, not Tab, as in QuickMail; on the Mac, SwiftUI's focusable status sections may also be Tab stops.
 - **Tests.** Windows has about 270 tests; the Mac has a handful (columns and the description cache). Mac CI can't compile the macOS 27 code until GitHub's runners have Xcode 27.
 - **Favorites and ratings in files in added folders.** Windows sets favorites (a five-star rating) and ratings in the files themselves. On the Mac, Toggle Favorite says it isn't available for files yet. Captions are written into files on the Mac too (#31).
-- **Folders without Photos access.** The Mac shows nothing until Photos access is given, so added folders can't be browsed without it. Windows has no such permission.
 
 ### On Windows, from the Mac
 
