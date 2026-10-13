@@ -174,6 +174,33 @@ final class BugReportTests: XCTestCase {
         XCTAssertTrue(report.preview.hasSuffix(body))
     }
 
+    func testLengthsAreCountedAsTheRelayCountsThem() {
+        // An emoji is one character to Swift but two to the relay's JavaScript.
+        var report = report()
+        let log = (1...200).map { "line \($0) " + String(repeating: "📷", count: 40) }.joined(separator: "\n")
+        report.attachments = [.init(name: "the log", heading: "Log", text: log)]
+        XCTAssertLessThanOrEqual(report.body.utf16.count, BugReport.longestBody)
+        XCTAssertTrue(report.body.contains("line 200 "))
+    }
+
+    func testAttachmentsLeftOutStayWithinTheLimit() {
+        var report = report()
+        report.happened = String(repeating: "a", count: 6_700)
+        report.attachments = (1...4).map { n in
+            .init(name: "log \(n)", heading: "A rather long heading for attachment number \(n)",
+                  text: (1...50).map { "entry \($0) " + String(repeating: "z", count: 80) }.joined(separator: "\n"))
+        }
+        XCTAssertLessThanOrEqual(report.body.utf16.count, BugReport.longestBody)
+    }
+
+    func testWindowsLineEndingsAreTrimmedByLine() {
+        var report = report()
+        let log = (1...200).map { "line \($0) " + String(repeating: "x", count: 60) }.joined(separator: "\r\n")
+        report.attachments = [.init(name: "the log", heading: "Log", text: log)]
+        XCTAssertTrue(report.body.contains("(Earlier lines left out.)\nline "))
+        XCTAssertTrue(report.body.contains("line 200 "))
+    }
+
     func testAShortReportIsUnchanged() {
         var report = report()
         report.attachments = [.init(name: "the log", heading: "Log", text: "one\ntwo")]
@@ -182,9 +209,12 @@ final class BugReportTests: XCTestCase {
 
     func testAnAttachmentWithNoRoomForALineIsLeftOutAndSaysSo() {
         var report = report()
-        report.happened = String(repeating: "a", count: 7_700)
+        report.happened = String(repeating: "a", count: 7_500)
         report.attachments = [.init(name: "the log", heading: "Log", text: String(repeating: "x", count: 500))]
         XCTAssertTrue(report.body.hasSuffix("**Log**\n(Left out: the report is too long to include it.)"))
+        // With no room even for that note, nothing is said.
+        report.happened = String(repeating: "a", count: 7_780)
+        XCTAssertFalse(report.body.contains("**Log**"))
     }
 
     // MARK: Crashes

@@ -3,7 +3,7 @@ import Foundation
 /// Help > Report a Bug… (#33): what the form collects, the text it sends, and how it's sent. The app kit's relay (a
 /// Cloudflare Worker run by The Idea Place) files it as a GitHub issue with a bot account, so nobody needs a GitHub
 /// account to report a bug. When the relay can't be reached, or this copy was built without a relay key, the
-/// prefilled GitHub issue page opens instead, as before, with the whole report on the clipboard. Kept free of AppKit
+/// prefilled GitHub issue page opens instead, as before, with the report on the clipboard. Kept free of AppKit
 /// and the network, so it can be tested; the form is BugReportView.
 struct BugReport: Equatable {
     enum Kind: String, CaseIterable, Identifiable {
@@ -87,6 +87,8 @@ struct BugReport: Equatable {
             let frame = "**\(attachment.heading)**\n```\n\n```".utf16.count + 2
             let section = Self.fitted(attachment.text, room: room - frame)
                 .map { "**\(attachment.heading)**\n```\n\($0)\n```" } ?? "**\(attachment.heading)**\n\(Self.didntFit)"
+            // Even the note that it was left out counts against the limit; when that doesn't fit either, nothing is said.
+            guard section.utf16.count + 2 <= room else { continue }
             sections.append(section)
             room -= section.utf16.count + 2
         }
@@ -98,7 +100,7 @@ struct BugReport: Equatable {
         if text.utf16.count <= room { return text }
         var kept: [Substring] = []
         var used = linesLeftOut.utf16.count
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false).reversed() {
+        for line in text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).reversed() {
             guard used + line.utf16.count + 1 <= room else { break }
             kept.insert(line, at: 0)
             used += line.utf16.count + 1
@@ -113,7 +115,7 @@ struct BugReport: Equatable {
         return lines.joined(separator: "\n") + "\n\n" + body
     }
 
-    /// The whole report, for the clipboard when the browser page is used instead.
+    /// The report as sent, for the clipboard when the browser page is used instead.
     var clipboardText: String { fullTitle + "\n\n" + body }
 
     /// The relay's JSON: `{title, body, contact?, kind}`.
@@ -124,7 +126,7 @@ struct BugReport: Equatable {
     }
 
     /// The prefilled GitHub page used when the relay isn't. GitHub refuses very long addresses, so the body is cut
-    /// there; the whole report is on the clipboard.
+    /// there; the report as sent is on the clipboard.
     func issuePageURL(issuesURL: URL = AppInfo.issuesURL) -> URL {
         var body = body + "\n\n" + Self.logNote
         if body.count > Self.longestPageBody {
@@ -281,7 +283,7 @@ enum CrashCheck {
             .max { $0.1 < $1.1 }?.0
     }
 
-    /// A line of a crash report or the log longer than this is cut.
+    /// A line of an excerpt (the log) longer than this is cut. The crash summary has its own limit.
     static let longestLine = 1500
 
     /// The first lines of a text, or the last, without folder paths: a crash report or the log is public once sent.

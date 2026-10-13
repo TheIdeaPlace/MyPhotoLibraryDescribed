@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Help > Report a Bug… (#33): the app kit's form. A bug or a suggestion, a title, the questions, an optional contact,
 /// whether to include the system check, and a preview of exactly what Send sends. Focus starts in Title. Escape and
-/// Command-W close it. Once filed, it says the issue's number, with a button to open it.
+/// Command-W close it, except while a report is sending. Once filed, it says the issue's number, with a button to open it.
 struct BugReportView: View {
     static let windowID = "reportBug"
     static let contactNote = "Optional, for example an email address. Everything in a report is public on GitHub, including this."
@@ -33,7 +33,7 @@ struct BugReportView: View {
         .padding()
         .frame(minWidth: 560)
         // While the form shows, its Cancel button answers Escape.
-        .closesWithKeyboard(escape: filedNumber != nil || unsent != nil) { dismiss() }
+        .closesWithKeyboard(escape: filedNumber != nil || unsent != nil) { close() }
         .onAppear {
             // Opened some other way than Report a Bug… (it never should be): start from a fresh draft all the same.
             if model.bugReportRequest == 0 { model.prepareBugReport() }
@@ -98,15 +98,7 @@ struct BugReportView: View {
             HStack {
                 if sending { ProgressView().controlSize(.small).accessibilityHidden(true) }
                 Spacer()
-                // While a report is on its way, closing would lose its answer (the issue's number, or the page to
-                // open instead), so it waits; the relay answers within 15 seconds (#147, as Windows does).
-                Button("Cancel", role: .cancel) {
-                    if sending {
-                        AccessibilityNotification.Announcement("Still sending").post()
-                    } else {
-                        dismiss()
-                    }
-                }
+                Button("Cancel", role: .cancel) { close() }
                 .keyboardShortcut(.cancelAction)
                 // Not the default button: Return in a field mustn't send a report half written.
                 Button(sending ? "Sending…" : "Send") { send() }
@@ -165,6 +157,17 @@ struct BugReportView: View {
         unsent = nil
         // A moment later: the form has only just appeared, and focus set in the same update is often lost.
         Task { @MainActor in focus = .title }
+    }
+
+    /// While a report is on its way, closing would lose its answer (the issue's number, or the page to open instead),
+    /// and reopening could send it twice, so Cancel, Escape and Command-W wait; the relay answers within 15 seconds
+    /// (#147, as Windows does).
+    private func close() {
+        if sending {
+            AccessibilityNotification.Announcement("Still sending").post()
+        } else {
+            dismiss()
+        }
     }
 
     private func send() {
