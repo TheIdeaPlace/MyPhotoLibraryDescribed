@@ -2432,8 +2432,10 @@ final class LibraryModel {
         announce("\(rows[index].name), \(index + 1) of \(rows.count)")
     }
 
-    /// Starts loading the images on either side so moving through the gallery feels instant.
+    /// Starts loading the images on either side so moving through the gallery feels instant. Only in the gallery:
+    /// these may download from iCloud, and stepping through the list (Command-Right Arrow) mustn't (#120's review).
     private func cacheNeighbors(of index: Int, in rows: [FileRow]) {
+        guard viewMode == .gallery else { return }
         let neighbors = [index - 1, index + 1, index + 2]
             .filter { rows.indices.contains($0) }
             .compactMap { assetsByID[rows[$0].id] }
@@ -2455,6 +2457,31 @@ final class LibraryModel {
     }
 
     // MARK: - Thumbnails and drag
+
+    /// The photo for the Description panel's preview in list view: medium-sized, and only what's on this Mac, so
+    /// arrowing through the list never downloads from iCloud (the privacy policy's list of downloads). A photo only in
+    /// iCloud shows its small thumbnail instead.
+    func previewImage(for id: String) async -> NSImage? {
+        if let file = filesByID[id] {
+            guard await Task.detached(priority: .userInitiated, operation: { FileAvailability.isOnThisMac(file.url) }).value
+            else { return nil }
+            return await FileImages.image(file.url, maxPixels: 800)
+        }
+        guard let asset = assetsByID[id] else { return nil }
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.resizeMode = .fast
+        options.isNetworkAccessAllowed = false
+        let box = UncheckedBox(value: asset)
+        let image = await withCheckedContinuation { continuation in
+            imageManager.requestImage(for: box.value, targetSize: CGSize(width: 800, height: 800),
+                                      contentMode: .aspectFit, options: options) { image, _ in
+                continuation.resume(returning: image)
+            }
+        }
+        if let image { return image }
+        return await thumbnail(for: id)
+    }
 
     func thumbnail(for id: String) async -> NSImage? {
         if let file = filesByID[id] { return await FileImages.thumbnail(file.url, size: 64) }

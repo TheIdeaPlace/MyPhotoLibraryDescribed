@@ -54,6 +54,8 @@ How photos are described: on the Mac, Settings has the prompt Apple Intelligence
 
 ## The Description panel
 
+In list view, the panel starts with a picture of the photo you're on, as Finder's and File Explorer's preview panes do, for anyone looking at the screen with you; screen readers skip it, since the description says what's in it. (The gallery already shows the photo large.) It never downloads a photo that's only in iCloud or OneDrive; those show their small thumbnail, or a placeholder when there isn't one.
+
 **View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Describe Again, Use as Caption and Copy, and the photo's caption with Edit Caption. Shift-Command-D on the Mac goes straight to the description, showing the panel if it's hidden, and pressed again goes back to the list or gallery. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow on the Mac) and Previous Photo (Command-Left): the photo changes and focus stays where it is.
 
 ## Read-only, and changing your photos
