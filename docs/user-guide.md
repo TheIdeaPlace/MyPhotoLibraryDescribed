@@ -46,17 +46,17 @@ The window has a sidebar (the library, albums on the Mac, and folders), the list
 
 While you step through photos one at a time, Photo Finder quietly describes the next one in the direction you're going, so it's ready when you get there. It doesn't do this on Low Power Mode / energy saver.
 
-- **Describe Photo** (Command-D / Ctrl+Shift+D, becoming Ctrl+D) describes the photo you're on and reads it, whether or not automatic descriptions are on.
-- **Redescribe** (Command-R / Ctrl+Alt+Shift+D, becoming Ctrl+R) describes it afresh and replaces the saved description. (On Windows it's still called Describe Again for now.)
+- **Describe Photo** (Command-D / Ctrl+D) describes the photo you're on and reads it, whether or not automatic descriptions are on.
+- **Redescribe** (Command-R / Ctrl+R) describes it afresh and replaces the saved description.
 - **Describe in the background:** Photo > Describe Photos in the Background describes photos that haven't been described yet behind the scenes, so their descriptions are ready when you get to them. Photo > Stop Background Describing stops it for now.
 
 How photos are described: on the Mac, Settings has the prompt Apple Intelligence is given (leave it empty for the standard one). On Windows, Photo > Description Type chooses Accessible, Detailed, Brief or Diagram.
 
 ## The Description panel
 
-In list view, the panel starts with a picture of the photo you're on, as Finder's and File Explorer's preview panes do, for anyone looking at the screen with you; screen readers skip it, since the description says what's in it. (The gallery already shows the photo large.) It never downloads a photo that's only in iCloud or OneDrive; those show their small thumbnail, or a placeholder when there isn't one.
+In list view, the panel starts with a picture of the photo you're on (on the Mac; coming on Windows), as Finder's and File Explorer's preview panes do, for anyone looking at the screen with you; screen readers skip it, since the description says what's in it. (The gallery already shows the photo large.) It never downloads a photo that's only in iCloud or OneDrive; those show their small thumbnail, or a placeholder when there isn't one.
 
-**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Redescribe, Use as Caption and Copy, and the photo's caption with Edit Caption. Shift-Command-D on the Mac goes straight to the description, showing the panel if it's hidden, and pressed again goes back to the list or gallery. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow on the Mac) and Previous Photo (Command-Left): the photo changes and focus stays where it is.
+**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Redescribe, Use as Caption and Copy, and the photo's caption with Edit Caption. **Go > Go to Description or Back to Photos** (Shift-Command-D / Ctrl+Shift+D) goes straight to the description, showing the panel if it's hidden, and pressed again goes back to the list or gallery. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow on the Mac) and Previous Photo (Command-Left): the photo changes and focus stays where it is. (Next and Previous Photo are coming on Windows.)
 
 ## Read-only, and changing your photos
 
@@ -97,9 +97,9 @@ On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save
 - **Check for Updates** says whether there's a newer version. Photo Finder also checks quietly once a day, and the item then reads "Update to *version* available…".
 - **Report a Bug…** opens a new GitHub issue in your browser with the details filled in. GitHub issues are public, and nothing is sent until you submit it.
 - **Check System…** checks that your computer can describe photos, and says what to do if it can't.
-- **Mac only, for now:** User Guide opens this guide, and Privacy Policy opens the privacy policy.
 - **Check AI Description…** describes a sample photo that comes with the app (a red mug on a table beside a sign reading OPEN), to show describing works end to end. It saves nothing.
 - **Open Log Folder** shows the diagnostic log: one file a day, kept two weeks, of what went wrong. It stays on your computer unless you attach it to a bug report; it names files and folders, so look at it first.
+- **User Guide** opens this guide, and **Privacy Policy** opens the privacy policy, on GitHub.
 
 ## Keyboard shortcut reference
 
@@ -109,9 +109,9 @@ On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save
 | Go to the enclosing folder | Command-Up Arrow | Alt+Up Arrow or Backspace |
 | Preview | Command-Y (Quick Look) | Space or Ctrl+Y |
 | Get Info | Command-I | Ctrl+I or Alt+Enter |
-| Describe Photo | Command-D | Ctrl+Shift+D (Ctrl+D coming) |
-| Go to the description, and back to the list or gallery | Shift-Command-D | Coming |
-| Redescribe | Command-R | Ctrl+Alt+Shift+D (Ctrl+R coming) |
+| Describe Photo | Command-D | Ctrl+D |
+| Go to the description, and back to the list or gallery | Shift-Command-D | Ctrl+Shift+D |
+| Redescribe | Command-R | Ctrl+R |
 | Turn automatic descriptions on or off | Photo menu | Ctrl+Shift+U |
 | Export | Command-E | Ctrl+E |
 | Toggle Favorite | Shift-Command-F | Ctrl+Shift+F |

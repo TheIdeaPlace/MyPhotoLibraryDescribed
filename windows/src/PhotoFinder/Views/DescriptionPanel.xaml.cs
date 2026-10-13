@@ -14,7 +14,7 @@ namespace PhotoFinder.Views;
 /// <summary>
 /// View > Show Description (#50), as on the Mac: the photo you're on, its description in a box you can read by line,
 /// word or character and correct (corrections are saved and marked "Edited by you"), a status line ("Describing…",
-/// "Saved description", "Edited by you", "Not described yet"), Describe Again, Use as Caption and Copy, and the caption
+/// "Saved description", "Edited by you", "Not described yet"), Redescribe, Use as Caption and Copy, and the caption
 /// with Edit Caption. Nothing is announced as you arrow; automatic describing still speaks.
 /// </summary>
 public partial class DescriptionPanel : UserControl
@@ -29,8 +29,8 @@ public partial class DescriptionPanel : UserControl
 
     public DescriptionPanel() => InitializeComponent();
 
-    /// <summary>Describe Again, Use as Caption and Edit Caption, which the window does.</summary>
-    public Action? DescribeAgain { get; set; }
+    /// <summary>Redescribe, Use as Caption and Edit Caption, which the window does.</summary>
+    public Action? Redescribe { get; set; }
     public Action<FileRow>? UseAsCaption { get; set; }
     /// <summary>Edit Caption for this photo, with what to focus afterwards.</summary>
     public Action<FileRow, Action>? EditCaption { get; set; }
@@ -106,7 +106,7 @@ public partial class DescriptionPanel : UserControl
     private void Row_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (sender != _row || _row is null) return;
-        // A description arriving (automatic describing, Describe Again) shows at once, even while you're in the box,
+        // A description arriving (automatic describing, Redescribe) shows at once, even while you're in the box,
         // unless you've started changing it. The caption after Edit Caption or Use as Caption.
         if (e.PropertyName is nameof(FileRow.Description) or "") Refresh();
         if (e.PropertyName is nameof(FileRow.Caption) or "") ShowCaption(_row);
@@ -187,10 +187,10 @@ public partial class DescriptionPanel : UserControl
         return false;
     }
 
-    private void DescribeAgain_Click(object sender, RoutedEventArgs e)
+    private void Redescribe_Click(object sender, RoutedEventArgs e)
     {
         SaveIfChanged();
-        DescribeAgain?.Invoke();
+        Redescribe?.Invoke();
     }
 
     private void UseAsCaption_Click(object sender, RoutedEventArgs e)

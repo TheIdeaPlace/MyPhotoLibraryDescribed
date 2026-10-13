@@ -183,11 +183,11 @@ public partial class InfoWindow : Window
 
     private async void Describe_Click(object sender, RoutedEventArgs e) => await DescribeAsync();
 
-    /// <summary>"Describe Image" when this type has no saved description, "Describe Again" when it has one, which
+    /// <summary>"Describe Image" when this type has no saved description, "Redescribe" when it has one, which
     /// describing replaces, as on the Mac.</summary>
     private bool HasSaved => KindBox.SelectedValue is string kind && _store?.Get(_item, kind) is not null;
 
-    private void UpdateDescribeButton() => DescribeButton.Content = HasSaved ? "Describe A_gain" : "_Describe Image";
+    private void UpdateDescribeButton() => DescribeButton.Content = HasSaved ? "Redescri_be" : "_Describe Image";
 
     /// <summary>After describing: renaming the focused button now would have screen readers say its new name over the
     /// description, so it's renamed when focus leaves it.</summary>
@@ -215,10 +215,8 @@ public partial class InfoWindow : Window
         }
         if (_describing) { Announcer.Announce("Still describing"); return; }
         var kind = KindBox.SelectedValue as string ?? WindowsAI.Kinds[0].Id;
-        // A description the person corrected is replaced only if they agree, as with Describe Again.
-        if (_store?.IsEdited(_item, kind) == true && MessageBox.Show(this, "Replace the description you edited?", "Describe Again",
-                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
-            return;
+        // A description the person corrected is replaced only if they agree, as with Redescribe in the main window.
+        if (_store?.IsEdited(_item, kind) == true && !MainWindow.AskToReplaceEdit(this, _item.Name)) return;
         _describing = true;
         _settings.DescriptionKind = kind;
         _saveSettings();
@@ -238,8 +236,8 @@ public partial class InfoWindow : Window
                 }
             }
             var again = HasSaved;
-            AIStatus.Text = again ? "Describing again…" : "Describing…";
-            Announcer.Announce(again ? "Describing again" : "Describing");
+            AIStatus.Text = again ? "Redescribing…" : "Describing…";
+            Announcer.Announce(again ? "Redescribing" : "Describing");
             var path = _item.Path;
             var text = await App.WindowsAI.DescribeAsync(async size =>
             {

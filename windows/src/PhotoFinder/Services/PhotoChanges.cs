@@ -14,7 +14,7 @@ public static class PhotoChanges
     public static bool Allowed { get => _allowed; set => _allowed = value; }
 
     /// <summary>Said when a change is asked for while read-only.</summary>
-    public const string ReadOnlyMessage = $"{AppInfo.Name} is read-only, so photos can't be changed. To change them, turn off Read-Only in the File menu.";
+    public const string ReadOnlyMessage = $"{AppInfo.Name} is in Read-Only Mode, so photos can't be changed. To change them, turn off Read-Only Mode in the File menu.";
 
     /// <summary>Throws <see cref="ReadOnlyException"/> while read-only.</summary>
     public static void Check()

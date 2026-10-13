@@ -40,6 +40,10 @@ public static class AppCommands
         new KeyGesture(Key.Down, ModifierKeys.Alt));
     public static readonly RoutedUICommand AllPhotos = Make("_All Photos", nameof(AllPhotos),
         new KeyGesture(Key.A, ModifierKeys.Control | ModifierKeys.Shift));
+    /// <summary>To the Description panel's text box, showing the panel if it's hidden; from there, back to the list or
+    /// gallery (#119). The Mac's is Shift-Command-D.</summary>
+    public static readonly RoutedUICommand GoToDescription = Make("Go to _Description or Back to Photos", nameof(GoToDescription),
+        new KeyGesture(Key.D, ModifierKeys.Control | ModifierKeys.Shift));
     public static readonly RoutedUICommand NextPane = Make("Next Pane", nameof(NextPane), new KeyGesture(Key.F6));
     public static readonly RoutedUICommand PreviousPane = Make("Previous Pane", nameof(PreviousPane), new KeyGesture(Key.F6, ModifierKeys.Shift));
 
@@ -47,15 +51,14 @@ public static class AppCommands
         new KeyGesture(Key.F, ModifierKeys.Control | ModifierKeys.Shift));
     public static readonly RoutedUICommand EditCaption = Make("Edit Cap_tion…", nameof(EditCaption),
         new KeyGesture(Key.F2), new KeyGesture(Key.E, ModifierKeys.Control | ModifierKeys.Shift));
-    /// <summary>Describes the photo you're on and speaks it, in the list, gallery or Preview.</summary>
+    /// <summary>Describes the photo you're on and speaks it, in the list, gallery or Preview. The Mac's is Command-D.</summary>
     public static readonly RoutedUICommand DescribePhoto = Make("_Describe Photo", nameof(DescribePhoto),
-        new KeyGesture(Key.D, ModifierKeys.Control | ModifierKeys.Shift));
+        new KeyGesture(Key.D, ModifierKeys.Control));
     /// <summary>The selected photos' saved descriptions become their captions, asking before replacing one.</summary>
     public static readonly RoutedUICommand UseDescriptionAsCaption = Make("_Use Description as Caption", nameof(UseDescriptionAsCaption));
     /// <summary>Describes the photo you're on afresh, replacing its saved description, and speaks it. The Mac's is
-    /// Shift-Option-Command-D.</summary>
-    public static readonly RoutedUICommand DescribeAgain = Make("Describe A_gain", nameof(DescribeAgain),
-        new KeyGesture(Key.D, ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift));
+    /// Command-R (#119).</summary>
+    public static readonly RoutedUICommand Redescribe = Make("Redescri_be", nameof(Redescribe), new KeyGesture(Key.R, ModifierKeys.Control));
     public static readonly RoutedUICommand DescribeInBackground = Make("Describe Photos in the Bac_kground", nameof(DescribeInBackground));
     public static readonly RoutedUICommand StopBackground = Make("_Stop Background Describing", nameof(StopBackground));
     public static readonly RoutedUICommand AutoDescribe = Make("Describe Photos _Automatically", nameof(AutoDescribe),
@@ -71,5 +74,8 @@ public static class AppCommands
     public static readonly RoutedUICommand CheckAIDescription = Make("Check AI _Description…", nameof(CheckAIDescription));
     /// <summary>The diagnostic log's folder, in File Explorer, for attaching to a bug report.</summary>
     public static readonly RoutedUICommand OpenLogFolder = Make("Open _Log Folder", nameof(OpenLogFolder));
+    /// <summary>The user guide and privacy policy, on GitHub, as on the Mac (#105).</summary>
+    public static readonly RoutedUICommand UserGuide = Make($"{AppInfo.Name} User _Guide", nameof(UserGuide));
+    public static readonly RoutedUICommand PrivacyPolicy = Make("_Privacy Policy", nameof(PrivacyPolicy));
     public static readonly RoutedUICommand About = Make($"_About {AppInfo.Name}", nameof(About));
 }
