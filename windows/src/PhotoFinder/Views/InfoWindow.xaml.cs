@@ -36,7 +36,7 @@ public partial class InfoWindow : Window
     private readonly Func<FileRow, Window, string, Task>? _useAsCaption;
 
     public InfoWindow(FileRow row, Settings settings, Action saveSettings, bool describeNow, DescriptionStore? store = null,
-        Func<FileRow, Window, string, Task>? useAsCaption = null)
+        Func<FileRow, Window, string, Task>? useAsCaption = null, PlaceNames? placeNames = null)
     {
         _useAsCaption = useAsCaption;
         _item = row.Item ?? throw new ArgumentException("Get Info needs a photo or video.", nameof(row));
@@ -48,7 +48,11 @@ public partial class InfoWindow : Window
         InitializeComponent();
         Title = $"{_item.Name} Info";
         NameHeading.Text = _item.Name;
-        GeneralList.ItemsSource = GeneralFields(row).Select(f => new InfoLine(f.Label, f.Value)).ToList();
+        _placeNames = placeNames ?? PlaceNames.Shared;
+        // A name already found is there as it opens, so nothing arrives later to move focus.
+        if (settings.LookUpPlaceNames && _item.Metadata is { Latitude: { } lat, Longitude: { } lon }) _place = _placeNames.TryCached(lat, lon);
+        GeneralList.ItemsSource = _general;
+        foreach (var line in Lines()) _general.Add(line);
         ContentsSection.Visibility = _item.IsVideo ? Visibility.Collapsed : Visibility.Visible;
         KindBox.ItemsSource = WindowsAI.Kinds.Select(k => new KindChoice(k.Id, k.Title)).ToList();
         // Each type has its own description; show the one for the type chosen, if it's been made.
@@ -72,7 +76,7 @@ public partial class InfoWindow : Window
         {
             if (GeneralList.Items.Count > 0) GeneralList.SelectedIndex = 0;
             if (!describeNow) FocusFirstField();
-            await Task.WhenAll(LoadDetailsAsync(), CheckAIAsync());
+            await Task.WhenAll(LoadDetailsAsync(), CheckAIAsync(), LookUpPlaceAsync());
         };
         _row.PropertyChanged += Row_PropertyChanged;
         Closed += (_, _) =>
@@ -96,7 +100,28 @@ public partial class InfoWindow : Window
         else GeneralList.Focus();
     }
 
-    internal static List<InfoField> GeneralFields(FileRow row)
+    private readonly PlaceNames _placeNames;
+    /// <summary>The place's name, once looked up (#25).</summary>
+    private string? _place;
+    /// <summary>The General list's lines. Changed in place, so the line with focus keeps it.</summary>
+    private readonly System.Collections.ObjectModel.ObservableCollection<InfoLine> _general = [];
+
+    private IEnumerable<InfoLine> Lines() => GeneralFields(_row, _place).Select(f => new InfoLine(f.Label, f.Value));
+
+    /// <summary>With Look Up Place Names on, the place's name, added above the coordinates when it comes. Nothing is sent
+    /// while it's off.</summary>
+    private async Task LookUpPlaceAsync()
+    {
+        if (_place is not null || !_settings.LookUpPlaceNames || _item.Metadata is not { Latitude: { } lat, Longitude: { } lon }) return;
+        var place = await _placeNames.LookUpAsync(lat, lon, _closing.Token);
+        if (place is null || _closing.IsCancellationRequested) return;
+        _place = place;
+        // Inserted above the coordinates, rather than the list rebuilt: the line you're on keeps focus, wherever it is.
+        var at = _general.ToList().FindIndex(l => l.Label == "Coordinates");
+        _general.Insert(at < 0 ? _general.Count : at, Lines().Single(l => l.Label == "Place Taken"));
+    }
+
+    internal static List<InfoField> GeneralFields(FileRow row, string? place = null)
     {
         var item = row.Item!;
         var m = item.Metadata ?? MediaMetadata.Empty;
@@ -114,6 +139,7 @@ public partial class InfoWindow : Window
         if (m.AltText.Length > 0) fields.Add(new("Alt Text in the File", m.AltText));
         if (m.Keywords.Length > 0) fields.Add(new("Keywords", m.Keywords));
         if (m.Rating > 0) fields.Add(new("Rating", FileRow.StarsText(m.Rating)));
+        if (place is not null) fields.Add(new("Place Taken", $"{place} ({PlaceNames.Credit})"));
         if (m.Latitude is { } lat && m.Longitude is { } lon)
             fields.Add(new("Coordinates", string.Format(CultureInfo.CurrentCulture, "{0:0.00000}, {1:0.00000}", lat, lon)));
         fields.Add(new("File Type", MediaTypes.FileTypeDescription(item.Path)));
@@ -184,11 +210,11 @@ public partial class InfoWindow : Window
 
     private async void Describe_Click(object sender, RoutedEventArgs e) => await DescribeAsync();
 
-    /// <summary>"Describe Image" when this type has no saved description, "Describe Again" when it has one, which
+    /// <summary>"Describe Image" when this type has no saved description, "Redescribe" when it has one, which
     /// describing replaces, as on the Mac.</summary>
     private bool HasSaved => KindBox.SelectedValue is string kind && _store?.Get(_item, kind) is not null;
 
-    private void UpdateDescribeButton() => DescribeButton.Content = HasSaved ? "Describe A_gain" : "_Describe Image";
+    private void UpdateDescribeButton() => DescribeButton.Content = HasSaved ? "Redescri_be" : "_Describe Image";
 
     /// <summary>After describing: renaming the focused button now would have screen readers say its new name over the
     /// description, so it's renamed when focus leaves it.</summary>
@@ -216,10 +242,8 @@ public partial class InfoWindow : Window
         }
         if (_describing) { Announcer.Announce("Still describing"); return; }
         var kind = KindBox.SelectedValue as string ?? WindowsAI.Kinds[0].Id;
-        // A description the person corrected is replaced only if they agree, as with Describe Again.
-        if (_store?.IsEdited(_item, kind) == true && MessageBox.Show(this, "Replace the description you edited?", "Describe Again",
-                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
-            return;
+        // A description the person corrected is replaced only if they agree, as with Redescribe in the main window.
+        if (_store?.IsEdited(_item, kind) == true && !MainWindow.AskToReplaceEdit(this, _item.Name)) return;
         _describing = true;
         _settings.DescriptionKind = kind;
         _saveSettings();
@@ -239,8 +263,8 @@ public partial class InfoWindow : Window
                 }
             }
             var again = HasSaved;
-            AIStatus.Text = again ? "Describing again…" : "Describing…";
-            Announcer.Announce(again ? "Describing again" : "Describing");
+            AIStatus.Text = again ? "Redescribing…" : "Describing…";
+            Announcer.Announce(again ? "Redescribing" : "Describing");
             var path = _item.Path;
             var text = await App.WindowsAI.DescribeAsync(async size =>
             {
@@ -400,8 +424,11 @@ public partial class InfoWindow : Window
         if (e.PropertyName is not ("" or nameof(FileRow.Caption))) return;
         var index = GeneralList.SelectedIndex;
         var hadFocus = GeneralList.IsKeyboardFocusWithin;
-        GeneralList.ItemsSource = GeneralFields(_row).Select(f => new InfoLine(f.Label, f.Value)).ToList();
+        _general.Clear();
+        foreach (var line in Lines()) _general.Add(line);
         if (index < 0) return;
+        // Laid out first, so the line's container exists to take focus.
+        GeneralList.UpdateLayout();
         GeneralList.SelectedIndex = Math.Min(index, GeneralList.Items.Count - 1);
         if (hadFocus && GeneralList.ItemContainerGenerator.ContainerFromIndex(GeneralList.SelectedIndex) is ListBoxItem item) item.Focus();
     }

@@ -37,8 +37,18 @@ enum StatusSection: Int, CaseIterable, Hashable {
     }
 }
 
+/// A row for the list to scroll to. The serial makes each request a change.
+struct PaneScroll: Equatable {
+    var id: String?
+    var serial = 0
+}
+
 /// A request from the Go menu to move to the next or previous pane. The serial makes each request a change.
 struct PaneRequest: Equatable {
     var direction = 0
     var serial = 0
+    /// A pane to go straight to (Control-Shift-F9's status bar), instead of moving by `direction`.
+    var target: Pane?
+    /// Shift-Command-D: to the Description panel, or from it back to the list or gallery.
+    var toggleDescription = false
 }

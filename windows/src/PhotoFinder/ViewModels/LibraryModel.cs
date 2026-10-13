@@ -155,7 +155,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         private set { _detailProgress = value; OnPropertyChanged(); OnStatusChanged(); }
     }
 
-    public bool IsBusy => IsLoading || Activity is not null || DetailProgress is not null || BackgroundProgress is not null;
+    public bool IsBusy => IsLoading || Activity is not null || DetailProgress is not null || (BackgroundProgress is not null && !_backgroundProblem);
 
     public string StatusText
     {
@@ -217,7 +217,12 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         var unchanged = CurrentSource is not null && scanned.Count == _items.Count
             && scanned.All(i => previous.TryGetValue(i.Path, out var old) && old.Size == i.Size && old.Modified == i.Modified
                 && old.IsOnlineOnly == i.IsOnlineOnly);
-        if (unchanged) return;
+        if (unchanged)
+        {
+            // A first scan that found what's already listed still finishes loading.
+            IsLoading = false;
+            return;
+        }
         _items = scanned;
         IsLoading = false;
         var before = CurrentSource;
@@ -766,7 +771,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     /// wait here for a quiet caption write to finish; they're never refused because of one.</summary>
     private readonly SemaphoreSlim _writeGate = new(1, 1);
 
-    /// <summary>Files being written quietly, and until when changes to them are Photo Finder's own. Only those files are
+    /// <summary>Files being written quietly, and until when changes to them are My Photo Library Described's own. Only those files are
     /// ignored, so the watcher still notices everything else while captions are written in the background.</summary>
     private readonly Dictionary<string, DateTime> _ownChanges = new(StringComparer.OrdinalIgnoreCase);
     private bool _missedDiskChange;
@@ -896,7 +901,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    /// <summary>Files Photo Finder changed, so the view can drop their old thumbnails.</summary>
+    /// <summary>Files My Photo Library Described changed, so the view can drop their old thumbnails.</summary>
     public event Action<IReadOnlyList<string>>? FilesChanged;
 
     // MARK: Folders
@@ -924,10 +929,22 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     public string? BackgroundProgress
     {
         get => _backgroundProgress;
-        set { _backgroundProgress = value; OnPropertyChanged(); OnStatusChanged(); }
+        set { _backgroundProgress = value; _backgroundProblem = false; OnPropertyChanged(); OnStatusChanged(); }
     }
 
-    /// <summary>Takes a folder out of Photo Finder's library. Nothing on disk changes.</summary>
+    private bool _backgroundProblem;
+
+    /// <summary>Why background describing isn't working, shown where its progress goes, but without the busy indicator,
+    /// since nothing is going on. Replaced by the next progress, and cleared by turning it off.</summary>
+    public void ShowBackgroundProblem(string text)
+    {
+        _backgroundProgress = text;
+        _backgroundProblem = true;
+        OnPropertyChanged(nameof(BackgroundProgress));
+        OnStatusChanged();
+    }
+
+    /// <summary>Takes a folder out of My Photo Library Described's library. Nothing on disk changes.</summary>
     public async Task RemoveFolderAsync(string root)
     {
         if (_settings.ExtraFolders.RemoveAll(f => f.Equals(root, StringComparison.OrdinalIgnoreCase)) == 0)
@@ -1006,7 +1023,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         _ui ??= SynchronizationContext.Current;
         _ui?.Post(_ =>
         {
-            // A caption Photo Finder is writing from a description: its own change, not an outside edit.
+            // A caption My Photo Library Described is writing from a description: its own change, not an outside edit.
             if (_ownChanges.TryGetValue(e.FullPath, out var until))
             {
                 if (DateTime.UtcNow < until) return;
@@ -1071,6 +1088,37 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         Announcer.Announce($"{Rows[next].Name}, {next + 1} of {Rows.Count}");
     }
 
+    /// <summary>How much of the library is described (#119): its photos (not videos), and how many have a saved description
+    /// of the Description Type in use. Null while the library is still loading. In memory, so quick even for a large
+    /// library.</summary>
+    public (int Described, int Total)? DescriptionCoverage()
+    {
+        if (Descriptions is not { } store || IsLoading) return null;
+        var kind = _settings.DescriptionKind;
+        var photos = _items.Where(i => i.Kind == MediaKind.Image).ToList();
+        return (photos.Count(p => store.Get(p, kind) is not null), photos.Count);
+    }
+
+    /// <summary>Go > Next Photo and Previous Photo (#119): the next or previous photo in the list or gallery, past folders
+    /// and videos (either would take the Description panel's text box away, and focus with it), without moving focus. So
+    /// you can stay in the description box (reading with a braille display, say) and step from photo to photo: the box
+    /// shows each one's description, to read there (automatic describing speaks only from the list or gallery). Says
+    /// "name, n of N", or "No next photo" at the end, as on the Mac.</summary>
+    /// <param name="announce">False when focus is on the list, which says the new row itself.</param>
+    public void StepPhoto(int direction, bool announce = true)
+    {
+        if (Rows.Count == 0) { Beep(); return; }
+        var index = FocusedIndex < 0 ? (direction > 0 ? 0 : Rows.Count - 1) : FocusedIndex + direction;
+        while (index >= 0 && index < Rows.Count && Rows[index].Item is not { IsVideo: false }) index += direction;
+        if (index < 0 || index >= Rows.Count)
+        {
+            Announcer.Announce(direction > 0 ? "No next photo" : "No previous photo");
+            return;
+        }
+        SelectionRequested?.Invoke([Rows[index].Id], false);
+        if (announce) Announcer.Announce($"{Rows[index].Name}, {index + 1} of {Rows.Count}");
+    }
+
     // MARK: Helpers
 
     public static string CountText(int count) => count == 1 ? "1 item" : $"{count:N0} items";
@@ -1088,7 +1136,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     public void SaveSettings() => _settings.Save(_settingsPath);
 
-    /// <summary>Saves the photo details and descriptions now, as closing does: before an update closes Photo Finder.</summary>
+    /// <summary>Saves the photo details and descriptions now, as closing does: before an update closes My Photo Library Described.</summary>
     public void SaveCaches()
     {
         _cache.Save();

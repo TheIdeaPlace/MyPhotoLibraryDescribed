@@ -180,7 +180,7 @@ public class WindowsAIProtocolTests
     [Fact]
     public async Task Retries_GiveUpWithTheLastInternalError()
     {
-        var ex = await Assert.ThrowsAsync<DescriptionException>(() => WindowsAI.WithRetriesAsync(
+        var ex = await Assert.ThrowsAsync<DescriptionException>(() => WindowsAI.WithRetriesAsync<string>(
             _ => Task.FromResult(new byte[] { 1 }),
             _ => throw new DescriptionException("internal_error", "still broken")));
         Assert.Equal("still broken", ex.Message);
@@ -190,21 +190,21 @@ public class WindowsAIProtocolTests
     public async Task Retries_DontRetryOtherFailures()
     {
         var calls = 0;
-        await Assert.ThrowsAsync<DescriptionException>(() => WindowsAI.WithRetriesAsync(
+        await Assert.ThrowsAsync<DescriptionException>(() => WindowsAI.WithRetriesAsync<string>(
             _ => Task.FromResult(new byte[] { 1 }),
             _ => { calls++; throw new DescriptionException("content_filtered", "no"); }));
         Assert.Equal(1, calls);
     }
 }
 
-/// <summary>The real thing: only runs where the Photo Finder AI helper is installed and Windows' model is usable
+/// <summary>The real thing: only runs where the My Photo Library Described AI helper is installed and Windows' model is usable
 /// (a Copilot+ PC with the helper registered). Everywhere else it reports itself skipped.</summary>
 public class WindowsAIIntegrationTests
 {
     [Fact]
     public async Task DescribesARealPhoto()
     {
-        Assert.SkipUnless(WindowsAI.IsInstalled, "The Photo Finder AI helper isn't installed here.");
+        Assert.SkipUnless(WindowsAI.IsInstalled, "The My Photo Library Described AI helper isn't installed here.");
         var readiness = await WindowsAI.CheckAsync(TestContext.Current.CancellationToken);
         Assert.SkipUnless(readiness.State == "Ready", $"Windows' model isn't ready here: {readiness.State} {readiness.Message}");
 

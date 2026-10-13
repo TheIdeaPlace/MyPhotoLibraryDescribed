@@ -40,6 +40,20 @@ enum Updates {
         .max { isNewer($1.version, than: $0.version) }
     }
 
+    static let foundVersionKey = "availableUpdateVersion", foundPageKey = "availableUpdatePage"
+
+    /// The update found earlier, if it's still newer than what's running (once it's installed, it's forgotten).
+    static func remembered(running: String, in defaults: UserDefaults) -> Release? {
+        guard let version = defaults.string(forKey: foundVersionKey), isNewer(version, than: running),
+              let page = defaults.string(forKey: foundPageKey).flatMap(URL.init(string:)) else { return nil }
+        return Release(version: version, page: page)
+    }
+
+    static func remember(_ release: Release?, in defaults: UserDefaults) {
+        defaults.set(release?.version, forKey: foundVersionKey)
+        defaults.set(release?.page.absoluteString, forKey: foundPageKey)
+    }
+
     /// Compares dotted versions number by number: 0.10.0 is newer than 0.9.1.
     static func isNewer(_ a: String, than b: String) -> Bool {
         let x = a.split(separator: ".").map { Int($0) ?? 0 }, y = b.split(separator: ".").map { Int($0) ?? 0 }

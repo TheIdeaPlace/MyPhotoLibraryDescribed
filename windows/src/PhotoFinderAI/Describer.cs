@@ -56,6 +56,21 @@ public sealed class Describer : IDisposable
 
     public static string ReadyState() => ImageDescriptionGenerator.GetReadyState().ToString();
 
+    /// <summary>The ready state of Windows' other AI features, for My Photo Library Described's Check System: text recognition, and
+    /// Phi Silica (the language model, which Windows lets an app use only with Microsoft's permission). A feature that
+    /// can't be asked says why, briefly.</summary>
+    public static Dictionary<string, string> OtherStates() => new()
+    {
+        ["textRecognition"] = StateOf(() => TextRecognizer.GetReadyState().ToString()),
+        ["languageModel"] = StateOf(() => LanguageModel.GetReadyState().ToString()),
+    };
+
+    private static string StateOf(Func<string> read)
+    {
+        try { return read(); }
+        catch (Exception ex) { return $"Unavailable ({ex.GetType().Name}, 0x{ex.HResult:X8})"; }
+    }
+
     /// <summary>Makes the model ready, downloading it the first time if Windows needs to.
     /// Returns null when ready, or the failure code and message.</summary>
     public static async Task<(string Code, string Message)?> PrepareAsync()

@@ -63,6 +63,7 @@ public partial class MainWindow : Window
         BuildKindMenu();
         ReadOnlyItem.IsChecked = model.IsReadOnly;
         ShowSaveInPhotos();
+        PlaceNamesItem.IsChecked = model.Settings.LookUpPlaceNames;
         // Ctrl+F9 from Preview and Get Info too, which are modal over this window.
         if (!_statusKeyRegistered)
         {
@@ -104,6 +105,8 @@ public partial class MainWindow : Window
             }
             UpdateEmptyText();
             FocusContent();
+            // Background describing picks up where it left off: the library's photos not described yet (#96).
+            BackgroundDescriber?.Resume();
             // Once the library is showing and focus is on it: say so if this is the first launch after an update. Closing
             // that puts focus back on the photo.
             _ = Dispatcher.BeginInvoke(() =>
@@ -153,9 +156,11 @@ public partial class MainWindow : Window
         Bind(AppCommands.GetInfo, ShowInfo, HasFiles);
         // Available on any row, so the shortcut on a folder or video says why it can't, rather than nothing.
         Bind(AppCommands.DescribePhoto, () => DescribePhoto(again: false), () => _model.FocusedRow is not null);
-        // Not while typing: Ctrl+Alt+Shift+D is AltGr+Shift+D, which types a character on some keyboard layouts (Ð on
-        // US-International), and the search box should get it.
-        Bind(AppCommands.DescribeAgain, () => DescribePhoto(again: true), () => _model.FocusedRow is not null && !IsTyping());
+        Bind(AppCommands.Redescribe, () => DescribePhoto(again: true), () => _model.FocusedRow is not null);
+        Bind(AppCommands.GoToDescription, GoToDescriptionOrBack);
+        // The list says the row it lands on; anywhere else (the description box, the gallery) it's said for you.
+        Bind(AppCommands.NextPhoto, () => _model.StepPhoto(1, announce: !FileList.IsKeyboardFocusWithin));
+        Bind(AppCommands.PreviousPhoto, () => _model.StepPhoto(-1, announce: !FileList.IsKeyboardFocusWithin));
         Bind(AppCommands.ShowInExplorer, () => _model.ShowInExplorer(), () => _model.SelectedRows.Any(r => r.Item is not null || r.Container?.FolderPath is not null));
         Bind(AppCommands.Export, ExportSelection, HasFiles);
         Bind(AppCommands.AddFolder, AddFolder);
@@ -174,11 +179,26 @@ public partial class MainWindow : Window
         Bind(AppCommands.ToggleFavorite, () => { if (CanChangePhotos() && (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite"))) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, () => EditCaption(), HasFiles);
         Bind(AppCommands.ReadStatusBar, ReadStatusBar);
+        Bind(AppCommands.OpenLogFolder, () =>
+        {
+            try
+            {
+                Directory.CreateDirectory(Services.Log.Folder);
+                OpenUrl(Services.Log.Folder);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                ShowError($"File Explorer couldn't open the log folder. It's at {Services.Log.Folder}.");
+            }
+        });
         Bind(AppCommands.GoToStatusBar, FocusStatusBar);
         Bind(AppCommands.UseDescriptionAsCaption, () => _model.Fire(UseDescriptionAsCaptionAsync(_model.SelectedRows)), HasFiles);
         Bind(AppCommands.About, ShowAbout);
         Bind(AppCommands.CheckForUpdates, CheckForUpdates);
         Bind(AppCommands.CheckSystem, ShowCheckSystem);
+        Bind(AppCommands.CheckAIDescription, ShowCheckAIDescription);
+        Bind(AppCommands.UserGuide, () => OpenInBrowser(AppInfo.UserGuideUrl, "The user guide is"));
+        Bind(AppCommands.PrivacyPolicy, () => OpenInBrowser(AppInfo.PrivacyPolicyUrl, "The privacy policy is"));
         Bind(AppCommands.ReportBug, () => ReportBug(null));
         Bind(AppCommands.ChooseColumns, ChooseColumns);
         Bind(AppCommands.ShowDescription, () => ShowDescriptionPanel(!_model.Settings.ShowDescriptionPanel, announce: true));
@@ -324,6 +344,23 @@ public partial class MainWindow : Window
     /// once. Asking is the permission to change their photos; when on, only empty captions and alt text are filled.</summary>
     private void SaveInPhotos_Click(object sender, RoutedEventArgs e) => SetSaveInPhotos(!_model.Settings.SaveDescriptionsInPhotos);
 
+    private void PlaceNames_Click(object sender, RoutedEventArgs e) => SetLookUpPlaceNames(!_model.Settings.LookUpPlaceNames);
+
+    /// <summary>Photo > Look Up Place Names (#25): turning it on says what's sent and to whom, first, as on the Mac.</summary>
+    internal void SetLookUpPlaceNames(bool on)
+    {
+        if (on && !QuestionDialog.Ask(ActiveWindow, "Look Up Place Names", Services.PlaceNames.Question, Services.PlaceNames.Explanation,
+                "Look Up Place Names"))
+        {
+            PlaceNamesItem.IsChecked = false;
+            return;
+        }
+        _model.Settings.LookUpPlaceNames = on;
+        _model.SaveSettings();
+        PlaceNamesItem.IsChecked = on;
+        Services.Announcer.AnnounceAfter(on ? "Get Info looks up place names" : "Place names aren't looked up", "PhotoFinderSetting");
+    }
+
     /// <summary>"caption", "caption and alt text", "caption, alt text and extended description".</summary>
     private static string Joined(IReadOnlyList<string> items) =>
         items.Count <= 1 ? string.Concat(items) : $"{string.Join(", ", items.Take(items.Count - 1))} and {items[^1]}";
@@ -345,7 +382,7 @@ public partial class MainWindow : Window
         }
         _model.Settings.SaveDescriptionsInPhotos = on;
         _model.SaveSettings();
-        SaveInPhotosItem.IsChecked = on;
+        ShowSaveInPhotos();
         // Queued behind the menu closing and focus returning to the list, so it isn't cut off.
         Services.Announcer.AnnounceAfter(on ? "New descriptions are saved in your photos" : "Descriptions aren't saved in your photos", "PhotoFinderSetting");
     }
@@ -489,11 +526,11 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>"Pictures - Photo Finder - Read-Only", or "- Editing" once changes to photos are allowed (#83), so it's
+    /// <summary>"Pictures - My Photo Library Described - Read-Only Mode", or "- Editing Mode" once changes to photos are allowed (#83, #119), so it's
     /// heard with the window's name.</summary>
     private void UpdateTitle()
     {
-        var mode = _model.IsReadOnly ? "Read-Only" : "Editing";
+        var mode = _model.IsReadOnly ? "Read-Only Mode" : "Editing Mode";
         Title = _model.CurrentSource is null ? $"{AppInfo.Name} - {mode}" : $"{_model.Title} - {AppInfo.Name} - {mode}";
     }
 
@@ -512,10 +549,10 @@ public partial class MainWindow : Window
 
     internal void SetReadOnly(bool on)
     {
-        // Keep Read-Only is the default and has focus: Enter alone never turns the protection off.
+        // Keep Read-Only Mode is the default and has focus: Enter alone never turns the protection off.
         if (!on && !QuestionDialog.AskSafely(ActiveWindow, "Allow Changes to Photos", $"Let {AppInfo.Name} change your photos?",
-                $"{AppInfo.Name} will be able to write captions, alt text and ratings into your photo files, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to read-only at any time.",
-                "Allow Changes", "Keep Read-Only"))
+                $"{AppInfo.Name} will be able to write captions, alt text and ratings into your photo files, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to Read-Only Mode at any time.",
+                "Allow Changes", "Keep Read-Only Mode"))
         {
             ReadOnlyItem.IsChecked = true;
             return;
@@ -524,7 +561,7 @@ public partial class MainWindow : Window
         ReadOnlyItem.IsChecked = on;
         // Queued behind the menu closing and focus returning, so it isn't cut off.
         ShowSaveInPhotos();
-        Services.Announcer.AnnounceAfter(on ? "Read-only. Photos won't be changed" : $"Editing. {AppInfo.Name} can change your photos", "PhotoFinderSetting");
+        Services.Announcer.AnnounceAfter(on ? "Read-Only Mode. Photos won't be changed" : "Editing Mode. Photos can be changed", "PhotoFinderSetting");
     }
 
     /// <summary>Save Descriptions in Photos reads as checked only when it's working: while read-only it's paused (the
@@ -532,8 +569,9 @@ public partial class MainWindow : Window
     private void ShowSaveInPhotos()
     {
         SaveInPhotosItem.IsChecked = _model.Settings.SaveDescriptionsInPhotos && !_model.IsReadOnly;
-        AutomationProperties.SetHelpText(SaveInPhotosItem,
-            _model.Settings.SaveDescriptionsInPhotos && _model.IsReadOnly ? "Paused while read-only" : "");
+        // In its name, as on the Mac, so it's read with the item rather than only as a hint.
+        SaveInPhotosItem.Header = _model.Settings.SaveDescriptionsInPhotos && _model.IsReadOnly
+            ? "Save Descriptions _in Photos (Paused in Read-Only Mode)" : "Save Descriptions _in Photos";
     }
 
     private void UpdateEmptyText()
@@ -771,7 +809,7 @@ public partial class MainWindow : Window
     private void SetUpDescriptionPanel()
     {
         DescriptionPanel.Attach(_model, () => AutoDescriber);
-        DescriptionPanel.DescribeAgain = () => DescribePhoto(again: true);
+        DescriptionPanel.Redescribe = () => DescribePhoto(again: true);
         DescriptionPanel.UseAsCaption = row => _model.Fire(UseDescriptionAsCaptionAsync([row]));
         // The panel's photo only, and back to its Edit Caption button afterwards.
         DescriptionPanel.EditCaption = (row, refocus) => EditCaption([row], refocus);
@@ -804,6 +842,20 @@ public partial class MainWindow : Window
         PanelColumn.Width = show ? new GridLength(Math.Clamp(_model.Settings.DescriptionPanelWidth, 200, 800)) : new GridLength(0);
         if (_galleryRow is not null) ShowGalleryDescription(_galleryRow);
         if (announce) Services.Announcer.Announce(show ? "Description panel shown" : "Description panel hidden");
+    }
+
+    /// <summary>Go > Go to Description or Back to Photos (Ctrl+Shift+D, #119): to the Description panel's text box,
+    /// showing the panel if it's hidden; pressed in the panel, back to the list or gallery.</summary>
+    internal void GoToDescriptionOrBack()
+    {
+        if (DescriptionPanel.IsKeyboardFocusWithin)
+        {
+            FocusContent();
+            return;
+        }
+        if (!DescriptionPanel.IsVisible) ShowDescriptionPanel(true, announce: false);
+        // Once it's laid out: a panel just shown can't take focus yet.
+        Dispatcher.BeginInvoke(DescriptionPanel.FocusFirst, System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     private void RememberPanelWidth()
@@ -883,6 +935,7 @@ public partial class MainWindow : Window
         // The list stays in the tree, hidden, so its selection is still the gallery's position.
         FileList.Visibility = gallery ? Visibility.Hidden : Visibility.Visible;
         GalleryPanel.Visibility = gallery ? Visibility.Visible : Visibility.Collapsed;
+        DescriptionPanel.ShowsPreview = !gallery;
         UpdateEmptyText();
         if (gallery)
         {
@@ -1021,17 +1074,22 @@ public partial class MainWindow : Window
         FocusContent();
     }
 
-    /// <summary>Keyboard focus is in a box you can type in.</summary>
-    internal static bool IsTyping() => Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase { IsReadOnly: false };
-
     private void DescribePhoto(bool again)
     {
         if (_model.FocusedRow is not { } row) return;
+        // Ctrl+D or Ctrl+R pressed while correcting the description: the correction is saved first, as the panel's own
+        // button does, so it's what Describe Photo says and what Redescribe asks before replacing.
+        DescriptionPanel.SaveIfChanged();
         _ = DescribeRowAsync(row, () => IsActive && _model.FocusedRow == row, again, this);
     }
 
-    /// <summary>Describe Photo or Describe Again, from here or Preview. Describe Again on a description the person
-    /// corrected asks first, as on the Mac.</summary>
+    /// <summary>Redescribe on a description the person corrected: asks first, as on the Mac, with Cancel the default.</summary>
+    internal static bool AskToReplaceEdit(Window owner, string name) =>
+        QuestionDialog.AskSafely(owner, "Redescribe", "Replace the description you edited?",
+            $"{name} will be described again, and the new description replaces yours.", "Redescribe", "Cancel");
+
+    /// <summary>Describe Photo or Redescribe, from here or Preview. Redescribe on a description the person corrected
+    /// asks first, as on the Mac.</summary>
     internal Task DescribeRowAsync(FileRow row, Func<bool> stillOn, bool again, Window owner)
     {
         if (AutoDescriber is null)
@@ -1045,9 +1103,7 @@ public partial class MainWindow : Window
         var kind = _model.Settings.DescriptionKind;
         if (again && row.Item is { } item && _model.Descriptions?.IsEdited(item, kind) == true)
         {
-            if (MessageBox.Show(owner, "Replace the description you edited?", "Describe Again", MessageBoxButton.YesNo,
-                    MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
-                return Task.CompletedTask;
+            if (!AskToReplaceEdit(owner, row.Name)) return Task.CompletedTask;
             // The correction agreed to; one typed after this is still kept.
             replacing = _model.Descriptions.Get(item, kind);
         }
@@ -1200,7 +1256,7 @@ public partial class MainWindow : Window
         Found(state, version);
     }
 
-    /// <summary>The first launch after an update: "Photo Finder Update Installed", with See what's new, as the apps' shared
+    /// <summary>The first launch after an update: "My Photo Library Described Update Installed", with See what's new, as the apps' shared
     /// update experience asks. Only for installed copies, and not on a first run or after going back to an older version.
     /// OK is the default, so Enter and Escape close it. True when it was shown.</summary>
     internal bool SayIfJustUpdated()
@@ -1223,7 +1279,7 @@ public partial class MainWindow : Window
             : AppInfo.ReleaseNotesUrl(Services.Updates.ShortVersion(current));
         if (QuestionDialog.AskSafely(this, $"{AppInfo.Name} Update Installed", $"{AppInfo.Name} is now version {shown}.",
                 "See what's new opens the release notes in your browser.", "_See what's new", "OK"))
-            OpenInBrowser(notes, "The release notes");
+            OpenInBrowser(notes, "The release notes are");
         return true;
     }
 
@@ -1239,7 +1295,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            ShowError($"The browser couldn't be opened. {what} are at {url}.");
+            ShowError($"The browser couldn't be opened. {what} at {url}.");
             return false;
         }
     }
@@ -1295,7 +1351,7 @@ public partial class MainWindow : Window
         if (MessageBox.Show(this, $"A new version of {AppInfo.Name} is available. Install it now? {AppInfo.Name} closes, updates, and opens again.",
                 "Check for Updates", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes) != MessageBoxResult.Yes)
             return;
-        // Windows closes Photo Finder itself to install, without the usual closing steps, so nothing may be half written.
+        // Windows closes My Photo Library Described itself to install, without the usual closing steps, so nothing may be half written.
         if (_model.IsWriting)
         {
             MessageBox.Show(this, $"{AppInfo.Name} is still saving changes to your photos. Check for updates again when it's finished.",
@@ -1321,20 +1377,39 @@ public partial class MainWindow : Window
         var npu = Services.SystemCheck.FindNpuAsync();
         // A disconnected network folder can take many seconds to answer.
         var missing = Task.Run(() => folders.Where(f => !Directory.Exists(f)).ToList(), cancel);
-        await Task.WhenAll(readiness, npu, missing);
+        var driver = Services.SystemDetails.NpuDriverAsync();
+        var details = os.Build >= Services.SystemCheck.MinimumBuild ? Services.WindowsAI.DetailsAsync(cancel) : Task.FromResult<Services.AIReadiness?>(null);
+        // Windows lists every package on the PC, which takes a moment.
+        var packages = Task.Run(Services.SystemDetails.AIPackages, cancel);
+        await Task.WhenAll(readiness, npu, missing, driver, packages, details);
         cancel.ThrowIfCancellationRequested();
+        var stats = Services.DescribeStats.Session;
         return new Services.SystemCheck(new Services.SystemCheck.Facts
         {
             AppVersion = Services.Updates.AppVersion,
             UpdatesItself = Services.Updates.UpdatesItself,
             OsVersion = os,
             Npu = npu.Result,
-            Readiness = readiness.Result,
+            Readiness = readiness.Result is { } r && details.Result is { } d
+                ? r with { Components = d.Components, HelperVersion = r.HelperVersion ?? d.HelperVersion, Protocol = r.Protocol ?? d.Protocol }
+                : readiness.Result,
             LibraryFolders = folders,
             MissingFolders = missing.Result,
             SavedDescriptions = _model.Descriptions?.PhotoCount ?? 0,
+            LibraryCoverage = _model.DescriptionCoverage(),
             DescribeAutomatically = AutoDescriber?.Enabled ?? false,
             DescribeInBackground = BackgroundDescriber?.Enabled ?? false,
+            WindowsEdition = Services.SystemDetails.WindowsEdition(),
+            Processor = Services.SystemDetails.Processor(),
+            Memory = Services.SystemDetails.Memory(),
+            Power = Services.SystemDetails.Power(),
+            NpuDriver = driver.Result,
+            PackageName = Services.SystemDetails.PackageName(),
+            AppRuntime = Services.SystemDetails.AppRuntime(),
+            AIPackages = packages.Result,
+            DescribeTimings = stats.Timings(),
+            RecentFailures = stats.RecentFailures(),
+            AIDescriptionCheck = _lastAICheck?.ReportSummary,
         });
     }
 
@@ -1344,12 +1419,46 @@ public partial class MainWindow : Window
         FocusContent();
     }
 
+    /// <summary>Check AI Description's last result this session, for Check System and Report a Bug.</summary>
+    private Services.AIDescriptionCheck? _lastAICheck;
+
+    /// <summary>Describes the sample picture with the description type in use; the helper is passed in so tests can
+    /// stand in for Windows AI.</summary>
+    internal Services.AIDescriptionCheck.DescribeFunc DescribeSample { get; set; } =
+        // Closing the window gives it up only until it's sent: stopping the helper after that would mean a model reload
+        // for the next description. Sent once: the sample is the same picture at every size.
+        (jpegAtSize, kind, cancel) => App.WindowsAI.DescribeAsync(jpegAtSize, kind, drop: cancel, retry: false);
+
+    internal Func<CancellationToken, Task<Services.AIReadiness>> CheckAI { get; set; } = Services.WindowsAI.CheckAsync;
+
+    internal async Task<Services.AIDescriptionCheck> RunAIDescriptionCheckAsync(CancellationToken cancel = default)
+    {
+        var readiness = await CheckAI(cancel);
+        var result = await Services.AIDescriptionCheck.RunAsync(DescribeSample, _model.Settings.DescriptionKind, readiness, cancel);
+        _lastAICheck = result;
+        Services.Log.Write("describe", $"Check AI Description: {result.ReportSummary}");
+        return result;
+    }
+
+    private void ShowCheckAIDescription()
+    {
+        CreateAIDescriptionWindow().ShowDialog();
+        FocusContent();
+    }
+
+    internal CheckSystemWindow CreateAIDescriptionWindow() =>
+        new("Check AI Description", "Describing the sample photo…", "Redescri_be", "Result", readsResult: true,
+            async cancel => await RunAIDescriptionCheckAsync(cancel), r => ReportBugWith(null, r as Services.AIDescriptionCheck)) { Owner = this };
+
     private bool _reporting;
 
     /// <summary>Help > Report a Bug…: a new GitHub issue in the browser, prefilled with the questions and the system
     /// check, and the same text on the clipboard, as on the Mac. Until the app kit's relay is set up (#33). The report
     /// leaves out folder paths, since an issue is public.</summary>
-    private async void ReportBug(Services.SystemCheck? check)
+    private void ReportBug(Services.SystemCheck? check) => ReportBugWith(check, null);
+
+    /// <param name="aiCheck">Check AI Description's whole result, when the report starts there.</param>
+    private async void ReportBugWith(Services.SystemCheck? check, Services.AIDescriptionCheck? aiCheck)
     {
         if (_reporting)
         {
@@ -1364,7 +1473,8 @@ public partial class MainWindow : Window
                 Services.Announcer.Announce("Preparing a bug report");
                 check = await RunSystemCheckAsync();
             }
-            var body = Services.BugReport.Body(check.ReportText);
+            var body = Services.BugReport.Body(check.ReportText +
+                (aiCheck is null ? "" : $"{Environment.NewLine}{Environment.NewLine}Check AI Description: {aiCheck.ReportText}"));
             var copied = false;
             try
             {

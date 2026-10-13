@@ -24,13 +24,16 @@ public sealed class Settings
     public string DescriptionKind { get; set; } = "accessible";
     /// <summary>Describe each photo with Windows AI when it's arrowed to, and speak the description.</summary>
     public bool AutoDescribe { get; set; } = true;
-    /// <summary>Describe the photos in a folder, behind the scenes, when it's added to the library.</summary>
+    /// <summary>Describe the library's photos behind the scenes (#96): all not described yet, and folders as they're added.</summary>
     public bool DescribeInBackground { get; set; }
     /// <summary>Photo > Save Descriptions in Photos (#62): each new description is also saved in the photo, filling its
     /// caption and alt text when they're empty. Off until the person agrees once.</summary>
     public bool SaveDescriptionsInPhotos { get; set; }
+    /// <summary>Photo > Look Up Place Names (#25): Get Info names the place a photo was taken, which sends its coordinates
+    /// to OpenStreetMap's Nominatim. Off until the person agrees once.</summary>
+    public bool LookUpPlaceNames { get; set; }
     /// <summary>File > Read-Only (#83): nothing changes a photo file while it's on. Every launch starts read-only (Kelly,
-    /// 12 Oct): allowing changes lasts until Photo Finder quits, so it's never saved.</summary>
+    /// 12 Oct): allowing changes lasts until My Photo Library Described quits, so it's never saved.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public bool ReadOnly { get; set; } = true;
 

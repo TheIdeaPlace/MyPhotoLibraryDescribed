@@ -24,6 +24,27 @@ struct BrowserView: View {
     /// Where F6 is taking you in the status bar, while its sections become focusable.
     @State private var pendingStatusFocus: Pane?
 
+    /// Moves focus into the status bar once its sections can take it: a few tries, a moment apart, stopping as soon
+    /// as focus is there or another move (F6 again, a click) replaced this one.
+    private func focusStatusBar(_ target: Pane) {
+        Task { @MainActor in
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .milliseconds(30))
+                guard pendingStatusFocus == target else { return }
+                // Again each time: a try SwiftUI turned down counts as leaving the status bar, which makes it
+                // unfocusable.
+                model.statusBarReachable = true
+                pane = target
+                try? await Task.sleep(for: .milliseconds(30))
+                if pane == target { break }
+            }
+            guard pendingStatusFocus == target else { return }
+            pendingStatusFocus = nil
+            // It never took: out of the Tab order again.
+            if case .status? = pane {} else { model.statusBarReachable = false }
+        }
+    }
+
     var body: some View {
         @Bindable var model = model
         NavigationSplitView {
@@ -42,7 +63,7 @@ struct BrowserView: View {
                     .inspectorColumnWidth(min: 220, ideal: 300, max: 520)
             }
         }
-        .navigationTitle(model.currentTitle)
+        .navigationTitle(model.windowTitle)
         .navigationSubtitle(model.statusText)
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search names, kinds and dates")
         .searchFocused($searchFocused)
@@ -50,28 +71,39 @@ struct BrowserView: View {
         // Go > Next Pane (F6) and Previous Pane (Shift-F6): sidebar, list or gallery, Description, Search, status bar,
         // and round.
         .onChange(of: model.paneRequest) {
-            let target = Pane.next(from: searchFocused ? .search : pane, by: model.paneRequest.direction,
-                                   showingDescription: model.showDescriptionPanel)
+            let toggled: Pane? = model.paneRequest.toggleDescription ? (pane == .description ? .content : .description) : nil
+            let target = toggled ?? model.paneRequest.target ?? Pane.next(from: searchFocused ? .search : pane,
+                                                               by: model.paneRequest.direction,
+                                                               showingDescription: model.showDescriptionPanel)
             if target == .search {
+                pendingStatusFocus = nil
                 searchFocused = true
             } else if case .status = target {
                 searchFocused = false
-                if model.statusBarReachable {
-                    pane = target
-                } else {
-                    // Focusable first; focus moves once SwiftUI has made the sections focus targets (onChange below).
-                    pendingStatusFocus = target
-                    model.statusBarReachable = true
-                }
+                // Focusable first, then focus moves once SwiftUI has made the sections focus targets. Setting focus in
+                // the same update did nothing (Kelly, 13 Oct: F6 never reached the status bar), so it's set a moment
+                // later and again until it takes.
+                model.statusBarReachable = true
+                pendingStatusFocus = target
+                focusStatusBar(target)
             } else {
+                pendingStatusFocus = nil
                 searchFocused = false
                 pane = target
+                // The Description panel may only just be appearing (Shift-Command-D shows it): tried again a
+                // moment later if focus didn't take.
+                if target == .description {
+                    let serial = model.paneRequest.serial
+                    Task { @MainActor in
+                        for _ in 0..<5 where pane != .description {
+                            try? await Task.sleep(for: .milliseconds(50))
+                            // Another move (F6, Shift-Command-D again) since: that one wins.
+                            guard model.paneRequest.serial == serial else { return }
+                            pane = .description
+                        }
+                    }
+                }
             }
-        }
-        .onChange(of: model.statusBarReachable) {
-            guard model.statusBarReachable, let target = pendingStatusFocus else { return }
-            pendingStatusFocus = nil
-            pane = target
         }
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .sheet(item: $model.infoTarget) { InfoView(target: $0) }
@@ -158,46 +190,50 @@ struct FileListView: View {
         @Bindable var model = model
         // Built from the chosen columns, in the chosen order (View > Columns), which is also the order
         // VoiceOver reads a row's cells in.
-        Table(of: FileRow.self, selection: $model.selection, sortOrder: $model.sortOrder) {
-            TableColumnForEach(model.shownColumns) { column in
-                TableColumn(column.title, sortUsing: ColumnOrder.comparator(column.id)) { (row: FileRow) in
-                    cell(column.id, row)
+        ScrollViewReader { proxy in
+            Table(of: FileRow.self, selection: $model.selection, sortOrder: $model.sortOrder) {
+                TableColumnForEach(model.shownColumns) { column in
+                    TableColumn(column.title, sortUsing: ColumnOrder.comparator(column.id)) { (row: FileRow) in
+                        cell(column.id, row)
+                    }
+                    .width(min: ColumnOrder.width(column.id).min, ideal: ColumnOrder.width(column.id).ideal)
                 }
-                .width(min: ColumnOrder.width(column.id).min, ideal: ColumnOrder.width(column.id).ideal)
+            } rows: {
+                ForEach(model.visibleRows) { row in
+                    TableRow(row)
+                        .itemProvider { model.itemProvider(for: row) }
+                }
             }
-        } rows: {
-            ForEach(model.visibleRows) { row in
-                TableRow(row)
-                    .itemProvider { model.itemProvider(for: row) }
+            .contextMenu(forSelectionType: String.self) { ids in
+                if !ids.isEmpty {
+                    Button("Open") { model.open(ids) }
+                    Button("Quick Look") { model.quickLook(ids) }
+                    Button("Get Info") { model.showInfo(ids) }
+                    Button("Edit Caption…") { model.editCaption(ids) }
+                    Divider()
+                    Button("Copy") { model.copySelection(ids) }
+                    Button("Export…") { model.exportSelection(ids) }
+                    Divider()
+                    Button("Toggle Favorite") { model.toggleFavorite(ids) }
+                }
+            } primaryAction: { ids in
+                model.open(ids)
             }
-        }
-        .contextMenu(forSelectionType: String.self) { ids in
-            if !ids.isEmpty {
-                Button("Open") { model.open(ids) }
-                Button("Quick Look") { model.quickLook(ids) }
-                Button("Get Info") { model.showInfo(ids) }
-                Button("Edit Caption…") { model.editCaption(ids) }
-                Divider()
-                Button("Copy") { model.copySelection(ids) }
-                Button("Export…") { model.exportSelection(ids) }
-                Divider()
-                Button("Toggle Favorite") { model.toggleFavorite(ids) }
+            .onKeyPress(.space) {
+                model.quickLook()
+                return .handled
             }
-        } primaryAction: { ids in
-            model.open(ids)
+            .onKeyPress(.return) {
+                model.open()
+                return .handled
+            }
+            .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
+            .focused(pane, equals: .content)
+            .accessibilityLabel(model.currentTitle)
+            .overlay { emptyState }
+            // Next Photo and Previous Photo change the selection without the list: it's scrolled into view.
+            .onChange(of: model.scrollRequest) { if let id = model.scrollRequest.id { proxy.scrollTo(id) } }
         }
-        .onKeyPress(.space) {
-            model.quickLook()
-            return .handled
-        }
-        .onKeyPress(.return) {
-            model.open()
-            return .handled
-        }
-        .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
-        .focused(pane, equals: .content)
-        .accessibilityLabel(model.currentTitle)
-        .overlay { emptyState }
     }
 
     @ViewBuilder private func cell(_ column: String, _ row: FileRow) -> some View {
@@ -438,7 +474,7 @@ private struct StatusBar: View {
         switch section {
         case .status: model.statusText
         case .activity: model.activity ?? model.nameProgress
-        case .background: model.backgroundProgress
+        case .background: model.backgroundStatus
         }
     }
 
@@ -451,8 +487,10 @@ private struct StatusBar: View {
                     .accessibilityHidden(true)
             }
             ForEach(shown, id: \.self) { section in
+                // `.edit`: a view that only has `.activate` takes focus on macOS only with Keyboard navigation on, so
+                // this makes sure F6 can land here either way.
                 Text(text(section) ?? "")
-                    .focusable(model.statusBarReachable)
+                    .focusable(model.statusBarReachable, interactions: .edit)
                     .focused(pane, equals: .status(section))
             }
             Spacer()

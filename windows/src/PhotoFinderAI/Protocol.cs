@@ -1,4 +1,4 @@
-// The helper's protocol with Photo Finder. Plain C#, no Windows Runtime, so it is unit tested on any
+// The helper's protocol with My Photo Library Described. Plain C#, no Windows Runtime, so it is unit tested on any
 // machine (windows/tests/PhotoFinderAI.Tests), including CI runners with no NPU.
 //
 // Serve mode reads one JSON request per line on stdin and writes one JSON response per line on
@@ -11,7 +11,7 @@
 //   {"id": 7, "ok": true,  "kind": "accessible", "text": "...", "seconds": 2.41}
 //   {"id": 8, "ok": true,  "kind": "answer", "text": "...", "seconds": 1.10}
 //   {"id": 7, "ok": false, "code": "content_filtered", "message": "..."}
-// The codes are the contract; Photo Finder (Services/WindowsAI.cs) decides what each one means
+// The codes are the contract; My Photo Library Described (Services/WindowsAI.cs) decides what each one means
 // for the person. Bump Version if a field's meaning changes.
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -26,11 +26,11 @@ public static class Protocol
     /// <summary>The description kinds, in order: the first is the default.</summary>
     public static readonly string[] Kinds = ["accessible", "detailed", "brief", "diagram"];
 
-    /// <summary>What the image decoder is asked to read. Photo Finder converts everything to JPEG
+    /// <summary>What the image decoder is asked to read. My Photo Library Described converts everything to JPEG
     /// before it gets here.</summary>
     public static readonly string[] SupportedMimeTypes = ["image/jpeg", "image/png", "image/bmp", "image/gif", "image/tiff"];
 
-    /// <summary>Far larger than any picture Photo Finder sends (a JPEG at most 2048 pixels on a side), and small enough
+    /// <summary>Far larger than any picture My Photo Library Described sends (a JPEG at most 2048 pixels on a side), and small enough
     /// that the copies a request passes through on the way in stay a few hundred MB at most.</summary>
     public const int MaxImageBytes = 20 * 1024 * 1024;
 
@@ -247,7 +247,9 @@ public static class Protocol
         new JsonObject { ["id"] = id, ["ok"] = false, ["code"] = code, ["message"] = message }.ToJsonString(Readable);
 
     /// <summary>The readiness report for --check and --prepare.</summary>
-    public static string Readiness(bool identity, string state, string? message = null)
+    /// <param name="components">The ready state of Windows' other AI features ("textRecognition", "languageModel"), for
+    /// My Photo Library Described's Check System.</param>
+    public static string Readiness(bool identity, string state, string? message = null, IReadOnlyDictionary<string, string>? components = null)
     {
         var o = new JsonObject
         {
@@ -258,6 +260,12 @@ public static class Protocol
             ["kinds"] = new JsonArray(Kinds.Select(k => (JsonNode)k).ToArray()),
         };
         if (message is not null) o["message"] = message;
+        if (components is { Count: > 0 })
+        {
+            var parts = new JsonObject();
+            foreach (var (name, value) in components) parts[name] = value;
+            o["components"] = parts;
+        }
         return o.ToJsonString(Readable);
     }
 
@@ -297,7 +305,7 @@ public static class Protocol
     };
 }
 
-/// <summary>The failure codes. Photo Finder (Services/WindowsAI.cs) decides what each means for the person.</summary>
+/// <summary>The failure codes. My Photo Library Described (Services/WindowsAI.cs) decides what each means for the person.</summary>
 public static class Codes
 {
     public const string ContentFiltered = "content_filtered";

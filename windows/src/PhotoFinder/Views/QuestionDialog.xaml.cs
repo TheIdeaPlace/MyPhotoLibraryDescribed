@@ -6,7 +6,7 @@ namespace PhotoFinder.Views;
 /// <summary>A yes-or-cancel question whose yes button says what it does ("Save in Photos").</summary>
 public partial class QuestionDialog : Window
 {
-    /// <param name="keep">For a risky yes: the safe button's name ("Keep Read-Only"). It's then the default and has focus,
+    /// <param name="keep">For a risky yes: the safe button's name ("Keep Read-Only Mode"). It's then the default and has focus,
     /// so Enter, or a key held down, never says yes.</param>
     public QuestionDialog(string title, string question, string details, string yes, string? keep = null)
     {

@@ -66,6 +66,37 @@ final class ImageConversation {
         }
     }
 
+    /// Apple Intelligence's availability as the frameworks report it, for Check System's details (#94).
+    static var modelState: String {
+        switch SystemLanguageModel.default.availability {
+        case .available: "Available"
+        case .unavailable(.deviceNotEligible): "Not available (deviceNotEligible)"
+        case .unavailable(.appleIntelligenceNotEnabled): "Not available (appleIntelligenceNotEnabled)"
+        case .unavailable(.modelNotReady): "Not available (modelNotReady)"
+        case .unavailable(let reason): "Not available (\(reason))"
+        }
+    }
+
+    /// The language descriptions are asked in, and whether Apple Intelligence supports it, for Check System (#94).
+    static var languageText: String {
+        let locale = Locale.current
+        let name = locale.localizedString(forIdentifier: locale.identifier) ?? locale.identifier
+        return SystemLanguageModel.default.supportsLocale(locale) ? "\(name), supported"
+            : "\(name), not supported, so descriptions may fail"
+    }
+
+    /// A short name for what went wrong, for Check System's recent failures and bug reports: the error's case name
+    /// ("guardrailViolation"), or its domain and code.
+    static func failureCode(for error: Error) -> String {
+        if error is LanguageModelSession.GenerationError || error is LanguageModelError {
+            if let label = Mirror(reflecting: error).children.first?.label { return label }
+            let name = String(String(describing: error).prefix { $0 != "(" && $0 != " " })
+            if !name.isEmpty { return name }
+        }
+        let ns = error as NSError
+        return "\(ns.domain) \(ns.code)"
+    }
+
     func describe() async {
         await run(question: nil)
     }
@@ -94,10 +125,15 @@ final class ImageConversation {
                 } else {
                     prompt = question ?? Self.describePrompt
                 }
-                answer = try await session.respond {
-                    prompt
-                    Attachment(image)
-                }.content
+                // A first description is counted for Check System; a question about a saved one isn't a description.
+                if question == nil {
+                    answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image)
+                } else {
+                    answer = try await session.respond {
+                        prompt
+                        Attachment(image)
+                    }.content
+                }
             }
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             exchanges.append(Exchange(question: question, answer: trimmed))
@@ -156,12 +192,42 @@ enum PhotoDescriber {
         // Dropped while decoding: don't ask the model, which another photo may be waiting for.
         try Task.checkCancellation()
         let session = LanguageModelSession(instructions: ImageConversation.instructions)
-        let prompt = ImageConversation.describePrompt
-        let answer = try await session.respond {
-            prompt
-            Attachment(image)
-        }.content
+        let answer = try await respond(session, prompt: ImageConversation.describePrompt, image: image)
         return answer.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Asks the model to describe the image, and counts the outcome for Check System (#94): how long it took, or why it
+    /// failed. One photo, counted once; giving up (moving on, closing a window) isn't a failure.
+    /// `countsBusy` false leaves a rate limit out of the failures: background describing waits and tries again.
+    static func respond(_ session: LanguageModelSession, prompt: String, image: CGImage,
+                        countsBusy: Bool = true) async throws -> String {
+        let start = ContinuousClock.now
+        do {
+            let answer = try await session.respond {
+                prompt
+                Attachment(image)
+            }.content
+            DescribeStats.session.described(seconds: seconds(since: start))
+            return answer
+        } catch {
+            if !(error is CancellationError), !Task.isCancelled, countsBusy || !isRateLimited(error) {
+                DiagnosticLog.write("describe", "Apple Intelligence failed: \(ImageConversation.failureCode(for: error)): \(ImageConversation.message(for: error))")
+                DescribeStats.session.failed(code: ImageConversation.failureCode(for: error),
+                                             message: ImageConversation.message(for: error))
+            }
+            throw error
+        }
+    }
+
+    static func isRateLimited(_ error: Error) -> Bool {
+        if let error = error as? LanguageModelError, case .rateLimited = error { return true }
+        if let error = error as? LanguageModelSession.GenerationError, case .rateLimited = error { return true }
+        return false
+    }
+
+    static func seconds(since start: ContinuousClock.Instant) -> Double {
+        let took = start.duration(to: .now).components
+        return Double(took.seconds) + Double(took.attoseconds) / 1e18
     }
 }
 
@@ -202,15 +268,15 @@ struct AppleIntelligenceSection: View {
             }
             if let conversation, conversation.startedFromSaved, !conversation.isWorking {
                 // A saved description may be stale (the photo was edited) or poor: describing again replaces it.
-                Button("Describe Again") {
-                    // As Photo > Describe Again: a description the person corrected is replaced only if they agree.
+                Button("Redescribe") {
+                    // As Photo > Redescribe: a description the person corrected is replaced only if they agree.
                     let agreed = model.descriptions.isEdited(forKey: descriptionKey)
                         ? model.descriptions.description(forKey: descriptionKey) : nil
                     if agreed != nil {
                         let alert = NSAlert()
                         alert.messageText = "Replace the description you edited?"
                         alert.informativeText = "The photo will be described again, and the new description replaces yours."
-                        alert.addButton(withTitle: "Describe Again")
+                        alert.addButton(withTitle: "Redescribe")
                         alert.addButton(withTitle: "Cancel")
                         guard alert.runModal() == .alertFirstButtonReturn else { return }
                     }
@@ -255,7 +321,7 @@ struct AppleIntelligenceSection: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// `replacingEdit` is the correction the person agreed Describe Again may replace; any other correction is kept.
+    /// `replacingEdit` is the correction the person agreed Redescribe may replace; any other correction is kept.
     private func start(replacingEdit: String? = nil) {
         guard let imageData else { return }
         let cache = model.descriptions

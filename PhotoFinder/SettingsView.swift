@@ -24,18 +24,33 @@ struct SettingsView: View {
                 Text("Describing Photos")
                     .accessibilityAddTraits(.isHeader)
             } footer: {
-                Text("What Apple Intelligence is asked when it describes a photo with Describe Photo, Get Info or in the background. Left empty, the standard prompt (shown in the field) is used. Descriptions already saved are kept; Photo > Describe Again replaces one.")
+                Text("What Apple Intelligence is asked when it describes a photo with Describe Photo, Get Info or in the background. Left empty, the standard prompt (shown in the field) is used. Descriptions already saved are kept; Photo > Redescribe replaces one.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Section {
                 // The same switch as the Photo menu's, asking the same question before it turns on.
-                Toggle("Save descriptions in photos", isOn: Binding(
-                    get: { model.saveInPhotos },
-                    set: { model.setSaveInPhotos($0) }
+                Toggle(model.saveInPhotosTitle, isOn: Binding(
+                    get: { model.saveInPhotosShownOn },
+                    set: { model.chooseSaveInPhotos($0) }
                 ))
+                // Made again when a question is cancelled, so a checkbox already showing on goes back to off.
+                .id(model.switchesRedraw)
             } footer: {
                 Text("Off until you turn it on. Then each new description is also saved in the photo, as its caption when it has none (in Photos, which syncs with iCloud Photos, or in the file itself for added folders), and in a file's alt text when it has none. Nothing you or other apps wrote is replaced. Photo > Use Description as Caption does it for the photos you choose, and asks before replacing anything.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                // Asks before it turns on, since it sends coordinates to Apple (#105).
+                Toggle("Look Up Place Names", isOn: Binding(
+                    get: { model.lookUpPlaceNames },
+                    set: { model.setLookUpPlaceNames($0) }
+                ))
+                .id(model.switchesRedraw)
+                .accessibilityHint("Sends a photo's coordinates to Apple to name the place it was taken, in Get Info.")
+            } footer: {
+                Text("Off until you turn it on. Then Get Info names the place a photo was taken, by sending its coordinates (nothing else) to Apple's location service. Coordinates are shown either way. Help > Privacy Policy says more.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

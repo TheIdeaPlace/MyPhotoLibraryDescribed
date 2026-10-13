@@ -32,7 +32,7 @@ public sealed class BackgroundDescriberTests : IDisposable
     private static readonly AIReadiness Ready = new(true, "Ready", null);
 
     private async Task<(LibraryModel Model, BackgroundDescriber Background, DescriptionStore Store)> StartAsync(
-        bool enabled, AIReadiness? readiness = null, Func<MediaItem, Task<string>>? describe = null)
+        bool enabled, AIReadiness? readiness = null, Func<MediaItem, Task<string>>? describe = null, Func<AIReadiness>? check = null)
     {
         var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
         var settings = new Settings { DescribeInBackground = enabled };
@@ -45,7 +45,7 @@ public sealed class BackgroundDescriberTests : IDisposable
                 _described.Add(item.Name);
                 return describe is null ? $"About {item.Name}" : await describe(item);
             },
-            _ => Task.FromResult(readiness ?? Ready), _ => Task.FromResult(Ready));
+            _ => Task.FromResult(check?.Invoke() ?? readiness ?? Ready), _ => Task.FromResult(Ready));
         return (model, background, store);
     }
 
@@ -174,7 +174,7 @@ public sealed class BackgroundDescriberTests : IDisposable
             await WaitUntil(() => _described.Count == 1);
             Assert.True(background.IsRunning);
             background.Stop();
-            Assert.Contains("Stopped describing in the background. 1 photo not described.", _announced);
+            Assert.Contains("Stopped describing in the background. 1 photo not described; it carries on the next time My Photo Library Described starts.", _announced);
             release.SetResult();
             await background.WhenIdleAsync();
             Assert.Single(_described);
@@ -268,7 +268,396 @@ public sealed class BackgroundDescriberTests : IDisposable
         {
             background.Enabled = true;
             Assert.True(Settings.Load(_lib.PathOf(@"data\Settings.json")).DescribeInBackground);
-            Assert.Contains("Folders you add will be described in the background", _announced);
+            Assert.Contains("Photos in the library will be described in the background", _announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task TurningItOn_DescribesTheLibrarysPhotosNotDescribedYet_AndSaysWhenItsDone()
+    {
+        var (model, background, store) = await StartAsync(enabled: false);
+        using (model) using (background)
+        {
+            await model.AddFolderAsync(_added.Root);
+            await background.WhenIdleAsync();
+            Assert.Empty(_described);
+            // One already described is skipped.
+            store.Put(model.AllItems.Single(i => i.Name == "a.jpg"), "accessible", "Already.");
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Equal(["b.jpg", "home.jpg"], _described.Order());
+            Assert.Contains("Describing 2 photos in the background", _announced);
+            Assert.Contains("Finished describing the library's photos", _announced);
+            Assert.Null(model.BackgroundProgress);
+        }
+    }
+
+    [WpfFact]
+    public async Task AtAStart_ItCarriesOnWithWhatsLeft_Quietly()
+    {
+        var (model, background, store) = await StartAsync(enabled: true);
+        using (model) using (background)
+        {
+            store.Put(model.AllItems.Single(i => i.Name == "home.jpg"), "accessible", "Done last time.");
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Empty(_described);
+            await model.AddFolderAsync(_added.Root);
+            await background.WhenIdleAsync();
+            _described.Clear();
+            _announced.Clear();
+            // A new start: nothing left, so nothing described and nothing said.
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Empty(_described);
+            Assert.Empty(_announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task AtAStart_TheStatusBarShowsXOfY_AndNothingIsSaid()
+    {
+        var release = new TaskCompletionSource();
+        var (model, background, _) = await StartAsync(enabled: true, describe: async item => { await release.Task; return $"About {item.Name}"; });
+        using (model) using (background)
+        {
+            await model.AddFolderAsync(_added.Root);
+            await WaitUntil(() => model.BackgroundProgress is not null);
+            release.SetResult();
+            await background.WhenIdleAsync();
+            _announced.Clear();
+            var second = new TaskCompletionSource();
+            var (model2, background2, _) = await StartAsync(enabled: true, describe: async item => { await second.Task; return "x"; });
+            using (model2) using (background2)
+            {
+                var start = background2.DescribeLibraryAsync();
+                await WaitUntil(() => model2.BackgroundProgress is not null);
+                Assert.StartsWith("Describing photos in the background, 1 of ", model2.BackgroundProgress);
+                Assert.Empty(_announced);
+                second.SetResult();
+                await start;
+                await background2.WhenIdleAsync();
+            }
+        }
+    }
+
+    [WpfFact]
+    public async Task WithoutWindowsAI_AStartDescribesNothing()
+    {
+        var (model, background, _) = await StartAsync(enabled: true, new AIReadiness(false, "NotSupportedOnCurrentSystem", "Needs a Copilot+ PC."));
+        using (model) using (background)
+        {
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Empty(_described);
+            Assert.Empty(_announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task TurningItOffAndOnMidPhoto_CountsRight_AndSaysFinishedOnlyAtTheEnd()
+    {
+        var gate = new TaskCompletionSource();
+        var first = true;
+        var (model, background, _) = await StartAsync(enabled: true, describe: async item =>
+        {
+            if (first) { first = false; await gate.Task; }
+            return $"About {item.Name}";
+        });
+        using (model) using (background)
+        {
+            await model.AddFolderAsync(_added.Root);
+            await WaitUntil(() => _described.Count == 1);
+            background.Enabled = false;
+            background.Enabled = true;
+            await WaitUntil(() => model.BackgroundProgress is not null);
+            gate.SetResult();
+            await background.WhenIdleAsync();
+            // Every photo described once, and "finished" said once, at the end.
+            Assert.Equal(_described.Distinct().Count(), _described.Count);
+            Assert.Equal(["a.jpg", "b.jpg", "home.jpg"], _described.Order());
+            Assert.Single(_announced, s => s == "Finished describing the library's photos");
+            Assert.Null(model.BackgroundProgress);
+        }
+    }
+
+    [WpfFact]
+    public async Task AFolderAddedDuringALibraryRun_GoesFirst()
+    {
+        var gate = new TaskCompletionSource();
+        var first = true;
+        var (model, background, _) = await StartAsync(enabled: false, describe: async item =>
+        {
+            if (first) { first = false; await gate.Task; }
+            return $"About {item.Name}";
+        });
+        using (model) using (background)
+        {
+            _lib.AddJpeg("older1.jpg");
+            _lib.AddJpeg("older2.jpg");
+            await model.RescanAsync();
+            background.Enabled = true;
+            await WaitUntil(() => _described.Count == 1);
+            await model.AddFolderAsync(_added.Root);
+            gate.SetResult();
+            await background.WhenIdleAsync();
+            // After the photo already being described, the added folder's photos come before the rest of the library.
+            Assert.Equal(["a.jpg", "b.jpg"], _described.Skip(1).Take(2).Order());
+            Assert.Contains(_announced, s => s.StartsWith("Finished describing the photos in"));
+        }
+    }
+
+    [WpfFact]
+    public async Task ManyPhotosFailingInARow_StopsTheRun_AndSaysWhyOnce()
+    {
+        for (var i = 0; i < 8; i++) _lib.AddJpeg($"heic{i}.jpg");
+        var (model, background, _) = await StartAsync(enabled: false,
+            describe: _ => throw new DescriptionException("decode_failed", "The picture couldn't be read."));
+        using (model) using (background)
+        {
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Equal(BackgroundDescriber.FailuresInARow, _described.Count);
+            Assert.Single(_announced, s => s.StartsWith("Background describing stopped:") && s.Contains("The picture couldn't be read."));
+            Assert.Null(model.BackgroundProgress);
+            // The ones that failed aren't tried again this session: the next run starts with the photos not tried.
+            var tried = _described.ToList();
+            _described.Clear();
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.NotEmpty(_described);
+            Assert.Empty(_described.Intersect(tried));
+        }
+    }
+
+    [WpfFact]
+    public async Task OnEnergySaver_ItWaits_AndSaysSoInTheStatusBar()
+    {
+        var (model, background, _) = await StartAsync(enabled: false);
+        using (model) using (background)
+        {
+            var saving = true;
+            background.MayRun = () => !saving;
+            background.Enabled = true;
+            await WaitUntil(() => model.BackgroundProgress == "Background describing paused on energy saver");
+            Assert.Empty(_described);
+            saving = false;
+            await background.WhenIdleAsync();
+            Assert.Equal(["home.jpg"], _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task NewestPhotosAreDescribedFirst()
+    {
+        var older = _lib.AddJpeg("older.jpg");
+        var newer = _lib.AddJpeg("newer.jpg");
+        File.SetLastWriteTime(older, new DateTime(2020, 1, 1));
+        File.SetLastWriteTime(newer, new DateTime(2025, 1, 1));
+        File.SetLastWriteTime(_lib.PathOf("home.jpg"), new DateTime(2022, 1, 1));
+        var (model, background, _) = await StartAsync(enabled: false);
+        using (model) using (background)
+        {
+            // Before details are read, "newest" is the file's date.
+            foreach (var item in model.AllItems) item.Metadata = null;
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Equal(["newer.jpg", "home.jpg", "older.jpg"], _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task StopWhilePausedOnEnergySaver_ClearsTheStatusBar_AndEndsTheRun()
+    {
+        var (model, background, _) = await StartAsync(enabled: false);
+        using (model) using (background)
+        {
+            background.MayRun = () => false;
+            background.Enabled = true;
+            await WaitUntil(() => model.BackgroundProgress == "Background describing paused on energy saver");
+            background.Stop();
+            await background.WhenIdleAsync();
+            Assert.Null(model.BackgroundProgress);
+            Assert.False(background.IsRunning);
+            Assert.Empty(_described);
+        }
+    }
+
+    [WpfFact]
+    public async Task AddingAFolderThatsAllInTheLibrarysBacklog_StillSaysTheLibraryIsFinished()
+    {
+        var (model, background, store) = await StartAsync(enabled: false);
+        using (model) using (background)
+        {
+            store.Put(model.AllItems.Single(i => i.Name == "home.jpg"), "accessible", "Done.");
+            var inside = _lib.AddJpeg(@"Trip\x.jpg");
+            _lib.AddJpeg(@"Trip\y.jpg");
+            await model.RescanAsync();
+            background.MayRun = () => false;
+            background.Enabled = true;
+            await WaitUntil(() => model.BackgroundProgress is not null);
+            // The folder is inside the library, so its photos move ahead of the backlog: the whole backlog.
+            await model.AddFolderAsync(Path.GetDirectoryName(inside)!);
+            background.MayRun = () => true;
+            await background.WhenIdleAsync();
+            Assert.Equal(["x.jpg", "y.jpg"], _described.Order());
+            Assert.Single(_announced, s => s == "Finished describing the library's photos");
+        }
+    }
+
+    [WpfFact]
+    public async Task AtAStart_WindowsAINotAnsweringAtFirst_IsAskedAgain_AndTheLibraryIsDescribed()
+    {
+        var asked = 0;
+        var (model, background, _) = await StartAsync(enabled: true,
+            check: () => ++asked < 3 ? new AIReadiness(false, "Error", "The helper was slow this time.") : Ready);
+        using (model) using (background)
+        {
+            background.ResumeRetries = [TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(10)];
+            background.Resume();
+            await WaitUntil(() => _described.Count == 1);
+            await background.WhenIdleAsync();
+            Assert.Equal(3, asked);
+            Assert.Equal(["home.jpg"], _described);
+            Assert.Empty(_announced);
+            Assert.Contains(File.ReadAllLines(Log.TodaysFile), l => l.Contains("[background] Not started: Windows AI is Error. The helper was slow this time."));
+        }
+    }
+
+    [WpfFact]
+    public async Task AtAStart_WindowsAINeverAnswering_GivesUp_AndTheStatusBarSaysSo_UntilTurnedOff()
+    {
+        var asked = 0;
+        var (model, background, _) = await StartAsync(enabled: true,
+            check: () => { asked++; return new AIReadiness(false, "Error", "The helper didn't answer."); });
+        using (model) using (background)
+        {
+            background.ResumeRetries = [TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(10)];
+            background.Resume();
+            await WaitUntil(() => model.BackgroundProgress is not null);
+            await background.WhenIdleAsync();
+            Assert.Equal(3, asked);
+            Assert.Equal("Background describing couldn't start: Windows AI didn't answer. Turn it off and on to try again.", model.BackgroundProgress);
+            // Nothing's going on, so no busy indicator.
+            Assert.False(model.IsBusy);
+            Assert.Empty(_described);
+            background.Enabled = false;
+            Assert.Null(model.BackgroundProgress);
+        }
+    }
+
+    [WpfFact]
+    public async Task AtAStart_WindowsAINotAvailable_IsntAskedAgain()
+    {
+        var asked = 0;
+        var (model, background, _) = await StartAsync(enabled: true,
+            check: () => { asked++; return new AIReadiness(false, "NotSupportedOnCurrentSystem", "Needs a Copilot+ PC."); });
+        using (model) using (background)
+        {
+            background.ResumeRetries = [TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(10)];
+            background.Resume();
+            await background.WhenIdleAsync();
+            Assert.Equal(1, asked);
+            Assert.Equal("Background describing can't run. Needs a Copilot+ PC.", model.BackgroundProgress);
+            Assert.False(model.IsBusy);
+            Assert.Empty(_announced);
+        }
+    }
+
+    [WpfFact]
+    public async Task AtAStart_TurnedOffWhileWaitingToAskAgain_StopsAsking()
+    {
+        var asked = 0;
+        var (model, background, _) = await StartAsync(enabled: true,
+            check: () => { asked++; return new AIReadiness(false, "Error", "The helper didn't answer."); });
+        using (model) using (background)
+        {
+            background.ResumeRetries = [TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(200)];
+            background.Resume();
+            await WaitUntil(() => asked == 1);
+            background.Enabled = false;
+            await background.WhenIdleAsync();
+            Assert.Equal(1, asked);
+            Assert.Null(model.BackgroundProgress);
+        }
+    }
+
+    [WpfFact]
+    public async Task AtAStart_TheModelNotReady_IsntDownloadedQuietly_AndTheStatusBarSaysHowToGetIt()
+    {
+        var prepared = 0;
+        var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
+        var settings = new Settings { DescribeInBackground = true };
+        using var model = new LibraryModel(settings, _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
+            () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1)) { Descriptions = store };
+        await model.StartAsync();
+        using var background = new BackgroundDescriber(model, store, (item, _, _) => { _described.Add(item.Name); return Task.FromResult("x"); },
+            _ => Task.FromResult(new AIReadiness(true, "NotReady", null)), _ => { prepared++; return Task.FromResult(Ready); });
+        background.ResumeRetries = [TimeSpan.FromMilliseconds(10)];
+        background.Resume();
+        await background.WhenIdleAsync();
+        Assert.Equal(0, prepared);
+        Assert.Empty(_described);
+        Assert.StartsWith("Background describing is waiting for Windows' image description model.", model.BackgroundProgress);
+        Assert.Empty(_announced);
+    }
+
+    [WpfFact]
+    public async Task AtAStart_TheCheckThrowing_IsAskedAgain()
+    {
+        var asked = 0;
+        var (model, background, _) = await StartAsync(enabled: true,
+            check: () => ++asked < 2 ? throw new IOException("The helper couldn't be started.") : Ready);
+        using (model) using (background)
+        {
+            background.ResumeRetries = [TimeSpan.FromMilliseconds(10)];
+            background.Resume();
+            await WaitUntil(() => _described.Count == 1);
+            await background.WhenIdleAsync();
+            Assert.Equal(2, asked);
+            Assert.Equal(["home.jpg"], _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task AtAStart_StopWhileWaitingToAskAgain_StopsAsking_UntilTheNextStart()
+    {
+        var asked = 0;
+        var (model, background, _) = await StartAsync(enabled: true,
+            check: () => ++asked < 2 ? new AIReadiness(false, "Error", "No answer.") : Ready);
+        using (model) using (background)
+        {
+            background.ResumeRetries = [TimeSpan.FromMilliseconds(200)];
+            background.Resume();
+            await WaitUntil(() => asked == 1);
+            background.Stop();
+            await background.WhenIdleAsync();
+            Assert.Equal(1, asked);
+            Assert.Empty(_described);
+            Assert.Null(model.BackgroundProgress);
+        }
+    }
+
+    [WpfFact]
+    public async Task AtAStart_TurnedOffAndOnWhileWaitingToAskAgain_DescribesOnce()
+    {
+        var asked = 0;
+        var (model, background, _) = await StartAsync(enabled: true,
+            check: () => ++asked < 2 ? new AIReadiness(false, "Error", "No answer.") : Ready);
+        using (model) using (background)
+        {
+            background.ResumeRetries = [TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(200)];
+            background.Resume();
+            await WaitUntil(() => asked == 1);
+            background.Enabled = false;
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            await Task.Delay(500);
+            await background.WhenIdleAsync();
+            Assert.Equal(["home.jpg"], _described);
+            // Asked when turned on, twice (the check, then the library); not again from the start.
+            Assert.Equal(3, asked);
+            Assert.Null(model.BackgroundProgress);
         }
     }
 }

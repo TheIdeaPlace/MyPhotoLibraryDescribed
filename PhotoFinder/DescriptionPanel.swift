@@ -17,6 +17,9 @@ struct DescriptionPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let row = model.focusedRow, !row.isContainer, model.isDescribable(row.id) {
+                // The photo itself, in list view, as Finder's and File Explorer's preview panes show it (Kelly, 13 Oct).
+                // The gallery already shows it large.
+                if model.viewMode == .list { PanelPreview(id: row.id) }
                 Text(row.name)
                     .font(.headline)
                     .lineLimit(2)
@@ -81,7 +84,7 @@ struct DescriptionPanel: View {
             if let oldID, oldID == draftID { save(oldID) }
             load()
         }
-        // A description arriving (automatic describing, Describe Again) shows at once, even while you're in the box,
+        // A description arriving (automatic describing, Redescribe) shows at once, even while you're in the box,
         // unless you've started changing it.
         .onChange(of: model.descriptionRevision) {
             if !isDirty { load() }
@@ -96,7 +99,7 @@ struct DescriptionPanel: View {
     }
 
     @ViewBuilder private func actions(for id: String) -> some View {
-        Button("Describe Again") { model.describeFocusedPhotoAgain() }
+        Button("Redescribe") { model.describeFocusedPhotoAgain() }
             .fixedSize()
         Button("Use as Caption") { model.useDescriptionAsCaption([id]) }
             .disabled(model.savedDescription(for: id) == nil)
@@ -129,5 +132,46 @@ struct DescriptionPanel: View {
 enum DescriptionDraft {
     static func isChanged(_ draft: String, from loaded: String) -> Bool {
         draft.trimmingCharacters(in: .whitespacesAndNewlines) != loaded.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// The photo you're on, above its description in list view, for anyone looking at the screen with you. Hidden from
+/// VoiceOver: the description below says what's in it, and the photo's name is the heading under it.
+private struct PanelPreview: View {
+    let id: String
+    @Environment(LibraryModel.self) private var model
+    @State private var image: NSImage?
+    @State private var loadedID: String?
+
+    var body: some View {
+        Group {
+            if let image, loadedID == id {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            } else {
+                // Loading, or nothing on this Mac to show (a file only in iCloud Drive): a spinner only while loading.
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.quaternary)
+                    .overlay {
+                        if loadedID == id {
+                            Image(systemName: "photo").font(.largeTitle).foregroundStyle(.secondary)
+                        } else {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+            }
+        }
+        // Up to 240 points, shrinking first in a short window so the description keeps its room.
+        .frame(maxWidth: .infinity, minHeight: 0, maxHeight: 240)
+        .layoutPriority(-1)
+        .accessibilityHidden(true)
+        .task(id: id) {
+            let loaded = await model.previewImage(for: id)
+            guard !Task.isCancelled else { return }
+            image = loaded
+            loadedID = id
+        }
     }
 }

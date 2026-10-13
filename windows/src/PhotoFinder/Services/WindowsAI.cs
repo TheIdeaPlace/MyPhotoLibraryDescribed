@@ -13,6 +13,14 @@ public sealed class DescriptionException(string code, string message) : Exceptio
 /// <summary>What the helper said about the model.</summary>
 public sealed record AIReadiness(bool Installed, string State, string? Message)
 {
+    /// <summary>The helper's version and protocol, as it reported them, for Check System (#94).</summary>
+    public string? HelperVersion { get; init; }
+    public int? Protocol { get; init; }
+
+    /// <summary>The ready state of the other Windows AI features, by name ("textRecognition", "languageModel"), as the
+    /// helper reported them.</summary>
+    public IReadOnlyDictionary<string, string> Components { get; init; } = new Dictionary<string, string>();
+
     /// <summary>Ready now, or can be made ready (possibly by downloading the model).</summary>
     public bool Usable => Installed && State is "Ready" or "NotReady";
 }
@@ -53,7 +61,7 @@ public sealed class WindowsAI : IDisposable
     public static string AliasPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps", Alias);
 
-    /// <summary>The helper to start. Installed, it's the one in Photo Finder's own package, started directly: a packaged
+    /// <summary>The helper to start. Installed, it's the one in My Photo Library Described's own package, started directly: a packaged
     /// app's child runs with the package's identity, and this can't pick up another package's photofinder-ai.exe
     /// alias (an old test install, or a development registration). If it somehow starts without identity, it
     /// relaunches itself through the alias. Otherwise (development), the alias.</summary>
@@ -101,6 +109,22 @@ public sealed class WindowsAI : IDisposable
         }
     }
 
+    /// <summary>The helper's --details for Check System (#94): its readiness plus the other Windows AI features' states.
+    /// Separate from --check, which every description depends on, so asking about Phi Silica can't hold describing up.
+    /// Not remembered: Check System shows how things are now. An older helper without it gives no component states.</summary>
+    public static async Task<AIReadiness?> DetailsAsync(CancellationToken cancel = default)
+    {
+        if (!IsInstalled) return null;
+        try
+        {
+            return ParseReadiness(await RunOnceAsync("--details", CheckTimeout, cancel));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Gets the model ready, which the first time can mean a download of several minutes.</summary>
     public static async Task<AIReadiness> PrepareAsync(CancellationToken cancel = default)
     {
@@ -117,7 +141,16 @@ public sealed class WindowsAI : IDisposable
             var identity = o?["identity"]?.GetValue<bool>() ?? false;
             var state = o?["state"]?.GetValue<string>() ?? "Error";
             var message = o?["message"]?.GetValue<string>() ?? MessageForState(state);
-            return new AIReadiness(identity, state, message);
+            var components = new Dictionary<string, string>();
+            if (o?["components"] is JsonObject parts)
+                foreach (var (name, value) in parts)
+                    if (value is JsonValue v && v.TryGetValue<string>(out var text)) components[name] = text;
+            return new AIReadiness(identity, state, message)
+            {
+                HelperVersion = o?["version"] is JsonValue ver && ver.TryGetValue<string>(out var version) && version.Length > 0 ? version : null,
+                Protocol = o?["protocol"] is JsonValue p && p.TryGetValue<int>(out var protocol) ? protocol : null,
+                Components = components,
+            };
         }
         catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or FormatException)
         {
@@ -137,15 +170,43 @@ public sealed class WindowsAI : IDisposable
     /// so a failure can be tried again smaller.
     /// <paramref name="drop"/> gives the request up only until it's sent: stopping it after that would mean a fresh helper
     /// and a model reload, which costs more than letting it finish.</summary>
+    /// <param name="retry">False sends it once: for a picture that's the same at every size (Check AI Description's
+    /// sample).</param>
     public Task<string> DescribeAsync(Func<uint, Task<byte[]>> jpegAtSize, string kind, CancellationToken cancel = default,
-        CancellationToken drop = default) =>
-        WithRetriesAsync(jpegAtSize, jpeg => DescribeOnceAsync(jpeg, kind, cancel, drop));
+        CancellationToken drop = default, bool retry = true) =>
+        CountedAsync(DescribeStats.Session, () => WithRetriesAsync(jpegAtSize, jpeg => DescribeOnceAsync(jpeg, kind, cancel, drop), retry),
+            cancel, drop);
+
+    /// <summary>One photo's outcome, counted once for Check System however many sizes were tried: how long the attempt
+    /// that worked took (not the wait for the helper), or the last failure.</summary>
+    internal static async Task<string> CountedAsync(DescribeStats stats, Func<Task<(string Text, TimeSpan Took)>> describe,
+        CancellationToken cancel, CancellationToken drop)
+    {
+        try
+        {
+            var (text, took) = await describe();
+            stats.Described(took);
+            return text;
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested || drop.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // The helper's own answers are said as they are; anything else only by its type, since its message can name a
+            // folder (the helper's path, in the user's folder) and Check System's report is public.
+            if (ex is DescriptionException d) stats.Failed(d.Code, d.Message);
+            else stats.Failed(ex.GetType().Name, "Unexpected; the log has the details");
+            throw;
+        }
+    }
 
     /// <summary>Tries the first size, then smaller ones while the model reports an internal error.
     /// Any other failure (content filter, too much text) is final.</summary>
-    internal static async Task<string> WithRetriesAsync(Func<uint, Task<byte[]>> jpegAtSize, Func<byte[], Task<string>> describe)
+    internal static async Task<T> WithRetriesAsync<T>(Func<uint, Task<byte[]>> jpegAtSize, Func<byte[], Task<T>> describe, bool retry = true)
     {
-        var sizes = new[] { FirstSize }.Concat(RetrySizes).ToArray();
+        var sizes = retry ? new[] { FirstSize }.Concat(RetrySizes).ToArray() : [FirstSize];
         DescriptionException? last = null;
         foreach (var size in sizes)
         {
@@ -162,14 +223,14 @@ public sealed class WindowsAI : IDisposable
         throw last!;
     }
 
-    private Task<string> DescribeOnceAsync(byte[] jpeg, string kind, CancellationToken cancel, CancellationToken drop) =>
+    private Task<(string Text, TimeSpan Took)> DescribeOnceAsync(byte[] jpeg, string kind, CancellationToken cancel, CancellationToken drop) =>
         SendAsync(id => BuildRequest(id, kind, jpeg), "Windows took too long to describe this photo. Try again.", cancel, drop);
 
     /// <summary>A follow-up question about a photo (#24), answered by Windows' text model (Phi Silica) from its description
     /// and any text read from it, not by looking at the photo again.</summary>
-    public Task<string> AskAsync(string description, string text, string question,
+    public async Task<string> AskAsync(string description, string text, string question,
         IReadOnlyList<(string Question, string Answer)> history, CancellationToken cancel = default) =>
-        SendAsync(id => BuildAskRequest(id, description, text, question, history), "Windows took too long to answer. Try again.", cancel, default);
+        (await SendAsync(id => BuildAskRequest(id, description, text, question, history), "Windows took too long to answer. Try again.", cancel, default)).Text;
 
     internal static string BuildAskRequest(int id, string description, string text, string question, IReadOnlyList<(string Question, string Answer)> history) =>
         new JsonObject
@@ -182,8 +243,8 @@ public sealed class WindowsAI : IDisposable
             ["history"] = new JsonArray(history.Select(h => (JsonNode)new JsonObject { ["question"] = h.Question, ["answer"] = h.Answer }).ToArray()),
         }.ToJsonString();
 
-    /// <summary>One request to the helper and its answer, in turn with any other.</summary>
-    private async Task<string> SendAsync(Func<int, string> build, string tooLong, CancellationToken cancel, CancellationToken drop)
+    /// <summary>One request to the helper and its answer, in turn with any other, and how long it took once sent.</summary>
+    private async Task<(string Text, TimeSpan Took)> SendAsync(Func<int, string> build, string tooLong, CancellationToken cancel, CancellationToken drop)
     {
         using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancel, drop))
             await _gate.WaitAsync(waiting.Token);
@@ -193,6 +254,7 @@ public sealed class WindowsAI : IDisposable
             var server = EnsureServer();
             var id = Interlocked.Increment(ref _nextId);
             string? line;
+            var started = Stopwatch.StartNew();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
             timeout.CancelAfter(DescribeTimeout);
             try
@@ -206,6 +268,7 @@ public sealed class WindowsAI : IDisposable
                 // Whatever went wrong, the helper may still answer this request later, and that answer would
                 // then be read as the next one's. A fresh helper keeps answers and requests in step.
                 StopServer();
+                if (!cancel.IsCancellationRequested) Log.Error("helper", "A request to the helper failed; it was restarted", ex);
                 if (ex is OperationCanceledException && !cancel.IsCancellationRequested)
                     throw new DescriptionException("timeout", tooLong);
                 if (ex is IOException)
@@ -214,16 +277,23 @@ public sealed class WindowsAI : IDisposable
             }
             if (line is null)
             {
+                Log.Write("helper", "The helper stopped without answering");
                 StopServer();
                 throw new DescriptionException("internal_error", $"The {AppInfo.HelperName} stopped unexpectedly.");
             }
             try
             {
-                return ParseResponse(line, id);
+                return (ParseResponse(line, id), started.Elapsed);
             }
             catch (DescriptionException ex) when (ex.Code == "bad_response")
             {
+                Log.Write("helper", $"Unreadable answer from the helper: {ex.Message}");
                 StopServer();
+                throw;
+            }
+            catch (DescriptionException ex)
+            {
+                Log.Write("helper", $"The helper answered {ex.Code}: {ex.Message}");
                 throw;
             }
         }

@@ -64,13 +64,15 @@ public static class ImageDecoding
 
     /// <summary>The shell's thumbnail, which works for every type with a thumbnail handler and, for cloud
     /// files, comes from the cloud provider without downloading the file.</summary>
-    public static async Task<ImageSource?> ThumbnailAsync(string path, uint size)
+    /// <param name="cachedOnly">Only a thumbnail Windows or the cloud provider already has, never one that would mean
+    /// fetching the file: for an online-only file where nothing is better than a download.</param>
+    public static async Task<ImageSource?> ThumbnailAsync(string path, uint size, bool cachedOnly = false)
     {
         try
         {
             var file = await StorageFile.GetFileFromPathAsync(path);
             using var thumb = await file.GetThumbnailAsync(size <= 256 ? ThumbnailMode.ListView : ThumbnailMode.SingleItem, size,
-                ThumbnailOptions.ResizeThumbnail);
+                ThumbnailOptions.ResizeThumbnail | (cachedOnly ? ThumbnailOptions.ReturnOnlyIfCached : ThumbnailOptions.None));
             if (thumb is null || thumb.Size == 0) return null;
             using var memory = new MemoryStream();
             await thumb.AsStreamForRead().CopyToAsync(memory);

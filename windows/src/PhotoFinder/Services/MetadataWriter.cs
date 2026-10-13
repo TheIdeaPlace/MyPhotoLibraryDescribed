@@ -83,6 +83,7 @@ public static class MetadataWriter
             catch (Exception ex)
             {
                 failures.Add((item, Reason(item, ex)));
+                Log.Write("save", $"Couldn't change {item.Name}: {ex.GetType().Name}: {ex.Message}");
             }
         }
         var failed = failures.Select(f => f.Item).Distinct().Count();

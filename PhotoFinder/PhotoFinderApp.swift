@@ -30,6 +30,12 @@ struct PhotoFinderApp: App {
                 .environment(model)
         }
         .windowResizability(.contentSize)
+
+        Window("Check AI Description", id: "aiDescriptionCheck") {
+            AIDescriptionCheckView()
+                .environment(model)
+        }
+        .windowResizability(.contentSize)
     }
 }
 
@@ -41,9 +47,17 @@ struct PhotoCommands: Commands {
     let model: LibraryModel
     @Environment(\.openWindow) private var openWindow
     private static let f6 = KeyEquivalent(Character(UnicodeScalar(NSF6FunctionKey)!))
+    private static let f9 = KeyEquivalent(Character(UnicodeScalar(NSF9FunctionKey)!))
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
+            // Read-only (#84): checked at every launch; unchecking asks first.
+            // "Mode", so a screen reader doesn't sound as if something on screen is read-only (Kelly, 13 Oct).
+            Toggle("Read-Only Mode", isOn: Binding(
+                get: { model.readOnly },
+                set: { model.setReadOnly($0) }
+            ))
+            Divider()
             // As on Windows (#36). Remove is always enabled and says when you're not in an added folder.
             Button("Add Folder to Library…") { model.addFolder() }
             Button("Remove Folder from Library") { model.removeCurrentFolder() }
@@ -90,8 +104,9 @@ struct PhotoCommands: Commands {
                 }
             }
             // Windows' Refresh (F5): reads added folders again, and the place showing.
+            // Shift-Command-R: Command-R is Redescribe (Kelly, 13 Oct).
             Button("Refresh") { model.refresh() }
-                .keyboardShortcut("r")
+                .keyboardShortcut("r", modifiers: [.command, .shift])
             Divider()
         }
         // Help: the same items as on Windows (#32, #33), plus macOS's own Help search. About stays in the app menu,
@@ -107,6 +122,16 @@ struct PhotoCommands: Commands {
                 model.systemCheckRequest += 1
                 openWindow(id: "systemCheck")
             }
+            // After Check System, as on Windows (#95).
+            Button("Check AI Description…") {
+                model.aiDescriptionCheckRequest += 1
+                openWindow(id: "aiDescriptionCheck")
+            }
+            // The diagnostic log (#103), as on Windows.
+            Button("Open Log Folder") { model.openLogFolder() }
+            Divider()
+            Button("\(AppInfo.name) User Guide") { NSWorkspace.shared.open(AppInfo.userGuideURL) }
+            Button("Privacy Policy") { NSWorkspace.shared.open(AppInfo.privacyPolicyURL) }
         }
         CommandMenu("Go") {
             Button("Enclosing Folder") { model.goToEnclosingFolder() }
@@ -117,11 +142,29 @@ struct PhotoCommands: Commands {
             Button("All Photos") { model.navigate(to: SidebarID.allPhotos) }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
             Divider()
+            // From anywhere, focus staying where it is: the Description panel follows the photo (Kelly, 13 Oct).
+            Button("Next Photo") { model.stepPhoto(by: 1) }
+                .keyboardShortcut(.rightArrow, modifiers: .command)
+                .disabled(!model.canStepPhotos)
+            Button("Previous Photo") { model.stepPhoto(by: -1) }
+                .keyboardShortcut(.leftArrow, modifiers: .command)
+                .disabled(!model.canStepPhotos)
+            Divider()
             // F6 and Shift-F6, as on Windows: sidebar, list or gallery, Search, status bar.
             Button("Next Pane") { model.movePane(by: 1) }
                 .keyboardShortcut(Self.f6, modifiers: [])
             Button("Previous Pane") { model.movePane(by: -1) }
                 .keyboardShortcut(Self.f6, modifiers: .shift)
+            // To the Description panel's text, and back to the list or gallery you came from (Kelly, 13 Oct).
+            Button("Go to Description or Back to Photos") { model.toggleDescriptionFocus() }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .disabled(!model.canStepPhotos)
+            // The status bar from anywhere (#84): Control-F9 reads it, Control-Shift-F9 goes to it. In Go, with the
+            // panes, rather than View (Kelly, 13 Oct).
+            Button("Go to Status Bar") { model.goToStatusBar() }
+                .keyboardShortcut(Self.f9, modifiers: [.control, .shift])
+            Button("Read Status Bar") { model.readStatusBar() }
+                .keyboardShortcut(Self.f9, modifiers: .control)
         }
         CommandMenu("Photo") {
             Button("Toggle Favorite") { model.toggleFavorite() }
@@ -135,20 +178,25 @@ struct PhotoCommands: Commands {
             Button("Edit Caption…") { model.editCaption() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             Button("Use Description as Caption") { model.useDescriptionAsCaption() }
-            Toggle("Save Descriptions in Photos", isOn: Binding(
-                get: { model.saveInPhotos },
-                set: { model.setSaveInPhotos($0) }
+            // Paused, and shown unchecked, while read-only (as on Windows).
+            Toggle(model.saveInPhotosTitle, isOn: Binding(
+                get: { model.saveInPhotosShownOn },
+                set: { model.chooseSaveInPhotos($0) }
             ))
             Divider()
+            // Command-D describes and Command-R describes again (Kelly, 13 Oct); Shift-Command-D goes to the description
+            // and back (Go menu).
             Button("Describe Photo") { model.describeFocusedPhoto() }
-                .keyboardShortcut("d", modifiers: [.command, .shift])
-            Button("Describe Again") { model.describeFocusedPhotoAgain() }
-                .keyboardShortcut("d", modifiers: [.command, .shift, .option])
+                .keyboardShortcut("d", modifiers: .command)
+                .disabled(!model.canStepPhotos)
+            Button("Redescribe") { model.describeFocusedPhotoAgain() }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(!model.canStepPhotos)
             Toggle("Describe Photos Automatically", isOn: Binding(
                 get: { model.describeAutomatically },
                 set: { model.setDescribeAutomatically($0) }
             ))
-            Toggle("Describe New Photos in the Background", isOn: Binding(
+            Toggle("Describe Photos in the Background", isOn: Binding(
                 get: { model.describeInBackground },
                 set: { model.setDescribeInBackground($0) }
             ))

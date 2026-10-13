@@ -43,7 +43,7 @@
                 <v:AppMenuItem Command="v:AppCommands.RemoveFolder" />
                 <v:AppMenuItem Command="v:AppCommands.Refresh" />
                 <Separator />
-                <v:AppMenuItem Header="Rea_d-Only" x:Name="ReadOnlyItem" IsCheckable="True" Click="ReadOnly_Click" />
+                <v:AppMenuItem Header="Rea_d-Only Mode" x:Name="ReadOnlyItem" IsCheckable="True" Click="ReadOnly_Click" />
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.Exit" />
             </v:AppMenuItem>
@@ -69,6 +69,10 @@
                 <v:AppMenuItem Command="v:AppCommands.OpenSelected" />
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.AllPhotos" />
+                <Separator />
+                <v:AppMenuItem Command="v:AppCommands.NextPhoto" />
+                <v:AppMenuItem Command="v:AppCommands.PreviousPhoto" />
+                <v:AppMenuItem Command="v:AppCommands.GoToDescription" />
             </v:AppMenuItem>
             <v:AppMenuItem Header="_Photo">
                 <v:AppMenuItem Command="v:AppCommands.ToggleFavorite" />
@@ -83,11 +87,12 @@
                 </v:AppMenuItem>
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.DescribePhoto" />
-                <v:AppMenuItem Command="v:AppCommands.DescribeAgain" />
+                <v:AppMenuItem Command="v:AppCommands.Redescribe" />
                 <v:AppMenuItem Command="v:AppCommands.UseDescriptionAsCaption" />
                 <v:AppMenuItem x:Name="AutoDescribeItem" Command="v:AppCommands.AutoDescribe" IsCheckable="True" />
                 <v:AppMenuItem Header="Description T_ype" x:Name="KindMenu" />
                 <v:AppMenuItem Header="Save Descriptions _in Photos" x:Name="SaveInPhotosItem" IsCheckable="True" Click="SaveInPhotos_Click" />
+                <v:AppMenuItem Header="Look Up Place _Names" x:Name="PlaceNamesItem" IsCheckable="True" Click="PlaceNames_Click" />
                 <v:AppMenuItem x:Name="BackgroundDescribeItem" Command="v:AppCommands.DescribeInBackground" IsCheckable="True" />
                 <v:AppMenuItem Command="v:AppCommands.StopBackground" />
             </v:AppMenuItem>
@@ -95,6 +100,11 @@
                 <v:AppMenuItem x:Name="UpdatesItem" Command="v:AppCommands.CheckForUpdates" />
                 <v:AppMenuItem Command="v:AppCommands.ReportBug" />
                 <v:AppMenuItem Command="v:AppCommands.CheckSystem" />
+                <v:AppMenuItem Command="v:AppCommands.CheckAIDescription" />
+                <v:AppMenuItem Command="v:AppCommands.OpenLogFolder" />
+                <Separator />
+                <v:AppMenuItem Command="v:AppCommands.UserGuide" />
+                <v:AppMenuItem Command="v:AppCommands.PrivacyPolicy" />
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.About" />
             </v:AppMenuItem>
@@ -231,7 +241,7 @@
                                 <Separator />
                                 <v:AppMenuItem Command="v:AppCommands.ToggleFavorite" />
                                 <v:AppMenuItem Command="v:AppCommands.DescribePhoto" />
-                                <v:AppMenuItem Command="v:AppCommands.DescribeAgain" />
+                                <v:AppMenuItem Command="v:AppCommands.Redescribe" />
                                 <v:AppMenuItem Command="v:AppCommands.UseDescriptionAsCaption" />
                             </ContextMenu>
                         </v:FileListView.ContextMenu>

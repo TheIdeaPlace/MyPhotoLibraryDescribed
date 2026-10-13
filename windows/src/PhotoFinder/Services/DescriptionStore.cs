@@ -60,7 +60,7 @@ public sealed class DescriptionStore
         Saved?.Invoke(item, kind, text);
     }
 
-    /// <summary>Saves a description Windows made, unless the person has corrected this one meanwhile: only Describe Again,
+    /// <summary>Saves a description Windows made, unless the person has corrected this one meanwhile: only Redescribe,
     /// after asking, replaces a correction. Returns whether it was saved.</summary>
     public bool PutUnlessEdited(MediaItem item, string kind, string text)
     {
@@ -69,7 +69,7 @@ public sealed class DescriptionStore
         return true;
     }
 
-    /// <summary>Describe Again on a correction, agreed to when the saved description was <paramref name="expected"/>: the
+    /// <summary>Redescribe on a correction, agreed to when the saved description was <paramref name="expected"/>: the
     /// new description replaces it only if nobody has corrected it again since. Returns whether it was saved.</summary>
     public bool PutIfUnchanged(MediaItem item, string kind, string expected, string text)
     {
@@ -105,7 +105,7 @@ public sealed class DescriptionStore
     /// <summary>How long after a change it's saved. Short in tests.</summary>
     internal TimeSpan SaveDelay { get; init; } = TimeSpan.FromSeconds(2);
 
-    /// <summary>Keeps a file's descriptions when Photo Finder itself changes the file (a caption, rating or
+    /// <summary>Keeps a file's descriptions when My Photo Library Described itself changes the file (a caption, rating or
     /// favorite), which changes its size and date but not the picture.</summary>
     public void Rekey(string path, long oldSize, DateTime oldModified, MediaItem now)
     {

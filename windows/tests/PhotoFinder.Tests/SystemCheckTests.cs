@@ -48,7 +48,7 @@ public sealed class SystemCheckTests : IDisposable
             @"Library folders: OK. 1 folder: C:\Users\me\Pictures.",
             "Saved descriptions: 1,234 photos described.",
             "Describe Photos Automatically: On.",
-            "Describe Added Folders in the Background: Off.",
+            "Describe Photos in the Background: Off.",
         ], check.Items.Select(i => i.Line));
         Assert.StartsWith(check.Summary + Environment.NewLine, check.Text);
         // Screen readers name each list item from ToString.
@@ -106,7 +106,7 @@ public sealed class SystemCheckTests : IDisposable
     public void WindowsAiNotReadyOrMissing_SaysWhatToDo()
     {
         var notReady = new SystemCheck(Good() with { Readiness = new AIReadiness(false, "NotReady", "x") });
-        Assert.Contains("Windows AI: Needs attention. Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+Shift+D) downloads it.",
+        Assert.Contains("Windows AI: Needs attention. Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+D) downloads it.",
             notReady.Items.Select(i => i.Line));
         var missing = new SystemCheck(Good() with { Readiness = new AIReadiness(false, "NotInstalled", "x") });
         Assert.Contains($"Windows AI: Needs attention. The {AppInfo.HelperName} isn't installed. Install {AppInfo.Name} from PhotoFinder.appinstaller.",
@@ -134,7 +134,7 @@ public sealed class SystemCheckTests : IDisposable
         Assert.Contains($"{AppInfo.Name}: Version 0.1.0.140. Not installed with its installer, so it doesn't update itself.", lines);
         Assert.Contains("Saved descriptions: 1 photo described.", lines);
         Assert.Contains("Describe Photos Automatically: Off. Turn it on in the Photo menu.", lines);
-        Assert.Contains("Describe Added Folders in the Background: On.", lines);
+        Assert.Contains("Describe Photos in the Background: On.", lines);
         Assert.Contains("Library folders: Needs attention. None. Add one with File > Add Folder to Library.",
             new SystemCheck(Good() with { LibraryFolders = [] }).Items.Select(i => i.Line));
     }

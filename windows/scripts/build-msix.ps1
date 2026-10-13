@@ -1,17 +1,17 @@
 <#
 .SYNOPSIS
-Builds Photo Finder's Windows installer: an MSIX bundle for x64 and Arm64, the Windows App Runtime it depends on,
+Builds My Photo Library Described's Windows installer: an MSIX bundle for x64 and Arm64, the Windows App Runtime it depends on,
 and a PhotoFinder.appinstaller file that installs both.
 
 .DESCRIPTION
-Opening PhotoFinder.appinstaller shows Windows' App Installer: Photo Finder's name, publisher and icon and an
-Install button. It installs the Windows App Runtime first if the PC doesn't have it, then Photo Finder for the
+Opening PhotoFinder.appinstaller shows Windows' App Installer: My Photo Library Described's name, publisher and icon and an
+Install button. It installs the Windows App Runtime first if the PC doesn't have it, then My Photo Library Described for the
 PC's architecture, with a Start menu entry and an uninstall entry in Settings > Apps. Later builds published to
 the same place are installed as updates: Windows checks every few hours, and Help > Check for Updates checks now.
 
 For each architecture it lays out the package in windows\out\msix\<arch>:
-  App\        Photo Finder, self-contained (no .NET install needed)
-  AI\         the Windows AI helper, self-contained; Photo Finder starts it from here
+  App\        My Photo Library Described, self-contained (no .NET install needed)
+  AI\         the Windows AI helper, self-contained; My Photo Library Described starts it from here
   Assets\     the logos, with resources.pri at the root so Windows picks the right size
   AppxManifest.xml   from windows\packaging, with the architecture, version and publisher filled in
 then packs it, bundles both architectures, and writes everything to -Destination:
@@ -175,7 +175,7 @@ foreach ($a in $arches) {
 
     dotnet publish (Join-Path $windows 'src\PhotoFinder\PhotoFinder.csproj') -c Release -r "win-$a" --self-contained true `
         -o (Join-Path $layout 'App') --nologo "-p:Version=$text" "-p:FileVersion=$version"
-    if ($LASTEXITCODE -ne 0) { throw "Publishing Photo Finder for $a failed." }
+    if ($LASTEXITCODE -ne 0) { throw "Publishing My Photo Library Described for $a failed." }
     dotnet publish (Join-Path $windows 'src\PhotoFinderAI\PhotoFinderAI.csproj') -c Release -r "win-$a" `
         -o (Join-Path $layout 'AI') --nologo "-p:Version=$text" "-p:FileVersion=$version"
     if ($LASTEXITCODE -ne 0) { throw "Publishing the Windows AI helper for $a failed." }
@@ -197,7 +197,7 @@ foreach ($a in $arches) {
     }
     # Fully validated, so a manifest mistake fails here rather than when someone installs it.
     Invoke-Tool $makeappx @('pack', '/d', $layout, '/p', (Join-Path $packed "PhotoFinder_$($version)_$a.msix"), '/o') "Packing $a"
-    Write-Host "Packed Photo Finder $version for $a"
+    Write-Host "Packed My Photo Library Described $version for $a"
 }
 
 $bundleName = "PhotoFinder_$version.msixbundle"
@@ -210,14 +210,14 @@ $dependencyXml = foreach ($r in $runtimes) {
 }
 $appInstaller = @"
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Opening this installs Photo Finder with App Installer: the Windows App Runtime first if needed, then Photo Finder
+<!-- Opening this installs My Photo Library Described with App Installer: the Windows App Runtime first if needed, then My Photo Library Described
      for this PC's architecture. Updates are looked for here. -->
 <AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021" Version="$version" Uri="$BaseUri/PhotoFinder.appinstaller">
   <MainBundle Name="TheIdeaPlace.PhotoFinder" Publisher="$([Security.SecurityElement]::Escape($publisher))" Version="$version" Uri="$BaseUri/$bundleName" />
   <Dependencies>
 $($dependencyXml -join "`r`n")
   </Dependencies>
-  <!-- Windows checks every few hours and updates Photo Finder while it isn't running; Help > Check for Updates
+  <!-- Windows checks every few hours and updates My Photo Library Described while it isn't running; Help > Check for Updates
        checks now. Not OnLaunch: checking at each launch stopped the AI helper's photofinder-ai.exe alias from
        starting ("The file cannot be accessed by the system"), found 10/11/2026. -->
   <UpdateSettings>
@@ -237,7 +237,7 @@ Copy-Item -LiteralPath $bundle -Destination $Destination -Force
 Get-ChildItem -LiteralPath $Destination -Filter 'PhotoFinder_*.msixbundle' | Where-Object { $_.Name -ne $bundleName } | Remove-Item -Force
 
 if ($Sign) {
-    Write-Host "Photo Finder $($version): open $(Join-Path $Destination 'PhotoFinder.appinstaller') to install."
+    Write-Host "My Photo Library Described $($version): open $(Join-Path $Destination 'PhotoFinder.appinstaller') to install."
 } else {
-    Write-Host "Photo Finder $version, unsigned, in $Destination. Windows won't install it; build with -Sign for that."
+    Write-Host "My Photo Library Described $version, unsigned, in $Destination. Windows won't install it; build with -Sign for that."
 }

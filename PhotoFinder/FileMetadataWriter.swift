@@ -76,6 +76,8 @@ enum FileMetadataWriter {
     /// for lossless metadata modification"), WebP can't be written at all, and RAW files belong to the camera maker's
     /// format (#31's research). PNG files are written by PNGMetadata, which edits their chunks: ImageIO's copy of a
     /// PNG damages its EXIF UserComment (every screenshot has one) and can't replace the EXIF description (#61).
+    /// JPEG files are written by JPEGMetadata, which edits their segments: ImageIO's copy of a JPEG can drop its
+    /// comment and most of its EXIF, the embedded thumbnail included (#81).
     static let writableTypes: Set<String> = [
         UTType.jpeg.identifier, UTType.png.identifier, UTType.tiff.identifier, UTType.heic.identifier,
     ]
@@ -106,6 +108,8 @@ enum FileMetadataWriter {
     /// a person would call an edit.
     @discardableResult
     static func write(_ changes: FileMetadataChanges, to url: URL) throws -> FileMetadata {
+        // Read-only (#84): nothing is written, whoever asks.
+        guard PhotoChanges.allowed else { throw PhotoChanges.ReadOnly() }
         let name = url.lastPathComponent
         guard canWrite(name: name), !MediaFiles.isRaw(name) else { throw FileMetadataWriteError.unsupportedFormat(formatName(of: name)) }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
@@ -124,9 +128,13 @@ enum FileMetadataWriter {
             expected[captionPath] = caption.isEmpty ? nil : caption
             // dc:title is what Windows' File Explorer shows as the title, and what Photo Finder on Windows used as the
             // caption. It's kept in step when it's empty or still the caption being replaced, never over a real title.
-            // A PNG's own XMP counts too: ImageIO reads a screenshot's EXIF description as its caption ahead of it.
+            // A PNG's or JPEG's own XMP counts too: ImageIO reads an EXIF description as the caption ahead of it.
             let current = CGImageSourceCopyMetadataAtIndex(source, 0, nil)
-            let own = type as String == UTType.png.identifier ? (try? Data(contentsOf: url)).flatMap(PNGMetadata.xmp(of:)) : nil
+            let own: CGImageMetadata? = switch type as String {
+            case UTType.png.identifier: (try? Data(contentsOf: url)).flatMap(PNGMetadata.xmp(of:))
+            case UTType.jpeg.identifier: (try? Data(contentsOf: url, options: .mappedIfSafe)).flatMap(JPEGMetadata.xmp(of:))
+            default: nil
+            }
             func text(_ metadata: CGImageMetadata?, _ path: String) -> String {
                 metadata.flatMap { FileMetadata.xmpString($0, path) }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             }
@@ -164,9 +172,22 @@ enum FileMetadataWriter {
             }
             jpegTail = tail
         }
-        if type as String == UTType.png.identifier {
-            // A PNG's chunks are edited directly (#61), every byte but its XMP and EXIF description copied as it was.
-            try writePNG(from: url, to: temp, expected)
+        if type as String == UTType.png.identifier || type as String == UTType.jpeg.identifier {
+            // A PNG's chunks (#61) and a JPEG's segments (#81) are edited directly, every byte but the XMP and the EXIF
+            // description copied as it was. ImageIO's copy of a JPEG can drop its comment and most of its EXIF, the
+            // embedded thumbnail included.
+            try writeEdited(from: url, to: temp) { data in
+                if type as String == UTType.png.identifier {
+                    return try PNGMetadata.rewrite(data, setting: expected,
+                                                   removingEXIFDescription: expected.keys.contains(captionPath))
+                }
+                // The bytes being rewritten are the ones checked (#111): a file replaced since the check above isn't
+                // written.
+                guard !JPEGLayout.hasMultiPicture(data), JPEGLayout.trailingData(data) == jpegTail else {
+                    throw PNGMetadata.Failure.malformed("It changed while it was being saved.")
+                }
+                return try JPEGMetadata.rewrite(data, setting: expected)
+            }
             guard readsBack(temp, expected) else { throw FileMetadataWriteError.notWritten("The new metadata didn't read back.") }
         } else {
             // Merged into what's there first, which leaves everything else exactly as it was. A HEIC file whose caption
@@ -212,13 +233,12 @@ enum FileMetadataWriter {
         return a == b
     }
 
-    /// A PNG with the fields in `values` set (or removed, for nil). A changed caption also takes out the EXIF
-    /// description, which ImageIO would otherwise read ahead of it.
-    private static func writePNG(from url: URL, to temp: URL, _ values: [String: String?]) throws {
+    /// The file as `rewrite` changes it, written to `temp`. Rewriting refuses anything it can't follow.
+    private static func writeEdited(from url: URL, to temp: URL, _ rewrite: (Data) throws -> Data) throws {
         guard let data = try? Data(contentsOf: url) else { throw FileMetadataWriteError.unreadable }
         let rewritten: Data
         do {
-            rewritten = try PNGMetadata.rewrite(data, setting: values, removingEXIFDescription: values.keys.contains(captionPath))
+            rewritten = try rewrite(data)
         } catch PNGMetadata.Failure.malformed(let reason) {
             throw FileMetadataWriteError.notWritten(reason)
         }
@@ -250,12 +270,10 @@ enum FileMetadataWriter {
                 _ = CGImageMetadataSetValueWithPath(metadata, nil, "\(path)[x-default]" as CFString, text as CFString)
             } else if !merging {
                 _ = CGImageMetadataRemoveTagWithPath(metadata, nil, path as CFString)
-            } else if type as String == UTType.jpeg.identifier {
-                // Merging removes a field set to null, but only in JPEG files: PNG, TIFF and HEIC keep it.
-                _ = CGImageMetadataSetValueWithPath(metadata, nil, path as CFString, kCFNull)
             } else {
-                // There an empty text takes its place, which readers (Photo Finder's too) treat as none, and which
-                // also empties the IPTC and TIFF copies of the caption that ImageIO keeps in step with it.
+                // Merging doesn't remove a field set to null in TIFF and HEIC files, so an empty text takes its place,
+                // which readers (Photo Finder's too) treat as none, and which also empties the IPTC and TIFF copies of
+                // the caption that ImageIO keeps in step with it.
                 _ = CGImageMetadataSetValueWithPath(metadata, nil, "\(path)[x-default]" as CFString, "" as CFString)
             }
         }
