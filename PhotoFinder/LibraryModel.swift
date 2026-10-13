@@ -509,9 +509,11 @@ final class LibraryModel {
     var statusText: String {
         if isLoading { return "Loading…" }
         if showingPhotosNoAccess { return "No access to Photos" }
-        let count = visibleRows.count
-        let items = count == 1 ? "1 item" : "\(count.formatted()) items"
-        return selection.isEmpty ? items : "\(selection.count.formatted()) of \(items) selected"
+        let visible = visibleRows
+        let items = visible.count == 1 ? "1 item" : "\(visible.count.formatted()) items"
+        // Only what's showing counts: a selection that search hides isn't "2 of 1 item selected" (#21).
+        let selected = selection.isEmpty ? 0 : visible.reduce(0) { $0 + (selection.contains($1.id) ? 1 : 0) }
+        return selected == 0 ? items : "\(selected.formatted()) of \(items) selected"
     }
 
     // MARK: - Startup

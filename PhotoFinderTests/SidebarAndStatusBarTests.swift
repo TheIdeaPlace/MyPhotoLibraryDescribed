@@ -165,14 +165,15 @@ final class StatusBarTests: XCTestCase {
 
     @MainActor
     func testASelectionHiddenBySearchIsntCounted() async throws {
-        // Found by #21. Windows keeps only the rows a search still shows selected, so its status bar never says more
-        // are selected than are listed. On the Mac the selection outlives the search, so it reads "2 of 1 item selected".
+        // Found by #21: it read "2 of 1 item selected". On the Mac the selection outlives the search (Windows drops the
+        // hidden rows from it), but only the rows showing are counted.
         let library = try await makeLibrary()
         let model = library.model
         model.selection = [library.id("a.jpg"), library.id("c.jpg")]
         model.searchText = "mov"
-        XCTExpectFailure("#21: a selection hidden by search is still counted in the status bar")
         XCTAssertEqual(model.statusText, "1 item")
+        model.searchText = "a.jpg"
+        XCTAssertEqual(model.statusText, "1 of 1 item selected")
     }
 
     @MainActor
