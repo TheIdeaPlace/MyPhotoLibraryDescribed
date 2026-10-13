@@ -70,10 +70,19 @@ public sealed class BugReportTests : IDisposable
         report.IncludeAttachments = false;
         Assert.DoesNotContain("[crash]", report.Body);
 
-        // When the answers fill the report, an attachment that doesn't fit says so.
+        // When the answers nearly fill the report, an attachment that doesn't fit says so, if that note fits.
+        report.Attachments[0] = report.Attachments[0] with { Text = new string('y', 600) };
+        report.Happened = "";
+        report.IncludeAttachments = false;
+        // About 150 characters left: room for the note, not for the 600-character line.
+        report.Happened = new string('x', BugReport.LongestBody - report.Body.Length - 150);
         report.IncludeAttachments = true;
-        report.Happened = new string('x', BugReport.LongestBody);
         Assert.EndsWith("**Diagnostic log, PhotoFinder-2026-10-13.log (last 40 lines)**\n" + BugReport.DidntFit, report.Body);
+        Assert.True(report.Body.Length <= BugReport.LongestBody);
+        // With no room even for that, it's left out without a word, and the body still fits (#154).
+        report.Happened = new string('x', BugReport.LongestBody);
+        Assert.DoesNotContain(BugReport.DidntFit, report.Body);
+        Assert.DoesNotContain("Diagnostic log", report.Body);
     }
 
     [Fact]
