@@ -525,7 +525,7 @@ public sealed class BackgroundDescriberTests : IDisposable
     }
 
     [WpfFact]
-    public async Task AtAStart_WindowsAINeverAnswering_GivesUp_AndTheStatusBarSaysSo_UntilTurnedOff()
+    public async Task AtAStart_WindowsAINotAnswering_TheStatusBarSaysItsWaiting_WithoutABusyIndicator_UntilTurnedOff()
     {
         var asked = 0;
         var (model, background, _) = await StartAsync(enabled: true,
@@ -534,10 +534,9 @@ public sealed class BackgroundDescriberTests : IDisposable
         {
             background.ResumeRetries = [TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(10)];
             background.Resume();
-            await WaitUntil(() => model.BackgroundProgress is not null);
-            await background.WhenIdleAsync();
-            Assert.Equal(3, asked);
-            Assert.Equal("Background describing couldn't start: Windows AI didn't answer. Turn it off and on to try again.", model.BackgroundProgress);
+            // Said from the first try that fails, and asked again meanwhile.
+            await WaitUntil(() => asked >= 3);
+            Assert.Equal(BackgroundDescriber.WaitingText, model.BackgroundProgress);
             // Nothing's going on, so no busy indicator.
             Assert.False(model.IsBusy);
             Assert.Empty(_described);
@@ -583,7 +582,7 @@ public sealed class BackgroundDescriberTests : IDisposable
     }
 
     [WpfFact]
-    public async Task AtAStart_TheModelNotReady_IsntDownloadedQuietly_AndTheStatusBarSaysHowToGetIt()
+    public async Task AtAStart_TheModelNotReady_IsGotReady_SayingSo_AndDescribingStarts()
     {
         var prepared = 0;
         var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
@@ -591,15 +590,112 @@ public sealed class BackgroundDescriberTests : IDisposable
         using var model = new LibraryModel(settings, _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
             () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1)) { Descriptions = store };
         await model.StartAsync();
+        var release = new TaskCompletionSource<AIReadiness>();
         using var background = new BackgroundDescriber(model, store, (item, _, _) => { _described.Add(item.Name); return Task.FromResult("x"); },
-            _ => Task.FromResult(new AIReadiness(true, "NotReady", null)), _ => { prepared++; return Task.FromResult(Ready); });
+            _ => Task.FromResult(new AIReadiness(true, "NotReady", null)), _ => { prepared++; return release.Task; });
         background.ResumeRetries = [TimeSpan.FromMilliseconds(10)];
         background.Resume();
+        await WaitUntil(() => prepared == 1);
+        // Nothing for the person to do: the status bar says what's happening.
+        Assert.Equal("Getting Windows' image description model ready for background describing", model.BackgroundProgress);
+        release.SetResult(Ready);
+        await WaitUntil(() => _described.Count == 1);
         await background.WhenIdleAsync();
-        Assert.Equal(0, prepared);
-        Assert.Empty(_described);
-        Assert.StartsWith("Background describing is waiting for Windows' image description model.", model.BackgroundProgress);
+        Assert.Equal(["home.jpg"], _described);
+        Assert.Null(model.BackgroundProgress);
         Assert.Empty(_announced);
+    }
+
+    [WpfFact]
+    public async Task WaitingForWindowsAI_StartsByItself_WhenADescriptionWorks()
+    {
+        var working = false;
+        var checks = 0;
+        var (model, background, _) = await StartAsync(enabled: true,
+            check: () => { checks++; return working ? Ready : new AIReadiness(false, "Error", "No answer."); });
+        using (model) using (background)
+        {
+            background.ResumeRetries = [];
+            background.Resume();
+            await WaitUntil(() => model.BackgroundProgress is not null);
+            await background.WhenIdleAsync();
+            Assert.Equal(BackgroundDescriber.WaitingText, model.BackgroundProgress);
+            Assert.DoesNotContain("off and on", model.BackgroundProgress);
+
+            // Describe Photo works: background describing starts, and the message goes.
+            working = true;
+            background.WindowsAIWorked();
+            await WaitUntil(() => _described.Count == 1);
+            await background.WhenIdleAsync();
+            Assert.Equal(["home.jpg"], _described);
+            Assert.Null(model.BackgroundProgress);
+
+            // A later description doesn't start it again: Windows AI isn't even asked.
+            var asked = checks;
+            background.WindowsAIWorked();
+            await background.WhenIdleAsync();
+            Assert.Equal(asked, checks);
+        }
+    }
+
+    [WpfFact]
+    public async Task StopWhileWaitingForWindowsAI_MeansStop_EvenWhenADescriptionThenWorks()
+    {
+        var checks = 0;
+        var (model, background, _) = await StartAsync(enabled: true, check: () => { checks++; return new AIReadiness(false, "Error", "No answer."); });
+        using (model) using (background)
+        {
+            background.ResumeRetries = [TimeSpan.FromMilliseconds(10)];
+            background.ResumePoll = TimeSpan.FromMilliseconds(10);
+            background.Resume();
+            await WaitUntil(() => model.BackgroundProgress == BackgroundDescriber.WaitingText);
+            background.Stop();
+            Assert.Null(model.BackgroundProgress);
+            var asked = checks;
+            background.WindowsAIWorked();
+            await Task.Delay(200);
+            Assert.Equal(asked, checks);
+            Assert.Empty(_described);
+        }
+    }
+
+    [WpfFact]
+    public async Task WaitingForWindowsAI_KeepsAsking_AndStartsWhenItAnswers()
+    {
+        var checks = 0;
+        var (model, background, _) = await StartAsync(enabled: true, check: () => ++checks < 6 ? new AIReadiness(false, "Error", "No answer.") : Ready);
+        using (model) using (background)
+        {
+            background.ResumeRetries = [TimeSpan.FromMilliseconds(10)];
+            background.ResumePoll = TimeSpan.FromMilliseconds(10);
+            background.Resume();
+            // Past the quick retries, it goes on asking, saying it's waiting meanwhile.
+            await WaitUntil(() => _described.Count == 1);
+            Assert.True(checks >= 6);
+            Assert.Equal(["home.jpg"], _described);
+        }
+    }
+
+    [Fact]
+    public async Task AFinishedDescription_IsAnnounced_OnlyWhenItWorked_AndAListenerCantMakeItFail()
+    {
+        var raised = 0;
+        void Count() { raised++; throw new InvalidOperationException("A listener that fails"); }
+        WindowsAI.DescribedOne += Count;
+        try
+        {
+            var stats = new DescribeStats();
+            Assert.Equal("Fine", await WindowsAI.CountedAsync(stats, () => Task.FromResult(("Fine", TimeSpan.FromSeconds(1))), default, default));
+            Assert.Equal(1, raised);
+            Assert.Empty(stats.RecentFailures());
+            await Assert.ThrowsAsync<DescriptionException>(() => WindowsAI.CountedAsync(stats,
+                () => throw new DescriptionException("internal_error", "No."), default, default));
+            Assert.Equal(1, raised);
+        }
+        finally
+        {
+            WindowsAI.DescribedOne -= Count;
+        }
     }
 
     [WpfFact]

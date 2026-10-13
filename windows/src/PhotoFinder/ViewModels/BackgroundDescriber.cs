@@ -56,12 +56,16 @@ public sealed class BackgroundDescriber : IDisposable
         _busy.Add(task);
     }
 
-    /// <summary>For tests: finishes once nothing is being checked, queued or described.</summary>
+    /// <summary>For tests: finishes once nothing is being checked, queued or described. Waiting to ask Windows AI again
+    /// counts as idle, since that goes on until it answers.</summary>
     internal async Task WhenIdleAsync()
     {
         var until = DateTime.UtcNow.AddSeconds(10);
-        while ((IsRunning || _busy.Any(t => !t.IsCompleted)) && DateTime.UtcNow < until) await Task.Delay(10);
+        while ((IsRunning || (_busy.Any(t => !t.IsCompleted) && !(_waitingForAI && _asking == 0))) && DateTime.UtcNow < until) await Task.Delay(10);
     }
+
+    /// <summary>For tests: a check of Windows AI is under way.</summary>
+    private int _asking;
 
     public bool Enabled
     {
@@ -105,8 +109,10 @@ public sealed class BackgroundDescriber : IDisposable
         _announceLibrary = false;
         // A new run: the photo still being described belongs to the old one, so it isn't counted again.
         _run++;
-        // And no more asking Windows AI again from the start: Stop means until the next start.
+        // And no more asking Windows AI again from the start, nor starting when a description works: Stop means until the
+        // next start.
         CancelResume();
+        _waitingForAI = false;
         // The status bar clears now, even while the photo already being described finishes.
         Finish();
         return left;
@@ -116,15 +122,39 @@ public sealed class BackgroundDescriber : IDisposable
     {
         // Asks for itself, and says why if it can't.
         CancelResume();
+        _waitingForAI = false;
         if (await CheckWhenTurnedOnAsync()) await DescribeLibraryAsync(announce: true);
     }
 
     /// <summary>At a start: the library's photos not described yet, quietly, tracked so tests can wait for it.</summary>
-    public void Resume() => Busy(ResumeAsync(_resume.Token));
+    public void Resume()
+    {
+        _waitingForAI = false;
+        Busy(ResumeAsync(_resume.Token));
+    }
 
-    /// <summary>How long to wait before asking Windows AI again when it couldn't answer at a start. Tests shorten it.</summary>
+    /// <summary>Gave up waiting for Windows AI at a start: the next description that works anywhere (Describe Photo, say)
+    /// starts it, with nothing for the person to do.</summary>
+    private bool _waitingForAI;
+
+    /// <summary>Windows AI has just described a photo: if background describing was waiting for it, it starts now.</summary>
+    public void WindowsAIWorked()
+    {
+        if (!_waitingForAI || !Enabled || IsRunning) return;
+        Log.Write("background", "Windows AI is working again; background describing starts");
+        CancelResume();
+        Resume();
+    }
+
+    /// <summary>How long to wait before asking Windows AI again when it couldn't answer at a start, then every
+    /// <see cref="ResumePoll"/> after that. Tests shorten them.</summary>
     internal TimeSpan[] ResumeRetries { get; set; } =
-        [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10)];
+        [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(5)];
+
+    internal TimeSpan ResumePoll { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>Said while background describing waits for Windows AI to answer.</summary>
+    internal const string WaitingText = "Background describing is waiting for Windows AI. It starts by itself once Windows AI is working.";
 
     /// <summary>Asking again from a start; cancelled by Stop, turning it off or on, and closing.</summary>
     private CancellationTokenSource _resume;
@@ -137,26 +167,38 @@ public sealed class BackgroundDescriber : IDisposable
     }
 
     /// <summary>Windows AI can be slow to answer just after a start or signing in (the helper's check timing out, say), so
-    /// a check that fails is tried again for a while, rather than waiting for the next start. When it can't start, the
-    /// status bar says why, without a busy indicator, until it's turned off or a folder's photos are described.</summary>
+    /// a check that fails is asked again, soon and then every ten minutes, rather than waiting for the next start;
+    /// meanwhile the status bar says it's waiting, without a busy indicator, and the first description that works anywhere
+    /// starts it at once. When Windows AI can't describe on this PC at all, the status bar says why and it stops asking.</summary>
     private async Task ResumeAsync(CancellationToken cancel)
     {
-        string? problem = null;
-        foreach (var wait in (TimeSpan[])[TimeSpan.Zero, .. ResumeRetries])
+        var tries = 0;
+        while (!cancel.IsCancellationRequested)
         {
-            if (wait > TimeSpan.Zero)
+            var (tryAgain, problem) = await DescribeLibraryAsync(cancel: cancel);
+            if (cancel.IsCancellationRequested) return;
+            if (!tryAgain)
             {
-                try { await Task.Delay(wait, cancel); }
-                catch (OperationCanceledException) { return; }
+                _waitingForAI = false;
+                if (problem is not null && Enabled && !IsRunning)
+                {
+                    Log.Write("background", $"Not describing: {problem}");
+                    _model.ShowBackgroundProblem(problem);
+                }
+                return;
             }
-            bool tryAgain;
-            (tryAgain, problem) = await DescribeLibraryAsync(cancel: cancel);
-            if (!tryAgain) break;
-            problem = "Background describing couldn't start: Windows AI didn't answer. Turn it off and on to try again.";
+            if (!Enabled) return;
+            if (!IsRunning)
+            {
+                if (!_waitingForAI) Log.Write("background", "Waiting for Windows AI; asking again soon, then every ten minutes");
+                _model.ShowBackgroundProblem(WaitingText);
+                _waitingForAI = true;
+            }
+            var wait = tries < ResumeRetries.Length ? ResumeRetries[tries] : ResumePoll;
+            tries++;
+            try { await Task.Delay(wait, cancel); }
+            catch (OperationCanceledException) { return; }
         }
-        if (problem is null || cancel.IsCancellationRequested) return;
-        Log.Write("background", $"Not describing until it's turned off and on, or the next start: {problem}");
-        if (Enabled && !IsRunning) _model.ShowBackgroundProblem(problem);
     }
 
     /// <summary>The library's photos not described yet, newest first, queued: when it's turned on, and when My Photo Library Described
@@ -168,6 +210,7 @@ public sealed class BackgroundDescriber : IDisposable
         if (!Enabled) return (false, null);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token, cancel);
         AIReadiness readiness;
+        _asking++;
         try
         {
             readiness = await _check(linked.Token);
@@ -181,7 +224,38 @@ public sealed class BackgroundDescriber : IDisposable
             Log.Error("background", "Couldn't ask Windows AI whether it's ready", ex);
             return (true, null);
         }
+        finally
+        {
+            _asking--;
+        }
         if (!Enabled || linked.IsCancellationRequested) return (false, null);
+        if (readiness.State == "NotReady")
+        {
+            // The model's gone since it was turned on (a Windows update, say): got ready again, saying so, rather than
+            // waiting for the person to do something. The first time it can take a few minutes.
+            Log.Write("background", "Windows AI's model isn't ready; getting it ready");
+            if (!IsRunning) _model.BackgroundProgress = "Getting Windows' image description model ready for background describing";
+            try
+            {
+                readiness = await _prepare(linked.Token);
+            }
+            catch (OperationCanceledException) when (linked.IsCancellationRequested)
+            {
+                return (false, null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("background", "Windows AI's model couldn't be got ready", ex);
+                readiness = new AIReadiness(true, "Error", ex.Message);
+            }
+            finally
+            {
+                if (!IsRunning) _model.BackgroundProgress = null;
+            }
+            if (!Enabled || linked.IsCancellationRequested) return (false, null);
+            // Not ready yet (still downloading, say): asked again later, as for a helper that didn't answer.
+            if (readiness.State == "NotReady") readiness = readiness with { State = "Error" };
+        }
         if (readiness.State != "Ready")
         {
             Log.Write("background", $"Not started: Windows AI is {readiness.State}. {readiness.Message}");
@@ -189,9 +263,6 @@ public sealed class BackgroundDescriber : IDisposable
             {
                 // The helper not starting or not answering in time, which can pass.
                 "Error" => (true, null),
-                // The model's gone since it was turned on (a Windows update, say). Getting it can mean a download of
-                // minutes, so that waits for the person: turning it on again does it, and says so.
-                "NotReady" => (false, "Background describing is waiting for Windows' image description model. Turn it off and on to get the model ready."),
                 _ => (false, $"Background describing can't run. {readiness.Message}"),
             };
         }
