@@ -103,10 +103,7 @@ final class BackgroundDescriber {
             let session = LanguageModelSession(instructions: ImageConversation.instructions)
             let prompt = ImageConversation.describePrompt
             do {
-                let answer = try await session.respond {
-                    prompt
-                    Attachment(image)
-                }.content
+                let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image)
                 // Corrected in the Description panel while this was being described: the person's words win.
                 if !cache.isEdited(forKey: asset.localIdentifier) { cache.remember(answer, for: asset) }
                 guard run == generation else { return }
@@ -161,10 +158,7 @@ final class BackgroundDescriber {
         let session = LanguageModelSession(instructions: ImageConversation.instructions)
         let prompt = ImageConversation.describePrompt
         do {
-            let answer = try await session.respond {
-                prompt
-                Attachment(image)
-            }.content
+            let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image)
             let key = file.descriptionKey
             if !cache.isEdited(forKey: key) { cache.remember(answer, forKey: key) }
             guard run == generation else { return }

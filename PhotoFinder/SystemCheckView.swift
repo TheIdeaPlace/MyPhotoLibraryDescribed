@@ -4,6 +4,7 @@ import SwiftUI
 /// Help > Check System…: the checks as a list, read one line at a time, with Copy to Clipboard and Report a Bug.
 struct SystemCheckView: View {
     @Environment(LibraryModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
     @State private var check: SystemCheck?
     /// The check you're on, so the arrow keys move through them and VoiceOver reads each one.
     @State private var selected: SystemCheck.Item.ID?
@@ -48,6 +49,7 @@ struct SystemCheckView: View {
         }
         .padding()
         .frame(minWidth: 520, minHeight: 360)
+        .closesWithKeyboard { dismiss() }
         .onAppear(perform: refresh)
         // Chosen again from the Help menu while open: check again rather than show old results.
         .onChange(of: model.systemCheckRequest) { refresh() }
