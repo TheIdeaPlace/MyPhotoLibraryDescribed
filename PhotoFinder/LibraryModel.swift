@@ -490,13 +490,17 @@ final class LibraryModel {
     var visibleRows: [FileRow] {
         let query = searchText.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return rows }
-        return rows.filter {
-            $0.name.localizedCaseInsensitiveContains(query)
-                || $0.kind.localizedCaseInsensitiveContains(query)
-                || $0.caption.localizedCaseInsensitiveContains(query)
-                || $0.keywords.localizedCaseInsensitiveContains(query)
-                || $0.dateText.localizedCaseInsensitiveContains(query)
-        }
+        return rows.filter { Self.matchesSearch($0, query) }
+    }
+
+    /// Whether a row is found by a search, already trimmed and not empty: its name, kind, caption, keywords or date,
+    /// ignoring case, as on Windows.
+    nonisolated static func matchesSearch(_ row: FileRow, _ query: String) -> Bool {
+        row.name.localizedCaseInsensitiveContains(query)
+            || row.kind.localizedCaseInsensitiveContains(query)
+            || row.caption.localizedCaseInsensitiveContains(query)
+            || row.keywords.localizedCaseInsensitiveContains(query)
+            || row.dateText.localizedCaseInsensitiveContains(query)
     }
 
     var currentItem: SidebarItem? { selectedSourceID.flatMap { itemsByID[$0] } }
@@ -597,20 +601,20 @@ final class LibraryModel {
 
     // MARK: - Sidebar
 
-    private static let hiddenSmartAlbums: Set<Int> = [
+    static let hiddenSmartAlbums: Set<Int> = [
         PHAssetCollectionSubtype.smartAlbumUserLibrary.rawValue,
         PHAssetCollectionSubtype.smartAlbumAllHidden.rawValue,
         1_000_000_201, // Recently Deleted
     ]
 
-    private static let smartAlbumOrder: [PHAssetCollectionSubtype] = [
+    static let smartAlbumOrder: [PHAssetCollectionSubtype] = [
         .smartAlbumFavorites, .smartAlbumRecentlyAdded, .smartAlbumVideos, .smartAlbumLivePhotos,
         .smartAlbumScreenshots, .smartAlbumSelfPortraits, .smartAlbumDepthEffect, .smartAlbumPanoramas,
         .smartAlbumBursts, .smartAlbumSlomoVideos, .smartAlbumTimelapses, .smartAlbumCinematic,
         .smartAlbumLongExposures, .smartAlbumAnimated, .smartAlbumRAW,
     ]
 
-    private static func symbol(for subtype: PHAssetCollectionSubtype) -> String {
+    static func symbol(for subtype: PHAssetCollectionSubtype) -> String {
         switch subtype {
         case .smartAlbumFavorites: "heart"
         case .smartAlbumRecentlyAdded: "clock"
@@ -660,19 +664,7 @@ final class LibraryModel {
         }
         library += ranked.sorted { ($0.rank, $0.item.title) < ($1.rank, $1.item.title) }.map(\.item)
 
-        var dates: [SidebarItem] = []
-        for year in dateBuckets.keys.sorted(by: >) {
-            let months = dateBuckets[year] ?? [:]
-            let yearID = "year:\(year)"
-            let children = months.keys.sorted(by: >).map { month in
-                SidebarItem(id: "month:\(year)-\(month)", title: Self.monthTitle(year: year, month: month),
-                            kind: .month(year: year, month: month), systemImage: "calendar",
-                            count: months[month] ?? 0, children: nil, parentID: yearID, containerKind: "Month")
-            }
-            dates.append(SidebarItem(id: yearID, title: String(year), kind: .year(year), systemImage: "folder",
-                                     count: months.values.reduce(0, +), children: children, parentID: nil,
-                                     containerKind: "Year"))
-        }
+        let dates = Self.dateItems(dateBuckets)
 
         let albums = collectionItems(PHCollectionList.fetchTopLevelUserCollections(with: nil), parentID: nil)
 
@@ -763,7 +755,24 @@ final class LibraryModel {
         return items
     }
 
-    private static func monthTitle(year: Int, month: Int) -> String {
+    /// The Dates section: years newest first, each holding its months newest first, from photo counts by year and
+    /// month.
+    nonisolated static func dateItems(_ buckets: [Int: [Int: Int]]) -> [SidebarItem] {
+        buckets.keys.sorted(by: >).map { year in
+            let months = buckets[year] ?? [:]
+            let yearID = "year:\(year)"
+            let children = months.keys.sorted(by: >).map { month in
+                SidebarItem(id: "month:\(year)-\(month)", title: monthTitle(year: year, month: month),
+                            kind: .month(year: year, month: month), systemImage: "calendar",
+                            count: months[month] ?? 0, children: nil, parentID: yearID, containerKind: "Month")
+            }
+            return SidebarItem(id: yearID, title: String(year), kind: .year(year), systemImage: "folder",
+                               count: months.values.reduce(0, +), children: children, parentID: nil,
+                               containerKind: "Year")
+        }
+    }
+
+    nonisolated static func monthTitle(year: Int, month: Int) -> String {
         guard let date = Calendar.current.date(from: DateComponents(year: year, month: month, day: 1)) else {
             return "\(month)/\(year)"
         }
