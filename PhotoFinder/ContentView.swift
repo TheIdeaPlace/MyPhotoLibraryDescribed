@@ -93,9 +93,12 @@ struct BrowserView: View {
                 // The Description panel may only just be appearing (Shift-Command-D shows it): tried again a
                 // moment later if focus didn't take.
                 if target == .description {
+                    let serial = model.paneRequest.serial
                     Task { @MainActor in
                         for _ in 0..<5 where pane != .description {
                             try? await Task.sleep(for: .milliseconds(50))
+                            // Another move (F6, Shift-Command-D again) since: that one wins.
+                            guard model.paneRequest.serial == serial else { return }
                             pane = .description
                         }
                     }

@@ -155,8 +155,9 @@ struct PhotoCommands: Commands {
             Button("Previous Pane") { model.movePane(by: -1) }
                 .keyboardShortcut(Self.f6, modifiers: .shift)
             // To the Description panel's text, and back to the list or gallery you came from (Kelly, 13 Oct).
-            Button("Go to Description or Back") { model.toggleDescriptionFocus() }
+            Button("Go to Description or Back to Photos") { model.toggleDescriptionFocus() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
+                .disabled(!model.canStepPhotos)
             // The status bar from anywhere (#84): Control-F9 reads it, Control-Shift-F9 goes to it. In Go, with the
             // panes, rather than View (Kelly, 13 Oct).
             Button("Go to Status Bar") { model.goToStatusBar() }
@@ -186,6 +187,7 @@ struct PhotoCommands: Commands {
             // Describe Again keeps Option-Shift-Command-D: Option-Command-D is macOS's own Dock shortcut.
             Button("Describe Photo") { model.describeFocusedPhoto() }
                 .keyboardShortcut("d", modifiers: .command)
+                .disabled(!model.canStepPhotos)
             Button("Describe Again") { model.describeFocusedPhotoAgain() }
                 .keyboardShortcut("d", modifiers: [.command, .shift, .option])
             Toggle("Describe Photos Automatically", isOn: Binding(

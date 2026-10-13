@@ -1,7 +1,7 @@
 import Foundation
 import Photos
 
-/// File > Read-Only (#84, Kelly, 12 Oct): "absolutely nothing can touch a user's photo aside from reading to get
+/// File > Read-Only Mode (#84, Kelly, 12 Oct): "absolutely nothing can touch a user's photo aside from reading to get
 /// descriptions" until the person agrees. Every launch starts read-only, and allowing changes lasts until the app quits.
 /// This is the gate every write goes through, Photos library changes and file writes alike, so it holds even if a
 /// menu or a new feature forgets to ask.

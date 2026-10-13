@@ -268,10 +268,10 @@ final class LibraryModel {
 
     // MARK: - Read-only (#84)
 
-    /// File > Read-Only: on at every launch; allowing changes lasts until the app quits (Kelly, 12 Oct).
+    /// File > Read-Only Mode: on at every launch; allowing changes lasts until the app quits (Kelly, 12 Oct).
     private(set) var readOnly = true
 
-    /// Turns Read-Only off, after asking every time, or back on.
+    /// Turns Read-Only Mode off, after asking every time, or back on.
     func setReadOnly(_ on: Bool) {
         if !on {
             let alert = NSAlert()
@@ -1937,7 +1937,7 @@ final class LibraryModel {
 
     // MARK: - Describe Photo
 
-    /// Photo > Describe Photo (Shift-Command-D): describes the photo you're on with Apple Intelligence and speaks it,
+    /// Photo > Describe Photo (Command-D): describes the photo you're on with Apple Intelligence and speaks it,
     /// in the list or gallery. A saved description is spoken at once.
     func describeFocusedPhoto() {
         guard let row = focusedRow, !row.isContainer, let key = descriptionKey(for: row.id) else {
@@ -2493,7 +2493,7 @@ final class LibraryModel {
         return provider
     }
 
-    /// Go > Go to Description or Back (Shift-Command-D): to the Description panel's text, showing the panel if it's
+    /// Go > Go to Description or Back to Photos (Shift-Command-D): to the Description panel's text, showing the panel if it's
     /// hidden; from there, back to the list or gallery.
     func toggleDescriptionFocus() {
         if !showDescriptionPanel { showDescriptionPanel = true }

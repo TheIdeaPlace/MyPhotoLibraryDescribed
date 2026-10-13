@@ -118,7 +118,7 @@ final class AutoDescriberTests: XCTestCase {
     func testDescribePhotoDuringThePauseIsNotDescribedTwice() async {
         let describer = make(enabled: true)
         move(describer, to: "a")
-        describer.describingManually("a")  // Shift-Command-D before the pause ends
+        describer.describingManually("a")  // Command-D before the pause ends
         await describer.whenIdle()
         XCTAssertEqual(described, [])
     }
