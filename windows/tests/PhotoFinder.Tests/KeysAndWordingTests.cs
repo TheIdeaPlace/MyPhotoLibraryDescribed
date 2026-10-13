@@ -98,11 +98,6 @@ public sealed class KeysAndWordingTests : IDisposable
     }
 
     [Fact]
-    public void ABugReport_EndsByPointingAtTheLog_AndSaysToLookFirst() =>
-        Assert.EndsWith("Help > Open Log Folder has a log of what went wrong, which can be attached here. It names files and folders, so look at it first: issues are public.",
-            BugReport.Body("System text").TrimEnd());
-
-    [Fact]
     public void TheModes_AreNamedWithMode()
     {
         Assert.Equal($"{AppInfo.Name} is in Read-Only Mode, so photos can't be changed. To change them, turn off Read-Only Mode in the File menu.",

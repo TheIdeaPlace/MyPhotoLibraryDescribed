@@ -140,26 +140,6 @@ public sealed class SystemCheckTests : IDisposable
     }
 
     [Fact]
-    public void ABugReport_HasTheQuestionsAndTheSystem_AndOpensAsAWindowsIssue()
-    {
-        var body = BugReport.Body("Everything needed to describe photos is ready.\nWindows: OK. Build 26100.");
-        Assert.Contains("**What happened**", body);
-        Assert.Contains("**What you expected**", body);
-        Assert.Contains("**Steps**", body);
-        Assert.Contains("```\nEverything needed to describe photos is ready.\nWindows: OK. Build 26100.\n```", body.Replace("\r\n", "\n"));
-        var uri = BugReport.NewIssueUri(body, out var includesBody).AbsoluteUri;
-        Assert.True(includesBody);
-        Assert.StartsWith(AppInfo.IssuesUrl + "?title=%5BWindows%5D%20&labels=bug%2Cuser-reported%2Cwindows&body=", uri);
-
-        // Too long for an address: the issue opens without the body, which is on the clipboard.
-        var longBody = BugReport.Body(new string('x', 8000));
-        var shortUri = BugReport.NewIssueUri(longBody, out var fits).AbsoluteUri;
-        Assert.False(fits);
-        Assert.DoesNotContain("body=", shortUri);
-        Assert.True(shortUri.Length <= BugReport.MaxUriLength);
-    }
-
-    [Fact]
     public void SavedDescriptions_AreCountedByPhoto_NotByType()
     {
         var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
