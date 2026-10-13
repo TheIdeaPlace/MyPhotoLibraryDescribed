@@ -45,12 +45,12 @@ struct LabelsSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             TabView(selection: $tab) {
                 OrderListEditor(editor: $columns, text: .columns, preview: listPreview, focus: $focus,
-                                available: .listAvailable, shown: .listShown)
+                                available: .listAvailable, shown: .listShown, isActive: tab == .list)
                     .padding()
                     .tabItem { Text("List") }
                     .tag(Tab.list)
                 OrderListEditor(editor: $gallery, text: .gallery, preview: galleryPreview, focus: $focus,
-                                available: .galleryAvailable, shown: .galleryShown)
+                                available: .galleryAvailable, shown: .galleryShown, isActive: tab == .gallery)
                     .padding()
                     .tabItem { Text("Gallery") }
                     .tag(Tab.gallery)
@@ -124,6 +124,8 @@ struct OrderListEditor: View {
     var focus: FocusState<OrderField?>.Binding
     let available: OrderField
     let shown: OrderField
+    /// Whether this is the tab showing.
+    let isActive: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -168,13 +170,13 @@ struct OrderListEditor: View {
                 Button("Add") { say(editor.add()) }
                 Button("Remove") { say(editor.remove()) }
                 Button("Move Up") { say(editor.move(by: -1)) }
-                    .keyboardShortcut(.upArrow, modifiers: .option)
+                    .keyboardShortcut(shortcut(.upArrow))
                 Button("Move Down") { say(editor.move(by: 1)) }
-                    .keyboardShortcut(.downArrow, modifiers: .option)
+                    .keyboardShortcut(shortcut(.downArrow))
                 Button("Move to Top") { say(editor.moveToEnd(top: true)) }
-                    .keyboardShortcut(.home, modifiers: .option)
+                    .keyboardShortcut(shortcut(.home))
                 Button("Move to Bottom") { say(editor.moveToEnd(top: false)) }
-                    .keyboardShortcut(.end, modifiers: .option)
+                    .keyboardShortcut(shortcut(.end))
                 Button("Reset to Default") { say(editor.reset()) }
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -185,6 +187,11 @@ struct OrderListEditor: View {
                     .accessibilityValue(preview)
             }
         }
+    }
+
+    /// Option with the key, only on the tab showing, so a tab that's out of sight can never take the key instead.
+    private func shortcut(_ key: KeyEquivalent) -> KeyboardShortcut? {
+        isActive ? KeyboardShortcut(key, modifiers: .option) : nil
     }
 
     private func say(_ text: String) {
