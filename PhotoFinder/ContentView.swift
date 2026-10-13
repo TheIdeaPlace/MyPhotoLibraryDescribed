@@ -31,11 +31,17 @@ struct BrowserView: View {
             for _ in 0..<10 {
                 try? await Task.sleep(for: .milliseconds(30))
                 guard pendingStatusFocus == target else { return }
+                // Again each time: a try SwiftUI turned down counts as leaving the status bar, which makes it
+                // unfocusable.
+                model.statusBarReachable = true
                 pane = target
                 try? await Task.sleep(for: .milliseconds(30))
                 if pane == target { break }
             }
-            if pendingStatusFocus == target { pendingStatusFocus = nil }
+            guard pendingStatusFocus == target else { return }
+            pendingStatusFocus = nil
+            // It never took: out of the Tab order again.
+            if case .status? = pane {} else { model.statusBarReachable = false }
         }
     }
 
@@ -85,7 +91,6 @@ struct BrowserView: View {
                 pane = target
             }
         }
-
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .sheet(item: $model.infoTarget) { InfoView(target: $0) }
         .sheet(item: $model.captionTarget) { CaptionEditor(target: $0, model: model) }
@@ -464,8 +469,8 @@ private struct StatusBar: View {
                     .accessibilityHidden(true)
             }
             ForEach(shown, id: \.self) { section in
-                // `.edit`, not the default `.activate`: macOS only lets `.activate` views take focus when Keyboard
-                // navigation is on in System Settings, so F6 found nowhere to land without it.
+                // `.edit`: a view that only has `.activate` takes focus on macOS only with Keyboard navigation on, so
+                // this makes sure F6 can land here either way.
                 Text(text(section) ?? "")
                     .focusable(model.statusBarReachable, interactions: .edit)
                     .focused(pane, equals: .status(section))
