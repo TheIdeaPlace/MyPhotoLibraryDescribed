@@ -96,7 +96,8 @@ On the Mac, Photo Finder > Settings (Command-,) has the description prompt, Save
 - **Report a Bug…** opens a new GitHub issue in your browser with the details filled in. GitHub issues are public, and nothing is sent until you submit it.
 - **Check System…** checks that your computer can describe photos, and says what to do if it can't.
 - **Mac only, for now:** User Guide opens this guide, and Privacy Policy opens the privacy policy.
-- **Windows only, for now:** Check AI Description… describes a sample photo to show describing works, and Open Log Folder opens the diagnostic log.
+- **Check AI Description…** describes a sample photo that comes with the app (a red mug on a table beside a sign reading OPEN), to show describing works end to end. It saves nothing.
+- **Windows only, for now:** Open Log Folder opens the diagnostic log.
 
 ## Keyboard shortcut reference
 

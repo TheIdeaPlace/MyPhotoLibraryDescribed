@@ -30,6 +30,12 @@ struct PhotoFinderApp: App {
                 .environment(model)
         }
         .windowResizability(.contentSize)
+
+        Window("Check AI Description", id: "aiDescriptionCheck") {
+            AIDescriptionCheckView()
+                .environment(model)
+        }
+        .windowResizability(.contentSize)
     }
 }
 
@@ -118,6 +124,11 @@ struct PhotoCommands: Commands {
             Button("Check System…") {
                 model.systemCheckRequest += 1
                 openWindow(id: "systemCheck")
+            }
+            // After Check System, as on Windows (#95).
+            Button("Check AI Description…") {
+                model.aiDescriptionCheckRequest += 1
+                openWindow(id: "aiDescriptionCheck")
             }
             Divider()
             Button("\(AppInfo.name) User Guide") { NSWorkspace.shared.open(AppInfo.userGuideURL) }

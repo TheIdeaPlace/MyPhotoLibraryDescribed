@@ -2149,19 +2149,79 @@ final class LibraryModel {
 #else
         let appleSilicon = false
 #endif
+        var aiModelState: String?
+        var aiLanguage: String?
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        if #available(macOS 27, *) {
+            aiModelState = ImageConversation.modelState
+            aiLanguage = ImageConversation.languageText
+        }
+#endif
+        let stats = DescribeStats.session
         return SystemCheck(.init(
             appName: AppInfo.name, appVersion: AppInfo.version,
             osVersion: ProcessInfo.processInfo.operatingSystemVersion, appleSilicon: appleSilicon,
             aiUnavailableReason: describeUnavailableReason,
             photosAccess: PHPhotoLibrary.authorizationStatus(for: .readWrite),
             savedDescriptions: descriptions.count,
-            describeAutomatically: describeAutomatically, describeInBackground: describeInBackground))
+            describeAutomatically: describeAutomatically, describeInBackground: describeInBackground,
+            osBuild: SystemDetails.osBuild, chip: SystemDetails.chip, memory: SystemDetails.memory(),
+            power: SystemDetails.power(), aiModelState: aiModelState, aiLanguage: aiLanguage,
+            describeTimings: stats.timings(), recentFailures: stats.recentFailures(),
+            aiDescriptionCheck: lastAIDescriptionCheck?.reportSummary))
+    }
+
+    /// Help > Check AI Description chosen; an open Check AI Description window describes again.
+    var aiDescriptionCheckRequest = 0
+
+    /// Check AI Description's last result this session, for Check System and Report a Bug.
+    private(set) var lastAIDescriptionCheck: AIDescriptionCheck?
+
+    /// Help > Check AI Description (#95): describes the sample photo that comes with the app, through the same path as
+    /// Describe Photo, with the prompt in use. Saves nothing and touches no photo. Nil when it was given up (the window
+    /// closed).
+    func runAIDescriptionCheck() async -> AIDescriptionCheck? {
+        let system = SystemCheck.osText(ProcessInfo.processInfo.operatingSystemVersion, build: SystemDetails.osBuild)
+        let standardPrompt = DescriptionPrompt.current == DescriptionPrompt.standard
+        func result(_ description: String?, took: Double, code: String? = nil, message: String? = nil) -> AIDescriptionCheck {
+            let check = AIDescriptionCheck(description: description, took: took, code: code, message: message,
+                                           standardPrompt: standardPrompt, modelSystem: system)
+            lastAIDescriptionCheck = check
+            return check
+        }
+        // Apple Intelligence can't describe here: say so rather than try.
+        if let reason = describeUnavailableReason { return result(nil, took: 0, code: "unavailable", message: reason) }
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        if #available(macOS 27, *) {
+            guard let url = Bundle.main.url(forResource: "SamplePhoto", withExtension: "jpg"),
+                  let data = try? Data(contentsOf: url) else {
+                return result(nil, took: 0, code: "missing_sample", message: "The sample photo is missing from the app")
+            }
+            let start = ContinuousClock.now
+            do {
+                let text = try await PhotoDescriber.describe(data)
+                guard !Task.isCancelled else { return nil }
+                guard let text else {
+                    return result(nil, took: PhotoDescriber.seconds(since: start), code: "decode_failed",
+                                  message: "The sample photo couldn't be read")
+                }
+                return result(text, took: PhotoDescriber.seconds(since: start))
+            } catch {
+                guard !(error is CancellationError), !Task.isCancelled else { return nil }
+                return result(nil, took: PhotoDescriber.seconds(since: start), code: ImageConversation.failureCode(for: error),
+                              message: ImageConversation.message(for: error))
+            }
+        }
+#endif
+        return result(nil, took: 0, code: "unavailable", message: "Describing photos needs Apple Intelligence on macOS 27 or later")
     }
 
     /// Help > Report a Bug…: a new GitHub issue with the system check filled in, and the same text on the clipboard
     /// in case the page doesn't take it all. The app kit's relay replaces this once it's set up for the app (#33).
-    func reportBug() {
-        let body = SystemCheck.bugReportTemplate(systemText: systemCheck().text)
+    /// From Check AI Description, its whole result follows the system check.
+    func reportBug(aiCheck: AIDescriptionCheck? = nil) {
+        let systemText = systemCheck().reportText + (aiCheck.map { "\n\nCheck AI Description: \($0.reportText)" } ?? "")
+        let body = SystemCheck.bugReportTemplate(systemText: systemText)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(body, forType: .string)
         var components = URLComponents(url: AppInfo.issuesURL, resolvingAgainstBaseURL: false)!
@@ -2173,7 +2233,7 @@ final class LibraryModel {
     }
 
     /// Why photos can't be described on this Mac right now, or nil when they can. Never sets anything up.
-    private var describeUnavailableReason: String? {
+    var describeUnavailableReason: String? {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) { return ImageConversation.unavailableReason }
 #endif

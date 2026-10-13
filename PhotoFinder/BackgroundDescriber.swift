@@ -179,11 +179,7 @@ final class BackgroundDescriber {
     }
 
     /// Apple Intelligence is busy rather than unable: worth trying the same photo again after a wait.
-    private static func isBusy(_ error: Error) -> Bool {
-        if let error = error as? LanguageModelError, case .rateLimited = error { return true }
-        if let error = error as? LanguageModelSession.GenerationError, case .rateLimited = error { return true }
-        return false
-    }
+    private static func isBusy(_ error: Error) -> Bool { PhotoDescriber.isRateLimited(error) }
 
     /// Apple Intelligence wouldn't describe this one photo (its content), which says nothing about the next.
     private static func isAboutThisPhoto(_ error: Error) -> Bool {
@@ -221,10 +217,8 @@ final class BackgroundDescriber {
         let session = LanguageModelSession(instructions: ImageConversation.instructions)
         let prompt = ImageConversation.describePrompt
         do {
-            let answer = try await session.respond {
-                prompt
-                Attachment(image)
-            }.content
+            // Through PhotoDescriber, so Check System's timings and failures count it (#94).
+            let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image, countsBusy: false)
             // Corrected in the Description panel while this was being described: the person's words win.
             if !cache.isEdited(forKey: asset.localIdentifier) { cache.remember(answer, for: asset) }
             if run == generation { queue.finished(described: true) }
@@ -266,10 +260,8 @@ final class BackgroundDescriber {
         let session = LanguageModelSession(instructions: ImageConversation.instructions)
         let prompt = ImageConversation.describePrompt
         do {
-            let answer = try await session.respond {
-                prompt
-                Attachment(image)
-            }.content
+            // Through PhotoDescriber, so Check System's timings and failures count it (#94).
+            let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image, countsBusy: false)
             let key = file.descriptionKey
             if !cache.isEdited(forKey: key) { cache.remember(answer, forKey: key) }
             if run == generation { queue.finished(described: true) }
