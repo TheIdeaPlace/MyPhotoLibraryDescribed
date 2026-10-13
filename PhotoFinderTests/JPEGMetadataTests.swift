@@ -566,7 +566,7 @@ final class JPEGMetadataTests: XCTestCase {
 
     // MARK: - Refusing
 
-    func testExtendedXMPIsRefusedAndLeftAlone() throws {
+    func testExtendedXMPTheMainXMPDoesntNameIsRefusedAndLeftAlone() throws {
         let extended = segment(0xE1, JPEGMetadata.extendedXMPHeader + [UInt8](repeating: 0x41, count: 40))
         try assertRefused(.init(caption: short), try makeJPEG(extra: [extended]))
     }
@@ -928,6 +928,240 @@ final class JPEGMetadataTests: XCTestCase {
             XCTAssertFalse(PNGMetadata.onlyImageDescriptionRemoved(from: old, to: zeroedThumbnail), "the thumbnail zeroed")
             let none = exif(big: big, description: nil, thumbnail: thumbnail)
             XCTAssertFalse(PNGMetadata.onlyImageDescriptionRemoved(from: none, to: none), "no description to take out")
+        }
+    }
+
+    // MARK: - Extended XMP (#149)
+
+    private func md5(_ bytes: [UInt8]) -> String {
+        Insecure.MD5.hash(data: bytes).map { String(format: "%02X", $0) }.joined()
+    }
+
+    /// A Pixel Ultra HDR photo's main XMP: the gain map's version, the container's directory, and the GUID naming the
+    /// extension, laid out as Pixel's Adobe XMP Core writes it.
+    private func pixelMainXMP(guid: String?) -> String {
+        """
+        <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc003">
+          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description rdf:about=""
+                xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/"
+                xmlns:xmpNote="http://ns.adobe.com/xmp/note/"
+                xmlns:Container="http://ns.google.com/photos/1.0/container/"
+                xmlns:Item="http://ns.google.com/photos/1.0/container/item/"
+              hdrgm:Version="1.0"\(guid.map { "\n      xmpNote:HasExtendedXMP=\"\($0)\"" } ?? "")>
+              <Container:Directory>
+                <rdf:Seq>
+                  <rdf:li rdf:parseType="Resource">
+                    <Container:Item Item:Mime="image/jpeg" Item:Semantic="Primary"/>
+                  </rdf:li>
+                  <rdf:li rdf:parseType="Resource">
+                    <Container:Item Item:Mime="image/jpeg" Item:Length="62570" Item:Semantic="GainMap"/>
+                  </rdf:li>
+                </rdf:Seq>
+              </Container:Directory>
+            </rdf:Description>
+          </rdf:RDF>
+        </x:xmpmeta>
+        """
+    }
+
+    /// The HDR+ maker note Pixel keeps in the extension: long enough to need two segments.
+    private static let makerNoteText = Data((0..<75_000).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) }).base64EncodedString()
+
+    /// The extension's packet, with a caption of its own when `caption`.
+    private func extensionPacket(caption: String? = nil) -> [UInt8] {
+        let dc = caption.map { """
+             xmlns:dc="http://purl.org/dc/elements/1.1/">
+              <dc:description><rdf:Alt><rdf:li xml:lang="x-default">\($0)</rdf:li></rdf:Alt></dc:description>
+            </rdf:Description>
+            """ } ?? "/>"
+        return Array("""
+        <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc003">
+          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description rdf:about=""
+                xmlns:GCamera="http://ns.google.com/photos/1.0/camera/"
+              GCamera:HdrPlusMakernote="\(Self.makerNoteText)"\(dc)
+          </rdf:RDF>
+        </x:xmpmeta>
+        """.utf8)
+    }
+
+    /// The extension's segments: GUID, the packet's whole length, where the part goes, then the part.
+    private func extensionSegments(_ packet: [UInt8], guid: String, chunk: Int = 65_000) -> [[UInt8]] {
+        stride(from: 0, to: packet.count, by: chunk).map { start in
+            segment(0xE1, JPEGMetadata.extendedXMPHeader + Array(guid.utf8) + u32(packet.count, true) + u32(start, true)
+                    + Array(packet[start..<min(start + chunk, packet.count)]))
+        }
+    }
+
+    /// A photo laid out as a Pixel's Ultra HDR (EXIF, XMP, its extension, then the Multi-Picture index and the gain map
+    /// after the picture), with the camera's other segments too.
+    private func pixelPhoto(_ name: String, main: String?, extensions: [[UInt8]], second: [UInt8]) throws -> URL {
+        let xmp: String?? = main == nil ? .none : .some(main)
+        let url = try makeJPEG(name, xmp: xmp, extra: extensions)
+        let count = try segments(url).filter { (0xE0...0xEF).contains($0.marker) || $0.marker == 0xFE }.count
+        try Data(multiPicture([UInt8](Data(contentsOf: url)), second: second, big: true, after: count)).write(to: url)
+        return url
+    }
+
+    private func extensions(_ url: URL) throws -> [[UInt8]] {
+        try segments(url).filter(JPEGMetadata.isExtendedXMP).map(\.raw)
+    }
+
+    func testAPixelPhotoWithExtendedXMPIsCaptionedAndKeepsItsExtensionAndGainMap() throws {
+        let packet = extensionPacket(), guid = md5(packet)
+        let parts = extensionSegments(packet, guid: guid)
+        XCTAssertEqual(parts.count, 2)
+        let second = try gainMap()
+        let url = try pixelPhoto("pixel.jpg", main: pixelMainXMP(guid: guid), extensions: parts, second: second)
+        let before = [UInt8](try Data(contentsOf: url))
+        let pixelsBefore = try XCTUnwrap(pixels(url))
+        XCTAssertEqual(xmpValue(url, "GCamera:HdrPlusMakernote"), Self.makerNoteText, "ImageIO merges the extension")
+
+        for caption in [short, "A second caption, written over the first."] {
+            let read = try FileMetadataWriter.write(.init(caption: caption, accessibilityDescription: caption), to: url)
+            XCTAssertEqual(read.caption, caption)
+            XCTAssertEqual(read.altText, caption)
+            let after = [UInt8](try Data(contentsOf: url))
+
+            XCTAssertEqual(try extensions(url), parts, "the extension is byte for byte")
+            let main = try XCTUnwrap(JPEGMetadata.xmp(of: Data(after)))
+            XCTAssertEqual(JPEGMetadata.ExtendedXMP.guid(in: main), guid, "the main XMP still names the extension")
+            XCTAssertEqual(FileMetadata.xmpString(main, "hdrgm:Version"), "1.0")
+            XCTAssertEqual(xmpValue(url, "GCamera:HdrPlusMakernote"), Self.makerNoteText, "ImageIO still merges the extension")
+            // The XMP still comes ahead of its extension.
+            let order = try segments(url).map { JPEGMetadata.isXMP($0) ? "XMP" : JPEGMetadata.isExtendedXMP($0) ? "Ext"
+                : MultiPictureIndex.isIndex($0) ? "MPF" : "" }.filter { !$0.isEmpty }
+            XCTAssertEqual(order, ["XMP", "Ext", "Ext", "MPF"])
+            // The index, after the XMP, has the gain map's start moved by what the XMP grew.
+            let (size, start) = try index(after)
+            XCTAssertEqual(size, after.count - second.count)
+            XCTAssertEqual(Array(after[start...]), second)
+            XCTAssertEqual(pixels(url), pixelsBefore)
+            XCTAssertEqual(try untouchedSegments(url).filter { !MultiPictureIndex.isIndex($0) },
+                           try JPEGMetadata.segments(of: Data(before)).segments
+                            .filter { !JPEGMetadata.isXMP($0) && !JPEGMetadata.isEXIF($0) && !MultiPictureIndex.isIndex($0) })
+        }
+    }
+
+    func testExtendedXMPThatDoesntAddUpIsRefusedAndLeftAlone() throws {
+        let packet = extensionPacket(), guid = md5(packet)
+        let parts = extensionSegments(packet, guid: guid)
+        let wrong = md5(packet + [0x20])
+        func renumbered(_ part: [UInt8], at field: Int, _ value: Int) -> [UInt8] {
+            let at = 4 + JPEGMetadata.extendedXMPHeader.count + 32 + field
+            var part = part
+            part.replaceSubrange(at..<(at + 4), with: u32(value, true))
+            return part
+        }
+        let main = pixelMainXMP(guid: guid), lower = guid.lowercased(), other = Array("<x/>".utf8)
+        let empty = segment(0xE1, JPEGMetadata.extendedXMPHeader + Array(guid.utf8) + u32(packet.count, true)
+                            + u32(packet.count, true))
+        let cases: [(String, main: String?, extensions: [[UInt8]])] = [
+            ("the GUID isn't the packet's MD5", pixelMainXMP(guid: wrong), extensionSegments(packet, guid: wrong)),
+            ("the GUID in lowercase", pixelMainXMP(guid: lower), extensionSegments(packet, guid: lower)),
+            ("a part missing", main, [parts[0]]),
+            ("the first part missing", main, [parts[1]]),
+            ("a part twice", main, parts + [parts[1]]),
+            ("parts overlapping", main, [parts[0], renumbered(parts[1], at: 4, 64_999)]),
+            ("a part with another length", main, [parts[0], renumbered(parts[1], at: 0, packet.count + 1)]),
+            ("a part of another extension", main, parts + extensionSegments(other, guid: md5(other))),
+            ("a part with no packet", main, parts + [empty]),
+            ("the main XMP doesn't name it", pixelMainXMP(guid: nil), parts),
+            ("no main XMP", nil, parts),
+        ]
+        for (index, (what, main, extensions)) in cases.enumerated() {
+            let url = try pixelPhoto("bad-\(index).jpg", main: main, extensions: extensions, second: try gainMap())
+            XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(contentsOf: url), setting: [FileMetadataWriter.captionPath: short]),
+                                 what) { error in
+                XCTAssertEqual(error as? PNGMetadata.Failure, JPEGMetadata.ExtendedXMP.refused, what)
+            }
+            try assertRefused(.init(caption: short, accessibilityDescription: short), url)
+        }
+        // The refusal says what it is, as Windows' does.
+        XCTAssertEqual(JPEGMetadata.ExtendedXMP.refused,
+                       .malformed("Its metadata is spread over several parts (Extended XMP) that don't add up, so it isn't changed."))
+    }
+
+    func testAnExtensionHoldingACaptionIsRefusedForTheCaptionButNotForOtherFields() throws {
+        let packet = extensionPacket(caption: "The extension's caption"), guid = md5(packet)
+        let url = try pixelPhoto("caption-in-extension.jpg", main: pixelMainXMP(guid: guid),
+                                 extensions: extensionSegments(packet, guid: guid), second: try gainMap())
+        try assertRefused(.init(caption: short), url)
+        XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(contentsOf: url), setting: ["dc:description": short])) {
+            XCTAssertEqual($0 as? PNGMetadata.Failure, JPEGMetadata.ExtendedXMP.heldInExtension)
+        }
+        // The alt text isn't in the extension, so it can go in the main XMP.
+        let read = try FileMetadataWriter.write(.init(accessibilityDescription: short), to: url)
+        XCTAssertEqual(read.altText, short)
+    }
+
+    func testTheLastLookRefusesAMainXMPThatNoLongerNamesItsExtension() throws {
+        let packet = extensionPacket(), guid = md5(packet)
+        let url = try pixelPhoto("last-look.jpg", main: pixelMainXMP(guid: guid),
+                                 extensions: extensionSegments(packet, guid: guid), second: try gainMap())
+        let data = try Data(contentsOf: url)
+        let (before, picture) = try JPEGMetadata.segments(of: data)
+        let good = [UInt8](try JPEGMetadata.rewrite(data, setting: [FileMetadataWriter.captionPath: short]))
+        XCTAssertNoThrow(try JPEGMetadata.check(Data(good), against: before, picture))
+        // The GUID's last hex digit changed in the new main XMP: the extension no longer belongs to it.
+        let at = try XCTUnwrap(Data(good).range(of: Data(guid.utf8))).lowerBound + 31
+        var bad = good
+        bad[at] = bad[at] == UInt8(ascii: "0") ? UInt8(ascii: "1") : UInt8(ascii: "0")
+        XCTAssertThrowsError(try JPEGMetadata.check(Data(bad), against: before, picture))
+    }
+
+    /// Real photos, when PF_JPEG_SAMPLES names a folder of them (pass TEST_RUNNER_PF_JPEG_SAMPLES to xcodebuild), such
+    /// as the Pixel Ultra HDR originals in github.com/MishaalRahmanGH/Ultra_HDR_Samples. Each is copied, captioned, and
+    /// checked: the caption reads back, ImageIO still finds the same gain map and depth, the picture decodes the same,
+    /// and only the XMP and the index's numbers changed.
+    func testRealPhotosFromAFolderAreCaptionedAndKeepWhatTheyCarry() throws {
+        guard let folder = ProcessInfo.processInfo.environment["PF_JPEG_SAMPLES"] else {
+            throw XCTSkip("Set PF_JPEG_SAMPLES to a folder of JPEGs to try them.")
+        }
+        let names = try FileManager.default.contentsOfDirectory(atPath: folder)
+            .filter { $0.lowercased().hasSuffix(".jpg") }.sorted()
+        XCTAssertFalse(names.isEmpty)
+        func auxiliary(_ url: URL) -> [String: Data] {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return [:] }
+            var found: [String: Data] = [:]
+            for type in [kCGImageAuxiliaryDataTypeHDRGainMap, kCGImageAuxiliaryDataTypeISOGainMap, kCGImageAuxiliaryDataTypeDepth,
+                         kCGImageAuxiliaryDataTypeDisparity, kCGImageAuxiliaryDataTypePortraitEffectsMatte] {
+                if let info = CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, type) as? [CFString: Any],
+                   let data = info[kCGImageAuxiliaryDataInfoData] as? Data { found[type as String] = data }
+            }
+            return found
+        }
+        /// Every text ImageIO reads from the file (EXIF, the XMP with its extension merged in), but the caption,
+        /// title and accessibility fields.
+        func texts(_ url: URL) -> [String: String] {
+            guard let metadata = CGImageSourceCreateWithURL(url as CFURL, nil).flatMap({ CGImageSourceCopyMetadataAtIndex($0, 0, nil) })
+            else { return [:] }
+            var found: [String: String] = [:]
+            for tag in (CGImageMetadataCopyTags(metadata) as? [CGImageMetadataTag]) ?? [] {
+                let name = "\(CGImageMetadataTagCopyPrefix(tag) as String? ?? ""):\(CGImageMetadataTagCopyName(tag) as String? ?? "")"
+                if let text = CGImageMetadataTagCopyValue(tag) as? String, !["dc", "Iptc4xmpCore"].contains(name.prefix { $0 != ":" }) {
+                    found[name] = text
+                }
+            }
+            return found
+        }
+        for name in names {
+            let url = temp.appendingPathComponent(name)
+            try FileManager.default.copyItem(at: URL(fileURLWithPath: folder).appendingPathComponent(name), to: url)
+            let before = try Data(contentsOf: url)
+            let maps = auxiliary(url), pixelsBefore = pixels(url), textsBefore = texts(url)
+            let extensionBefore = try extensions(url)
+            let read = try FileMetadataWriter.write(.init(caption: short, accessibilityDescription: short), to: url)
+            XCTAssertEqual(read.caption, short, name)
+            XCTAssertEqual(read.altText, short, name)
+            XCTAssertEqual(try extensions(url), extensionBefore, name)
+            XCTAssertEqual(auxiliary(url), maps, "\(name): \(maps.keys.sorted())")
+            XCTAssertEqual(pixels(url), pixelsBefore, name)
+            XCTAssertEqual(texts(url), textsBefore, name)
+            XCTAssertEqual(JPEGLayout.trailingData(try Data(contentsOf: url)), JPEGLayout.trailingData(before), name)
+            print("Sample \(name): \(before.count) to \(try Data(contentsOf: url).count) bytes,",
+                  "\(extensionBefore.count) Extended XMP segment(s), \(textsBefore.count) texts, kept \(maps.keys.sorted())")
         }
     }
 }
