@@ -60,6 +60,9 @@ public sealed class BugReport
     /// <summary>Put in place of an attachment's lines left out to fit.</summary>
     public const string LinesLeftOut = "(Earlier lines left out.)";
 
+    /// <summary>In place of an attachment when not even a line fits.</summary>
+    public const string DidntFit = "(Left out: the report is too long to include it.)";
+
     /// <summary>The issue's text: the questions, then the system check, then anything attached, within
     /// <see cref="LongestBody"/>. An empty answer is left out rather than sent as an empty heading.</summary>
     public string Body
@@ -85,8 +88,7 @@ public sealed class BugReport
                 foreach (var a in Attachments.Where(a => a.Text.Length > 0))
                 {
                     var frame = $"**{a.Heading}**\n```\n\n```".Length + 2;
-                    if (Fitted(a.Text, room - frame) is not { } text) break;
-                    var section = $"**{a.Heading}**\n```\n{text}\n```";
+                    var section = Fitted(a.Text, room - frame) is { } text ? $"**{a.Heading}**\n```\n{text}\n```" : $"**{a.Heading}**\n{DidntFit}";
                     sections.Add(section);
                     room -= section.Length + 2;
                 }

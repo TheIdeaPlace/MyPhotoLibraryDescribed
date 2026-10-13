@@ -69,6 +69,11 @@ public sealed class BugReportTests : IDisposable
         Assert.Contains("**Diagnostic log, PhotoFinder-2026-10-13.log (last 40 lines)**\n```\n12:00 [crash] Unhandled\n```", report.Body);
         report.IncludeAttachments = false;
         Assert.DoesNotContain("[crash]", report.Body);
+
+        // When the answers fill the report, an attachment that doesn't fit says so.
+        report.IncludeAttachments = true;
+        report.Happened = new string('x', BugReport.LongestBody);
+        Assert.EndsWith("**Diagnostic log, PhotoFinder-2026-10-13.log (last 40 lines)**\n" + BugReport.DidntFit, report.Body);
     }
 
     [Fact]
@@ -152,6 +157,7 @@ public sealed class BugReportTests : IDisposable
     [Fact]
     public void ACrash_IsTold_ByAFlagLeftFromTheLastRun_ButNotByACopyStillRunning()
     {
+        Directory.CreateDirectory(AppPaths.DataFolder);
         File.Delete(CrashCheck.FlagPath);
         Assert.Null(CrashCheck.Begin(_ => false, processId: 1));
         // Not removed: the next start finds it.
@@ -270,6 +276,7 @@ public sealed class BugReportTests : IDisposable
         try
         {
             var sending = window.SendAsync();
+            Assert.Equal(System.Windows.Visibility.Visible, window.SendingText.Visibility);
             await window.SendAsync();
             Assert.Equal(["Sending", "Still sending"], _announced);
             window.Close();

@@ -96,6 +96,7 @@ public partial class BugReportWindow : Window
         if (_sending) { Announcer.Announce("Still sending"); return; }
         Read();
         _sending = true;
+        SendingText.Visibility = Visibility.Visible;
         Announcer.Announce("Sending");
         try
         {
@@ -122,6 +123,7 @@ public partial class BugReportWindow : Window
         finally
         {
             _sending = false;
+            SendingText.Visibility = Visibility.Collapsed;
         }
     }
 

@@ -7,6 +7,8 @@
     <Grid Margin="14">
         <DockPanel x:Name="FormPanel">
             <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                <!-- For sighted people; screen readers hear "Sending", and the focused button keeps its name. -->
+                <TextBlock x:Name="SendingText" Text="Sending…" VerticalAlignment="Center" Margin="0,0,12,0" Visibility="Collapsed" />
                 <!-- Not the default button: Enter in a field mustn't send a report half written. -->
                 <Button x:Name="SendButton" Content="_Send" MinWidth="90" Padding="10,3" Click="Send_Click" />
                 <Button Content="Cancel" IsCancel="True" MinWidth="80" Padding="10,3" Margin="8,0,0,0" />
