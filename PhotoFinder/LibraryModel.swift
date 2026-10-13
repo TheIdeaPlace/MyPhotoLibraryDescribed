@@ -430,9 +430,11 @@ final class LibraryModel {
                 (self?.describingAgain[id] ?? 0) == 0
             }
         }
-        describer.mayDescribeAhead = {
+        describer.mayDescribeAhead = { [weak self] in
+            // In front through the same check as isStillOn (which tests replace), so a sheet up also waits (#143's
+            // review).
             let info = ProcessInfo.processInfo
-            return NSApplication.shared.isActive && !info.isLowPowerModeEnabled
+            return (self?.isInFront() ?? false) && !info.isLowPowerModeEnabled
                 && [.nominal, .fair].contains(info.thermalState)
         }
         return describer

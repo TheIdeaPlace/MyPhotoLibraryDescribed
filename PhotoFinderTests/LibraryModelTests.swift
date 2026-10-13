@@ -489,8 +489,11 @@ extension XCTestCase {
         }
         try Data("not really a movie".utf8).write(to: photos.appendingPathComponent("b.mov"))
 
-        let suite = "LibraryModelTests.\(UUID().uuidString)"
+        // One fixed suite, cleared first and after: a new name each time left an empty file in ~/Library/Preferences
+        // per test (#143's review).
+        let suite = "LibraryModelTests"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
         defaults.set("name", forKey: ColumnOrder.sortColumnKey)
         defaults.set(false, forKey: ColumnOrder.sortDescendingKey)
         for (key, value) in settings { defaults.set(value, forKey: key) }
