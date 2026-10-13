@@ -15,7 +15,7 @@ The Help menu has Check System, which checks your computer can describe photos w
 
 Help > Check AI Description describes a sample photo that comes with MPLD, to show that describing works on your computer. If your computer doesn't meet the requirements, the [Image Description Toolkit](https://github.com/TheIdeaPlace/Image-Description-Toolkit) can describe photos on a much wider range of hardware, with a choice of AI models.
 
-MPLD can also describe the photos in your library in the background, so their descriptions are ready the moment you arrow to them rather than taking the couple of seconds a new description needs. Turn this on or off with Describe Photos in the Background in the Photo menu. It works through every photo not described yet, newest first, picks up where it left off each time MPLD starts, and the status bar shows how far it's got.
+MPLD can also describe the photos in your library in the background, so their descriptions are ready the moment you arrow to them rather than taking the couple of seconds a new description needs. It's off until you turn it on, with Describe Photos in the Background in the Photo menu, since describing a whole library keeps the computer busy for a while. It works through every photo not described yet, newest first, picks up where it left off each time MPLD starts, and the status bar shows how far it's got.
 
 When MPLD launches, you'll notice it says it's in Read-Only Mode. This means that, aside from reading your photos to describe and show them, MPLD doesn't change your image files at all. Descriptions are kept in MPLD's own files, not in your photos.
 
