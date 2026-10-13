@@ -17,7 +17,7 @@ public sealed class PlaceNames
     public const string Question = "Look up place names?";
 
     public static readonly string Explanation =
-        $"To name the place a photo was taken, {AppInfo.Name} sends the photo's coordinates (its latitude and longitude, and the language Windows uses, so the name comes back in it; nothing else) to OpenStreetMap's Nominatim service when you open Get Info. Nothing is sent until you turn this on, and you can turn it off at any time in the Photo menu.";
+        $"To name the place a photo was taken, {AppInfo.Name} sends the photo's latitude and longitude, and the language Windows uses so the name comes back in it, to OpenStreetMap's Nominatim service when you open Get Info, and nothing about you or the photo. Nothing is sent until you turn this on, and you can turn it off at any time in the Photo menu.";
 
     /// <summary>The credit OpenStreetMap's licence asks for, said with each name.</summary>
     public const string Credit = "© OpenStreetMap contributors";
@@ -33,13 +33,22 @@ public sealed class PlaceNames
     private static readonly HttpClient Http = MakeClient();
 
     /// <summary>Who's asking, as Nominatim's policy requires: the app and where to find it, nothing about the person.</summary>
-    internal static string UserAgent => $"{AppInfo.Name.Replace(" ", "")}/{Updates.AppVersion} (+https://github.com/{AppInfo.Repository})";
+    internal static string UserAgent => $"{Token(AppInfo.Name)}/{Updates.AppVersion} (+https://github.com/{AppInfo.Repository})";
+
+    /// <summary>The app's name as a User-Agent product token: letters and digits only, so a future name with spaces,
+    /// accents or brackets (#34) can't stop the header being made.</summary>
+    internal static string Token(string name)
+    {
+        var token = new string(name.Where(c => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9')).ToArray());
+        return token.Length > 0 ? token : "PhotoFinder";
+    }
 
     private static HttpClient MakeClient()
     {
         // No cookies: nothing ties one lookup to the next.
         var client = new HttpClient(new SocketsHttpHandler { UseCookies = false }) { Timeout = TimeSpan.FromSeconds(10) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+        // Never fails to start: a header Windows won't take is left out rather than breaking Get Info.
+        client.DefaultRequestHeaders.UserAgent.TryParseAdd(UserAgent);
         return client;
     }
 

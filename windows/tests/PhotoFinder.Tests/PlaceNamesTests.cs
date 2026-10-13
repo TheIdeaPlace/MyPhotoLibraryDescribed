@@ -144,6 +144,12 @@ public sealed class PlaceNamesTests : IDisposable
         Assert.Matches(@"^PhotoFinder/[\w.]+ \(\+https://github\.com/kellylford/PhotoFinder\)$", PlaceNames.UserAgent.Replace(AppInfo.Name.Replace(" ", ""), "PhotoFinder"));
     }
 
+    [Theory]
+    [InlineData("Photo Finder", "PhotoFinder")]
+    [InlineData("Fotó (Finder)", "FotFinder")]
+    [InlineData("…", "PhotoFinder")]
+    public void TheAppsName_BecomesAValidProductToken(string name, string token) => Assert.Equal(token, PlaceNames.Token(name));
+
     [Fact]
     public async Task TheQuery_HoldsOnlyTheCoordinatesTheLanguageAndTheFormat()
     {
@@ -272,7 +278,8 @@ public sealed class PlaceNamesTests : IDisposable
                 Assert.False(window.PlaceNamesItem.IsChecked);
                 var question = Assert.Single(asked);
                 Assert.StartsWith("Look up place names?|", question);
-                Assert.Contains("latitude and longitude, and the language Windows uses, so the name comes back in it; nothing else", question);
+                Assert.Contains("latitude and longitude, and the language Windows uses so the name comes back in it", question);
+                Assert.Contains("nothing about you or the photo", question);
                 Assert.Contains("OpenStreetMap's Nominatim", question);
                 Assert.EndsWith("|Look Up Place Names", question);
 
