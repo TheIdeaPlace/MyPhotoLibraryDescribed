@@ -17,7 +17,7 @@ enum PhotoChanges {
 
     /// What a command that would change a photo says while read-only (Windows' wording).
     static var readOnlyMessage: String {
-        "\(AppInfo.name) is read-only, so photos can't be changed. To change them, turn off Read-Only in the File menu."
+        "\(AppInfo.name) is in Read-Only Mode, so photos can't be changed. To change them, turn off Read-Only Mode in the File menu."
     }
 
     struct ReadOnly: LocalizedError {

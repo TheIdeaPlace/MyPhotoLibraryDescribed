@@ -12,7 +12,7 @@ Photo Finder is a free, open-source photo browser built for screen reader users.
 
 - **Descriptions are made on your computer.** On the Mac, Apple Intelligence describes photos on the Mac itself. On Windows, Windows AI describes them on the PC's NPU (Copilot+ PCs). Your photos aren't uploaded to describe them.
 - **Descriptions are saved on your computer**, in Photo Finder's own data folder (`~/Library/Application Support/PhotoFinder` on the Mac; on Windows `%LOCALAPPDATA%\PhotoFinder`, or inside Photo Finder's package data on a PC that didn't have that folder before), so each photo is described once.
-- **Your photos aren't changed** unless you allow it. Every launch starts read-only. Captions and alt text are saved in your photos only after you turn off File > Read-Only, and then only by commands you choose (Edit Caption, Use Description as Caption) or after you turn on Save Descriptions in Photos, which asks first.
+- **Your photos aren't changed** unless you allow it. Every launch starts in Read-Only Mode. Captions and alt text are saved in your photos only after you turn off File > Read-Only Mode, and then only by commands you choose (Edit Caption, Use Description as Caption) or after you turn on Save Descriptions in Photos, which asks first.
 - **Photos in iCloud Photos** (Mac): when you open, preview, export, describe or Get Info a photo that's only in iCloud, macOS downloads it from your own iCloud account, as the Photos app would. Background describing never downloads photos. On Windows, opening, previewing or Get Info on an online-only OneDrive file downloads that file from your OneDrive.
 
 ## When Photo Finder uses the internet
