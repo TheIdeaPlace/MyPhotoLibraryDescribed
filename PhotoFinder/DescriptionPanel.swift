@@ -163,9 +163,9 @@ private struct PanelPreview: View {
                     }
             }
         }
-        // Up to 240 points, shrinking first in a short window so the description keeps its room.
-        .frame(maxWidth: .infinity, minHeight: 0, maxHeight: 240)
-        .layoutPriority(-1)
+        // 240 points when there's room, never less than 140: shrinking to nothing whenever the description was long
+        // hid it altogether (the visual check, 13 Oct). The description box scrolls instead.
+        .frame(maxWidth: .infinity, minHeight: 140, idealHeight: 240, maxHeight: 240)
         .accessibilityHidden(true)
         .task(id: id) {
             let loaded = await model.previewImage(for: id)
