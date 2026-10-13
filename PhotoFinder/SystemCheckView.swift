@@ -51,12 +51,16 @@ struct SystemCheckView: View {
         .frame(minWidth: 520, minHeight: 360)
         .closesWithKeyboard { dismiss() }
         .onAppear(perform: refresh)
+        // The library's photos are counted in the background; the line fills in when they are.
+        .onChange(of: model.libraryCoverage?.described) { check = model.systemCheck() }
+        .onChange(of: model.libraryCoverage?.total) { check = model.systemCheck() }
         // Chosen again from the Help menu while open: check again rather than show old results.
         .onChange(of: model.systemCheckRequest) { refresh() }
     }
 
     private func refresh() {
         let first = check == nil
+        model.countLibraryCoverage()
         check = model.systemCheck()
         // On the first check, ready to arrow through, and VoiceOver starts there. Checking again keeps your place.
         if selected == nil || !(check?.items.contains { $0.id == selected } ?? false) {
