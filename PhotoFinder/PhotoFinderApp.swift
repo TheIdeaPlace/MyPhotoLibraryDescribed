@@ -51,7 +51,11 @@ struct PhotoFinderApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Unit tests run inside the app and end without quitting it, so they'd look like a crash every time.
-    private var testing: Bool { ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil }
+    /// Under unit tests or SwiftUI previews: no crash check or offer.
+    private var testing: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil || environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 

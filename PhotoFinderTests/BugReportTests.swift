@@ -186,6 +186,29 @@ final class BugReportTests: XCTestCase {
         XCTAssertNil(CrashCheck.begin(folder: folder))
     }
 
+    /// #137's review: a second copy running at once isn't a crash of the first.
+    func testAFlagFromACopyStillRunningIsNotACrash() throws {
+        let folder = try temporaryFolder()
+        XCTAssertNil(CrashCheck.begin(folder: folder, pid: 111))
+        XCTAssertNil(CrashCheck.begin(folder: folder, isRunning: { $0 == 111 }, pid: 222))
+        // That copy has gone without removing its flag (killed): now it counts.
+        XCTAssertNotNil(CrashCheck.begin(folder: folder, isRunning: { _ in false }, pid: 333))
+    }
+
+    /// #137's review: only the useful part of a crash report, and nothing that identifies the Mac.
+    func testACrashReportIsSummarisedWithoutIdentifiers() {
+        let header = #"{"app_name":"My Photo Library Described","app_version":"0.2.0","build_version":"1","os_version":"macOS 27.2 (27C5)","incident_id":"ABC-123"}"#
+        let body = #"{"crashReporterKey":"SECRET-KEY","sleepWakeUUID":"WAKE-UUID","userID":501,"exception":{"type":"EXC_BAD_ACCESS","signal":"SIGSEGV"},"termination":{"indicator":"Segmentation fault: 11"},"faultingThread":1,"usedImages":[{"name":"My Photo Library Described"},{"name":"SwiftUI"}],"threads":[{"frames":[]},{"frames":[{"imageIndex":0,"symbol":"LibraryModel.describe()"},{"imageIndex":1,"symbol":"ViewGraph.update"}]}]}"#
+        let summary = CrashCheck.crashSummary(header + "\n" + body)
+        XCTAssertTrue(summary.contains("App: My Photo Library Described 0.2.0 (1)"))
+        XCTAssertTrue(summary.contains("macOS: macOS 27.2 (27C5)"))
+        XCTAssertTrue(summary.contains("Exception: EXC_BAD_ACCESS, SIGSEGV"))
+        XCTAssertTrue(summary.contains("0  My Photo Library Described  LibraryModel.describe()"))
+        XCTAssertTrue(summary.contains("1  SwiftUI  ViewGraph.update"))
+        for secret in ["SECRET-KEY", "WAKE-UUID", "ABC-123", "501"] { XCTAssertFalse(summary.contains(secret), secret) }
+        XCTAssertEqual(CrashCheck.crashSummary("not a crash report"), "macOS wrote a crash report, but it couldn't be read here.")
+    }
+
     func testTheNewestMatchingCrashReportSinceTheLastLaunch() throws {
         let folder = try temporaryFolder()
         let launch = Date(timeIntervalSince1970: 1_800_000_000)

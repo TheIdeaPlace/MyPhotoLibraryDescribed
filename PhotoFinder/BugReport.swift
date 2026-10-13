@@ -187,15 +187,21 @@ enum CrashCheck {
     /// Called at launch: when the last run didn't quit cleanly, when it started (the flag's date), otherwise nil.
     /// Then writes the flag for this run.
     @discardableResult
-    static func begin(folder: URL = dataFolder, now: Date = Date()) -> Date? {
+    static func begin(folder: URL = dataFolder, now: Date = Date(),
+                      isRunning: (Int32) -> Bool = { kill($0, 0) == 0 },
+                      pid: Int32 = ProcessInfo.processInfo.processIdentifier) -> Date? {
         let flag = flagURL(in: folder)
         let fm = FileManager.default
         var previous: Date?
         if fm.fileExists(atPath: flag.path) {
+            // The flag holds the process that wrote it. If that copy is still running (a second copy opened, or a
+            // Debug build beside the installed one), it didn't crash, so there's nothing to offer (#137's review).
+            let owner = (try? String(contentsOf: flag, encoding: .utf8)).flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            if let owner, owner != pid, isRunning(owner) { return nil }
             previous = (try? fm.attributesOfItem(atPath: flag.path)[.modificationDate] as? Date) ?? .distantPast
         }
         try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
-        try? Data().write(to: flag)
+        try? Data(String(pid).utf8).write(to: flag)
         try? fm.setAttributes([.modificationDate: now], ofItemAtPath: flag.path)
         return previous
     }
@@ -234,17 +240,61 @@ enum CrashCheck {
         return Privacy.redact(lines.joined(separator: "\n"), home: home)
     }
 
-    /// What goes with a crash report: the start of macOS's crash report, and the end of today's diagnostic log.
-    static func attachments(since: Date) -> [BugReport.Attachment] {
+    /// What goes with a crash report: a summary of macOS's crash report, and the end of the diagnostic log from the
+    /// day of the crashed run (and today's, when that's another day).
+    static func attachments(since: Date, now: Date = Date()) -> [BugReport.Attachment] {
         var attachments: [BugReport.Attachment] = []
         if let report = newestCrashReport(since: since),
            let text = try? String(contentsOf: report, encoding: .utf8) {
-            attachments.append(.init(name: "the crash report", heading: "Crash report (first 60 lines)", text: excerpt(text, first: 60)))
+            attachments.append(.init(name: "the crash report", heading: "Crash report (summary)", text: crashSummary(text)))
         }
-        let log = DiagnosticLog.folder.appendingPathComponent(DiagnosticLog.fileName(for: Date()))
-        if let text = try? String(contentsOf: log, encoding: .utf8) {
-            attachments.append(.init(name: "today's log", heading: "Diagnostic log (last 40 lines)", text: excerpt(text, last: 40)))
+        var days = [DiagnosticLog.fileName(for: since)]
+        if DiagnosticLog.fileName(for: now) != days[0] { days.append(DiagnosticLog.fileName(for: now)) }
+        for day in days {
+            let log = DiagnosticLog.folder.appendingPathComponent(day)
+            if let text = try? String(contentsOf: log, encoding: .utf8) {
+                attachments.append(.init(name: "the log", heading: "Diagnostic log, \(day) (last 40 lines)", text: excerpt(text, last: 40)))
+            }
         }
         return attachments
+    }
+
+    /// The useful part of a macOS crash report (.ips: a JSON header line, then a JSON body), without what identifies
+    /// the Mac (crashReporterKey, sleepWakeUUID, incident and user IDs) and without the 35 KB thread dump: the app and
+    /// macOS versions, the exception and termination, and the crashed thread's first 20 frames. A report is public,
+    /// and GitHub refuses an issue body over 65,536 characters (#137's review).
+    static func crashSummary(_ text: String, home: String = NSHomeDirectory()) -> String {
+        let parts = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        func json(_ s: String) -> [String: Any]? {
+            (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any]
+        }
+        guard parts.count == 2, let header = json(parts[0]), let body = json(parts[1]) else {
+            return "macOS wrote a crash report, but it couldn't be read here."
+        }
+        var lines: [String] = []
+        let app = [header["app_name"], header["app_version"], (header["build_version"] as? String).map { "(\($0))" }]
+            .compactMap { $0 as? String }.joined(separator: " ")
+        if !app.isEmpty { lines.append("App: \(app)") }
+        if let os = header["os_version"] as? String { lines.append("macOS: \(os)") }
+        if let exception = body["exception"] as? [String: Any] {
+            let text = [exception["type"], exception["signal"], exception["subtype"]].compactMap { $0 as? String }.joined(separator: ", ")
+            if !text.isEmpty { lines.append("Exception: \(text)") }
+        }
+        if let termination = body["termination"] as? [String: Any], let indicator = termination["indicator"] as? String {
+            lines.append("Termination: \(indicator)")
+        }
+        if let images = body["usedImages"] as? [[String: Any]], let threads = body["threads"] as? [[String: Any]] {
+            let index = body["faultingThread"] as? Int ?? 0
+            if threads.indices.contains(index), let frames = threads[index]["frames"] as? [[String: Any]] {
+                lines.append("Crashed thread:")
+                for (n, frame) in frames.prefix(20).enumerated() {
+                    let image = (frame["imageIndex"] as? Int).flatMap { images.indices.contains($0) ? images[$0]["name"] as? String : nil } ?? "?"
+                    let symbol = frame["symbol"] as? String ?? "?"
+                    lines.append("\(n)  \(image)  \(symbol)")
+                }
+            }
+        }
+        let summary = Privacy.redact(lines.joined(separator: "\n"), home: home)
+        return summary.count > 4000 ? String(summary.prefix(4000)) + "\n…" : summary
     }
 }

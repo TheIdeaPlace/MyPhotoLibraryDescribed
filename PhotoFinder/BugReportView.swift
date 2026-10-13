@@ -14,14 +14,18 @@ struct BugReportView: View {
     @State private var sending = false
     @State private var filedNumber: Int?
     @State private var filedURL: URL?
+    /// Not sent (no key, or the relay failed): the report to open in the browser, and why.
+    @State private var unsent: (report: BugReport, couldntSend: Bool)?
     @FocusState private var focus: Field?
 
-    private enum Field: Hashable { case title, openIssue }
+    private enum Field: Hashable { case title, openIssue, openInBrowser }
 
     var body: some View {
         Group {
             if let filedNumber, let filedURL {
                 filed(filedNumber, filedURL)
+            } else if let unsent {
+                notSent(unsent.report, couldntSend: unsent.couldntSend)
             } else {
                 form
             }
@@ -29,7 +33,7 @@ struct BugReportView: View {
         .padding()
         .frame(minWidth: 560)
         // While the form shows, its Cancel button answers Escape.
-        .closesWithKeyboard(escape: filedNumber != nil) { dismiss() }
+        .closesWithKeyboard(escape: filedNumber != nil || unsent != nil) { dismiss() }
         .onAppear {
             // Opened some other way than Report a Bug… (it never should be): start from a fresh draft all the same.
             if model.bugReportRequest == 0 { model.prepareBugReport() }
@@ -118,6 +122,27 @@ struct BugReportView: View {
         }
     }
 
+    /// Not sent: says so and waits, rather than opening the browser at once, which would take focus and cut the
+    /// message off (#137's review). Open in Browser has focus; nothing is posted until the person submits it there.
+    private func notSent(_ report: BugReport, couldntSend: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(couldntSend ? "Couldn't send the report" : "Ready to submit on GitHub")
+                .font(.headline)
+            Text("It's on the clipboard. Open in Browser shows it on GitHub, filled in, to submit there. Nothing is posted until you do.")
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Open in Browser") {
+                    model.openBugReportPage(report)
+                    dismiss()
+                }
+                .focused($focus, equals: .openInBrowser)
+                .keyboardShortcut(.defaultAction)
+                Button("Done") { dismiss() }
+            }
+        }
+    }
+
     /// The model's draft, keeping anything already typed: only the system check and what came with it are replaced.
     private func load() {
         let draft = model.bugReportDraft
@@ -129,13 +154,17 @@ struct BugReportView: View {
         }
         filedNumber = nil
         filedURL = nil
+        unsent = nil
         // A moment later: the form has only just appeared, and focus set in the same update is often lost.
         Task { @MainActor in focus = .title }
     }
 
     private func send() {
         sending = true
-        announce("Sending")
+        // Low priority, so the result that follows isn't held up or cut off by it.
+        var sendingText = AttributedString("Sending")
+        sendingText.accessibilitySpeechAnnouncementPriority = .low
+        AccessibilityNotification.Announcement(sendingText).post()
         let report = report
         Task { @MainActor in
             let result = await model.sendBugReport(report)
@@ -148,11 +177,13 @@ struct BugReportView: View {
                 announce("Report filed as issue #\(number)")
                 Task { @MainActor in focus = .openIssue }
             case .noKey:
-                announce("Opened in your browser to submit. The report is also on the clipboard.")
-                dismiss()
+                unsent = (report, false)
+                announce("Ready to submit on GitHub. The report is on the clipboard.")
+                Task { @MainActor in focus = .openInBrowser }
             case .failed:
-                announce("Couldn't send it, so it's open in your browser to submit. The report is also on the clipboard.")
-                dismiss()
+                unsent = (report, true)
+                announce("Couldn't send the report. It's on the clipboard, to submit on GitHub.")
+                Task { @MainActor in focus = .openInBrowser }
             }
         }
     }

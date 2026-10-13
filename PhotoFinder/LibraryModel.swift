@@ -2307,13 +2307,18 @@ final class LibraryModel {
     func sendBugReport(_ report: BugReport) async -> BugReportRelay.Result {
         let result = await BugReportRelay.send(report, key: AppInfo.relayKey)
         if BugReportRelay.needsBrowser(result) {
+            // On the clipboard now; the page opens when the person chooses Open in Browser.
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(report.clipboardText, forType: .string)
-            NSWorkspace.shared.open(report.issuePageURL())
         } else if case .filed(let number, _) = result {
             DiagnosticLog.write("report", "Filed as issue #\(number)")
         }
         return result
+    }
+
+    /// The prefilled GitHub issue page, for a report the relay didn't file.
+    func openBugReportPage(_ report: BugReport) {
+        NSWorkspace.shared.open(report.issuePageURL())
     }
 
     /// At launch, when the last run didn't quit cleanly (#33): asks once whether to report it. Report… opens the form
