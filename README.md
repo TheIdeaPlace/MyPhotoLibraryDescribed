@@ -1,6 +1,6 @@
 # My Photo Library Described
 
-A photo browser built for screen reader users, on the Mac and on Windows. It shows your photos the way Finder or File Explorer shows files, in a list or a gallery, and describes each photo as you move to it, using the AI built into your computer: Apple Intelligence on the Mac (macOS 27 on Apple silicon), Windows AI on a Copilot+ PC. Photos aren't uploaded to describe them. Without the AI it still browses, searches, sorts and shows your photos.
+A screen-reader-friendly photo browser for the Mac and Windows. It shows your photos the way Finder or File Explorer shows files, in a list or a gallery, and describes each photo as you move to it, using the AI built into your computer: Apple Intelligence on the Mac (macOS 27 on Apple silicon), Windows AI on a Copilot+ PC. Photos aren't uploaded to describe them. Without the AI it still browses, searches, sorts and shows your photos.
 
 The Mac app is in `PhotoFinder/` and works with VoiceOver; the Windows app is in [`windows/`](windows/README.md) and works with JAWS, NVDA and Narrator. The two work the same wherever the platform allows; [docs/PLATFORM-DIFFERENCES.md](docs/PLATFORM-DIFFERENCES.md) lists where they don't.
 

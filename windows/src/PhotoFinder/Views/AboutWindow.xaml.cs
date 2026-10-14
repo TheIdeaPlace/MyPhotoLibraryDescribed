@@ -7,7 +7,7 @@ namespace PhotoFinder.Views;
 public partial class AboutWindow : Window
 {
     /// <summary>Description of the app, said and shown.</summary>
-    public const string What = "Describes your photos on your own PC, for people using screen readers.";
+    public const string What = "Describes your photos on your own PC, and works well with screen readers.";
 
     private readonly Func<string, string, bool> _open;
 

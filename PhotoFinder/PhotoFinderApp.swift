@@ -84,7 +84,7 @@ enum AboutPanel {
         centred.alignment = .center
         let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         let credits = NSMutableAttributedString(
-            string: "Describes your photos on your own Mac, for people using VoiceOver.\n",
+            string: "Describes your photos on your own Mac, and works well with VoiceOver.\n",
             attributes: [.font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: centred])
         for (title, url) in [("Source code on GitHub", AppInfo.repositoryURL), ("User Guide", AppInfo.userGuideURL),
                              ("Privacy Policy", AppInfo.privacyPolicyURL)] {
