@@ -23,6 +23,25 @@ struct BrowserView: View {
     @FocusState private var pane: Pane?
     /// Where F6 is taking you in the status bar, while its sections become focusable.
     @State private var pendingStatusFocus: Pane?
+    /// Whether focus has been put on the photos since the window opened.
+    @State private var startedOnPhotos = false
+
+    /// When the window opens, focus goes to the list or gallery, on its first item, once the first place has loaded,
+    /// so arrowing works at once without tabbing (Kelly, 14 Oct; Windows does the same). A few tries, a moment apart,
+    /// as the list may only just be appearing (SwiftUI otherwise starts in the sidebar); Search taking focus meanwhile wins.
+    private func startOnPhotos() {
+        guard !startedOnPhotos, !model.isLoading, !searchFocused else { return }
+        startedOnPhotos = true
+        model.selectFirstItemIfNone()
+        pane = .content
+        Task { @MainActor in
+            for _ in 0..<5 where pane != .content {
+                try? await Task.sleep(for: .milliseconds(80))
+                guard !searchFocused else { return }
+                pane = .content
+            }
+        }
+    }
 
     /// Moves focus into the status bar once its sections can take it: a few tries, a moment apart, stopping as soon
     /// as focus is there or another move (F6 again, a click) replaced this one.
@@ -74,6 +93,8 @@ struct BrowserView: View {
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search names, kinds and dates")
         .searchFocused($searchFocused)
         .onChange(of: model.searchFocusRequest) { searchFocused = true }
+        .onAppear { startOnPhotos() }
+        .onChange(of: model.isLoading) { startOnPhotos() }
         // Go > Next Pane (F6) and Previous Pane (Shift-F6): sidebar, list or gallery, Description, Search, status bar,
         // and round.
         .onChange(of: model.paneRequest) {

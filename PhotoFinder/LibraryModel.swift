@@ -2830,6 +2830,12 @@ final class LibraryModel {
         return (index, rows.count)
     }
 
+    /// When the window opens: the first item selected, so focus lands on it and arrowing starts there.
+    func selectFirstItemIfNone() {
+        guard selection.isEmpty, let first = visibleRows.first else { return }
+        selection = [first.id]
+    }
+
     func ensureGallerySelection() {
         guard focusedRow == nil, let first = visibleRows.first else { return }
         selection = [first.id]
