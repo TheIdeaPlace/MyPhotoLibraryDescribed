@@ -109,7 +109,7 @@ public sealed class SystemCheckTests : IDisposable
         Assert.Contains("Windows AI: Needs attention. Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+D) downloads it.",
             notReady.Items.Select(i => i.Line));
         var missing = new SystemCheck(Good() with { Readiness = new AIReadiness(false, "NotInstalled", "x") });
-        Assert.Contains($"Windows AI: Needs attention. The {AppInfo.HelperName} isn't installed. Install {AppInfo.Name} from PhotoFinder.appinstaller.",
+        Assert.Contains($"Windows AI: Needs attention. The {AppInfo.HelperName} isn't installed. Install {AppInfo.Name} from {AppInfo.InstallerFile}.",
             missing.Items.Select(i => i.Line));
         var other = new SystemCheck(Good() with { Readiness = new AIReadiness(false, "DisabledByUser", "Turn it on in Settings.") });
         Assert.Contains("Windows AI: Needs attention. Turn it on in Settings.", other.Items.Select(i => i.Line));

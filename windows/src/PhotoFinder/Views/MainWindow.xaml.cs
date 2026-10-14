@@ -1487,8 +1487,8 @@ public partial class MainWindow : Window
                     Inform($"This copy of {AppInfo.Name} isn't installed, so it can't update itself.");
                     break;
                 case Services.Updates.State.NotFromAppInstaller:
-                    Inform($"{AppInfo.Name} was installed without PhotoFinder.appinstaller, so Windows doesn't know where its updates are. " +
-                           "Open PhotoFinder.appinstaller to install it again; your settings are kept.");
+                    Inform($"{AppInfo.Name} was installed without {AppInfo.InstallerFile}, so Windows doesn't know where its updates are. " +
+                           $"Open {AppInfo.InstallerFile} to install it again; your settings are kept.");
                     break;
                 case Services.Updates.State.UpToDate:
                     Found(result.State, null);

@@ -3,8 +3,10 @@ namespace PhotoFinder;
 /// <summary>
 /// The app's name, in one place. "My Photo Library Described" is a working name (#34): everything the app says or shows uses
 /// <see cref="Name"/>, and scripts\build-msix.ps1 reads it from here for the package's display names. Identifiers that
-/// are costly to change are kept separate on purpose: the package identity (TheIdeaPlace.PhotoFinder), the data folder
-/// (<see cref="DataFolderName"/>), the helper's photofinder-ai.exe alias and the announcement activity IDs.
+/// are costly to change after a release are kept separate on purpose: the package identity
+/// (TheIdeaPlace.MyPhotoLibraryDescribed), the data folder (<see cref="DataFolderName"/>), the installer's file names
+/// (<see cref="InstallerFile"/>), the helper's photofinder-ai.exe alias and the announcement activity IDs. Before 0.2.0 they
+/// moved from the old name, Photo Finder, without moving anyone's data (Kelly, 14 Oct: never released).
 /// Also compiled into the AI helper.
 /// </summary>
 internal static class AppInfo
@@ -16,7 +18,10 @@ internal static class AppInfo
 
     /// <summary>The folder under %LOCALAPPDATA%. Not the display name: renaming the app mustn't lose saved settings
     /// and descriptions.</summary>
-    public const string DataFolderName = "PhotoFinder";
+    public const string DataFolderName = "My Photo Library Described";
+
+    /// <summary>The installer people open, and where every copy looks for updates (the latest release's).</summary>
+    public const string InstallerFile = "MyPhotoLibraryDescribed.appinstaller";
 
     /// <summary>The GitHub repository, in one place (as the Mac's AppInfo.repository), for an eventual move.</summary>
     public const string Repository = "TheIdeaPlace/MyPhotoLibraryDescribed";

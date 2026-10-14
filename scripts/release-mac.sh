@@ -42,7 +42,7 @@ if [ "$PUBLISH" = "--publish" ]; then
   gh release view "$TAG" >/dev/null 2>&1 || { echo "There's no draft $TAG yet. Wait for the Release workflow to finish."; exit 1; }
   [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true" ] || { echo "$TAG is already published. Raise MARKETING_VERSION in project.yml (and windows/VERSION) first."; exit 1; }
   ASSETS=$(gh release view "$TAG" --json assets --jq '.assets[].name')
-  if ! printf '%s\n' "$ASSETS" | grep -qx 'PhotoFinder.appinstaller'; then echo "The draft $TAG doesn't have the Windows installer yet. Wait for the Release workflow."; exit 1; fi
+  if ! printf '%s\n' "$ASSETS" | grep -qx 'MyPhotoLibraryDescribed.appinstaller'; then echo "The draft $TAG doesn't have the Windows installer yet. Wait for the Release workflow."; exit 1; fi
   if printf '%s\n' "$ASSETS" | grep -q '[.]dmg$'; then echo "$TAG already has a Mac disk image."; exit 1; fi
   git fetch -q origin
   git merge-base --is-ancestor HEAD origin/main || { echo "Release from a commit that's on origin/main (pull, or merge first)."; exit 1; }

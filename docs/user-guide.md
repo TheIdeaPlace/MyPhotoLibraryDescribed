@@ -32,7 +32,7 @@ The two apps work the same wherever the platform allows. Where they differ, this
 Both apps are on the [releases page](https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/latest), signed by Kelly Ford.
 
 - **Mac:** download the `My-Photo-Library-Described-<version>-mac.dmg` disk image, open it and drag the app to Applications. It's signed by Kelly Ford and notarized by Apple, so it opens without warnings. Describing photos needs macOS 27 on Apple silicon with Apple Intelligence. It's built to open on macOS 15 and later for browsing, but has only been tested on macOS 26 and 27.
-- **Windows:** download and open `PhotoFinder.appinstaller`. Windows' App Installer shows the app's name and publisher (Kelly Ford) with an Install button, and installs the Windows App Runtime it needs first if the PC doesn't have it. Windows then checks the same place for updates every few hours and installs them while the app isn't running; Help > Check for Updates checks now.
+- **Windows:** download and open `MyPhotoLibraryDescribed.appinstaller`. Windows' App Installer shows the app's name and publisher (Kelly Ford) with an Install button, and installs the Windows App Runtime it needs first if the PC doesn't have it. Windows then checks the same place for updates every few hours and installs them while the app isn't running; Help > Check for Updates checks now.
 
 ## What you need
 
@@ -158,7 +158,7 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 
 Your photos are never touched by removing the app, and descriptions saved into photos stay in them. The app's own files are left, so reinstalling picks up where you left off; to remove them too:
 
-- **Windows:** delete the folder `%LOCALAPPDATA%\PhotoFinder` (type it into File Explorer's address bar). It holds the descriptions, settings, place names already looked up and the log. If it isn't there, Windows kept it inside the app's package, and uninstalling removed it.
+- **Windows:** delete the folder `%LOCALAPPDATA%\My Photo Library Described` (type it into File Explorer's address bar). It holds the descriptions, settings, place names already looked up and the log. If it isn't there, Windows kept it inside the app's package, and uninstalling removed it.
 - **Mac:** delete `~/Library/Application Support/PhotoFinder` (descriptions, place names already looked up and the log) and `~/Library/Preferences/net.theideaplace.PhotoFinder.plist` (settings and the folders you added). In Finder, Go > Go to Folder reaches them.
 
 ## Privacy

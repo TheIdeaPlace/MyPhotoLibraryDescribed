@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
 Builds My Photo Library Described's Windows installer: an MSIX bundle for x64 and Arm64, the Windows App Runtime it depends on,
-and a PhotoFinder.appinstaller file that installs both.
+and a MyPhotoLibraryDescribed.appinstaller file that installs both.
 
 .DESCRIPTION
-Opening PhotoFinder.appinstaller shows Windows' App Installer: My Photo Library Described's name, publisher and icon and an
+Opening MyPhotoLibraryDescribed.appinstaller shows Windows' App Installer: My Photo Library Described's name, publisher and icon and an
 Install button. It installs the Windows App Runtime first if the PC doesn't have it, then My Photo Library Described for the
 PC's architecture, with a Start menu entry and an uninstall entry in Settings > Apps. Later builds published to
 the same place are installed as updates: Windows checks every few hours, and Help > Check for Updates checks now.
@@ -15,8 +15,8 @@ For each architecture it lays out the package in windows\out\msix\<arch>:
   Assets\     the logos, with resources.pri at the root so Windows picks the right size
   AppxManifest.xml   from windows\packaging, with the architecture, version and publisher filled in
 then packs it, bundles both architectures, and writes everything to -Destination:
-  PhotoFinder.appinstaller
-  PhotoFinder_<version>.msixbundle
+  MyPhotoLibraryDescribed.appinstaller
+  MyPhotoLibraryDescribed_<version>.msixbundle
   Dependencies\Microsoft.WindowsAppRuntime.1.8_<arch>.msix
 
 Windows installs only signed packages from a publisher it trusts. -Sign signs with Kelly Ford's Azure Artifact
@@ -79,7 +79,7 @@ $arches = if ($Arch -eq 'both') { @('x64', 'arm64') } else { @($Arch) }
 # The signing certificate's subject, which the package's Publisher must equal exactly; an unsigned build uses a
 # stand-in. sign-files.ps1 checks each signature against it.
 $certificateSubject = 'CN=kelly ford, O=kelly ford, L=Madison, S=wi, C=US'
-$publisher = if ($Sign) { $certificateSubject } else { 'CN=Photo Finder Development' }
+$publisher = if ($Sign) { $certificateSubject } else { 'CN=My Photo Library Described Development' }
 
 # The display name, from the one place the app keeps it (AppInfo.Name, #34).
 $appInfo = Get-Content -LiteralPath (Join-Path $windows 'src\PhotoFinder\AppInfo.cs') -Raw -Encoding UTF8
@@ -211,11 +211,11 @@ foreach ($a in $arches) {
             (Join-Path $layout 'App\PhotoFinder.exe') (Join-Path $layout 'AI\PhotoFinderAI.exe')
     }
     # Fully validated, so a manifest mistake fails here rather than when someone installs it.
-    Invoke-Tool $makeappx @('pack', '/d', $layout, '/p', (Join-Path $packed "PhotoFinder_$($version)_$a.msix"), '/o') "Packing $a"
+    Invoke-Tool $makeappx @('pack', '/d', $layout, '/p', (Join-Path $packed "MyPhotoLibraryDescribed_$($version)_$a.msix"), '/o') "Packing $a"
     Write-Host "Packed My Photo Library Described $version for $a"
 }
 
-$bundleName = "PhotoFinder_$version.msixbundle"
+$bundleName = "MyPhotoLibraryDescribed_$version.msixbundle"
 $bundle = Join-Path $work $bundleName
 Invoke-Tool $makeappx @('bundle', '/d', $packed, '/p', $bundle, '/bv', $version, '/o') 'Bundling'
 if ($Sign) { & (Join-Path $PSScriptRoot 'sign-files.ps1') -ExpectedSubject $certificateSubject $bundle }
@@ -227,8 +227,8 @@ $appInstaller = @"
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Opening this installs My Photo Library Described with App Installer: the Windows App Runtime first if needed, then My Photo Library Described
      for this PC's architecture. Updates are looked for here. -->
-<AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021" Version="$version" Uri="$BaseUri/PhotoFinder.appinstaller">
-  <MainBundle Name="TheIdeaPlace.PhotoFinder" Publisher="$([Security.SecurityElement]::Escape($publisher))" Version="$version" Uri="$BaseUri/$bundleName" />
+<AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021" Version="$version" Uri="$BaseUri/MyPhotoLibraryDescribed.appinstaller">
+  <MainBundle Name="TheIdeaPlace.MyPhotoLibraryDescribed" Publisher="$([Security.SecurityElement]::Escape($publisher))" Version="$version" Uri="$BaseUri/$bundleName" />
   <Dependencies>
 $($dependencyXml -join "`r`n")
   </Dependencies>
@@ -248,11 +248,11 @@ $dependencies = if ($Flat) { $Destination } else { Join-Path $Destination 'Depen
 New-Item -ItemType Directory -Force -Path $dependencies | Out-Null
 foreach ($r in $runtimes) { Copy-Item -LiteralPath $r.Source -Destination (Join-Path $dependencies $r.File) -Force }
 Copy-Item -LiteralPath $bundle -Destination $Destination -Force
-[IO.File]::WriteAllText((Join-Path $Destination 'PhotoFinder.appinstaller'), $appInstaller, (New-Object Text.UTF8Encoding $false))
-Get-ChildItem -LiteralPath $Destination -Filter 'PhotoFinder_*.msixbundle' | Where-Object { $_.Name -ne $bundleName } | Remove-Item -Force
+[IO.File]::WriteAllText((Join-Path $Destination 'MyPhotoLibraryDescribed.appinstaller'), $appInstaller, (New-Object Text.UTF8Encoding $false))
+Get-ChildItem -LiteralPath $Destination -Filter 'MyPhotoLibraryDescribed_*.msixbundle' | Where-Object { $_.Name -ne $bundleName } | Remove-Item -Force
 
 if ($Sign) {
-    Write-Host "My Photo Library Described $($version): open $(Join-Path $Destination 'PhotoFinder.appinstaller') to install."
+    Write-Host "My Photo Library Described $($version): open $(Join-Path $Destination 'MyPhotoLibraryDescribed.appinstaller') to install."
 } else {
     Write-Host "My Photo Library Described $version, unsigned, in $Destination. Windows won't install it; build with -Sign for that."
 }
