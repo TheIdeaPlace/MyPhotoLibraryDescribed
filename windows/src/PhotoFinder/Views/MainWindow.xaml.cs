@@ -117,6 +117,8 @@ public partial class MainWindow : Window
                 ShowError($"{AppInfo.Name} couldn't read your library: {ex.Message}");
             }
             UpdateEmptyText();
+            // On the first photo, selected, so arrowing starts there and it's read as the photo you're on.
+            _model.StartOnFirst();
             FocusContent();
             // Background describing picks up where it left off: the library's photos not described yet (#96).
             BackgroundDescriber?.Resume();
@@ -1084,7 +1086,7 @@ public partial class MainWindow : Window
         UpdateEmptyText();
         if (gallery)
         {
-            _model.EnsureGallerySelection();
+            _model.SelectFirstIfNone();
             UpdateGallery();
         }
     }

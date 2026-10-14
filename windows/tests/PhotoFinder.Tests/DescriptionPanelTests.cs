@@ -78,7 +78,9 @@ public sealed class DescriptionPanelTests : IDisposable
         {
             var panel = window.DescriptionPanel;
             Assert.True(panel.IsVisible);
-            Assert.Equal("Select a photo to see its description.", panel.NothingText.Text);
+            // The app starts on the first row (Kelly, 14 Oct), and the panel follows it.
+            Assert.Same(model.Rows[0], model.FocusedRow);
+            Assert.Same(model.FocusedRow, panel.Row);
 
             model.SelectedRows = [model.Rows.Single(r => r.Name == "a.jpg")];
             var a = model.FocusedRow!;

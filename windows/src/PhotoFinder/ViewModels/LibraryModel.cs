@@ -88,6 +88,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         set
         {
             if (_searchText == value) return;
+            _startedOn = null;
             var keep = SelectedIds();
             _searchText = value;
             OnPropertyChanged();
@@ -110,7 +111,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             _settings.ViewMode = value;
             SaveSettings();
             OnPropertyChanged();
-            if (value == ViewMode.Gallery) EnsureGallerySelection();
+            if (value == ViewMode.Gallery) SelectFirstIfNone();
         }
     }
 
@@ -121,6 +122,9 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         set
         {
             _selectedRows = value;
+            // Moving to another photo clears it. An empty selection doesn't: WPF empties the list's selection for a moment
+            // whenever its rows are replaced.
+            if (_startedOn is not null && value.Count > 0 && !(value.Count == 1 && value[0].Id == _startedOn)) _startedOn = null;
             UpdateFocusedRow();
             OnPropertyChanged();
             OnPropertyChanged(nameof(FocusedRow));
@@ -342,16 +346,22 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         {
             if (!cancel.IsCancellationRequested) DetailProgress = null;
         }
+        // The launch's photo counts only for this first read of details: nothing later moves you.
+        var startedOn = _startedOn;
+        _startedOn = null;
         if (cancel.IsCancellationRequested) return;
         Debug.WriteLine($"Read details for {done} items in {started.Elapsed.TotalSeconds:0.0}s");
         _cache.KeepOnly(_items);
         SaveCacheInBackground();
         if (anyRead)
         {
+            var stillOnIt = startedOn is not null && SelectedRows is [var only] && only.Id == startedOn;
             // Dates, favorites and the other smart albums depend on the details.
             RebuildSidebar();
             if (CurrentSource is { HasChildren: false }) ReloadCurrent(keepSelection: true);
             else ApplyView(SelectedIds(), focus: false);
+            // Still on the photo the app started on, and the list re-sorted now dates are known: the first photo still.
+            if (stillOnIt && Rows.Count > 0 && FocusedRow != Rows[0]) SelectionRequested?.Invoke([Rows[0].Id], false);
         }
     }
 
@@ -364,6 +374,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     public void Navigate(string id, string? selectChildId = null, bool announce = true)
     {
         if (!ItemsById.TryGetValue(id, out var item)) return;
+        _startedOn = null;
         for (var parent = item.ParentId; parent is not null && ItemsById.TryGetValue(parent, out var p); parent = p.ParentId)
             p.IsExpanded = true;
         var old = CurrentSource;
@@ -401,7 +412,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         _rowsByPath = _allRows.Where(r => r.Item is not null).ToDictionary(r => r.Id, StringComparer.OrdinalIgnoreCase);
         FillDescriptions(_allRows);
         ApplyView(select, focus);
-        if (ViewMode == ViewMode.Gallery) EnsureGallerySelection();
+        if (ViewMode == ViewMode.Gallery) SelectFirstIfNone();
         // Read the new list's details first.
         if (_items.Any(NeedsDetails) && _fillTask.IsCompleted) StartDetailFill();
     }
@@ -438,6 +449,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     public void SortBy(string column)
     {
+        _startedOn = null;
         if (_settings.SortColumn == column) _settings.SortDescending = !_settings.SortDescending;
         else
         {
@@ -1130,9 +1142,24 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     public (int Index, int Count)? GalleryPosition => FocusedRow is null ? null : (FocusedIndex, Rows.Count);
 
-    public void EnsureGallerySelection()
+    /// <summary>Selects the first photo when none is: the gallery always shows one.</summary>
+    public void SelectFirstIfNone()
     {
         if (FocusedRow is null && Rows.Count > 0) SelectionRequested?.Invoke([Rows[0].Id], false);
+    }
+
+    /// <summary>The photo the app started on, while the first read of photos' details is still going: when it ends and
+    /// the list re-sorts by the dates it found, you're put on the new first photo, unless you've moved, sorted, searched or
+    /// gone elsewhere meanwhile.</summary>
+    private string? _startedOn;
+
+    /// <summary>At launch: on the first photo, selected, so you can arrow straight away (Kelly, 14 Oct, as on the Mac).
+    /// In the gallery, the first photo is already chosen.</summary>
+    public void StartOnFirst()
+    {
+        if (Rows.Count == 0 || (FocusedRow is not null && !(SelectedRows is [var only] && only == Rows[0]))) return;
+        if (FocusedRow is null) SelectionRequested?.Invoke([Rows[0].Id], false);
+        if (!_fillTask.IsCompleted) _startedOn = Rows[0].Id;
     }
 
     public void MoveSelection(int delta)
