@@ -57,9 +57,9 @@ struct SettingsView: View {
                     set: { model.setLookUpPlaceNames($0) }
                 ))
                 .id(model.switchesRedraw)
-                .accessibilityHint("Sends a photo's coordinates to Apple to name the place it was taken, in Get Info.")
+                .accessibilityHint("Sends a photo's coordinates to Apple to name the place it was taken, in Get Info and Place Taken.")
             } footer: {
-                Text("Off until you turn it on. Then Get Info names the place a photo was taken, by sending its coordinates (nothing else) to Apple's location service. Coordinates are shown either way. Help > Privacy Policy says more.")
+                Text("Off until you turn it on. Then Get Info names the place a photo was taken, by sending its coordinates (nothing else) to Apple's location service, and so do the list's Place Taken column and the gallery's Place taken label for the photos showing. Names found are kept on your Mac. Coordinates are shown either way. Help > Privacy Policy says more.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

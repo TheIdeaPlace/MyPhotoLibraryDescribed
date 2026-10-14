@@ -48,7 +48,7 @@ enum GalleryLabels {
             case .caption: row.caption.isEmpty ? "" : "Caption: \(row.caption)"
             case .keywords: row.keywords.isEmpty ? "" : "Keywords: \(row.keywords)"
             case .rating: row.ratingText
-            case .location: row.locationText.isEmpty ? "" : "Place taken \(row.locationText)"
+            case .location: row.placeTakenText.isEmpty ? "" : "Place taken \(row.placeTakenText)"
             }
             return value.isEmpty ? nil : value
         }

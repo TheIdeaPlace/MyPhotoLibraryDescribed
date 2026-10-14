@@ -134,7 +134,7 @@ enum ColumnOrder {
         case "fileType": KeyPathComparator(\FileRow.fileType)
         case "orientation": KeyPathComparator(\FileRow.orientation)
         case "megapixels": KeyPathComparator(\FileRow.megapixels)
-        case "location": KeyPathComparator(\FileRow.locationText)
+        case "location": KeyPathComparator(\FileRow.placeTakenText)
         case "source": KeyPathComparator(\FileRow.source)
         case "description": KeyPathComparator(\FileRow.descriptionText)
         default: KeyPathComparator(\FileRow.name)
@@ -180,7 +180,7 @@ extension FileRow {
         case "fileType": fileType
         case "orientation": orientation
         case "megapixels": megapixelsText
-        case "location": locationText
+        case "location": placeTakenText
         case "source": source
         case "description": descriptionText
         default: ""

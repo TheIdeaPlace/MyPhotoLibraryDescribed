@@ -102,7 +102,9 @@ Each tab has the same Available and Shown lists, with Add, Remove, Move Up, Move
 
 ## Place names
 
-Photos often record where they were taken, as coordinates. Get Info always shows the coordinates. **Look Up Place Names** (in Settings on the Mac, the Photo menu on Windows) also names the place, such as "Pike Place Market, Seattle, Washington, United States". To find the name, the coordinates are sent to a location service (on Windows with the language Windows uses, so the name comes back in it), and nothing about you or the photo when you open Get Info: Apple's on the Mac, and OpenStreetMap's Nominatim on Windows, where each name ends "(© OpenStreetMap contributors)" as its licence asks. Because of that, it's off until you turn it on, and it asks first. On Windows it also reads a small settings file from the app's GitHub repository, at most once a day, so lookups can be paused for everyone without an update if Nominatim asks; Get Info then says place names are paused. The two services sometimes name the same place a little differently.
+Photos often record where they were taken, as coordinates. Get Info always shows the coordinates. **Look Up Place Names** (in Settings on the Mac, the Photo menu on Windows) also names the place, such as "Pike Place Market, Seattle, Washington, United States". To find the name, the coordinates are sent to a location service (on Windows with the language Windows uses, so the name comes back in it), and nothing about you or the photo when you open Get Info: Apple's on the Mac, and OpenStreetMap's Nominatim on Windows, where each name ends "(© OpenStreetMap contributors)" as its licence asks. Because of that, it's off until you turn it on, and it asks first. On Windows it also reads a small settings file from the app's GitHub repository, at most once a day, so lookups can be paused for everyone without an update if Nominatim asks; Get Info then says place names are paused. Names found are kept, so a place is sent once. The two services sometimes name the same place a little differently.
+
+On the Mac, with Look Up Place Names on, the list's Place Taken column and the gallery's Place taken label (View > Labels…) show the place's name too, once it's known, and the coordinates until then. For that, the coordinates of the photos showing are sent as well, a few at first and then one every few seconds; names fill in as they arrive, without moving focus, moving rows or saying anything. Nothing is looked up while Place Taken isn't a column or label. Windows will do the same.
 
 ## Settings
 
@@ -156,7 +158,7 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 Your photos are never touched by removing the app, and descriptions saved into photos stay in them. The app's own files are left, so reinstalling picks up where you left off; to remove them too:
 
 - **Windows:** delete the folder `%LOCALAPPDATA%\PhotoFinder` (type it into File Explorer's address bar). It holds the descriptions, settings, place names already looked up and the log. If it isn't there, Windows kept it inside the app's package, and uninstalling removed it.
-- **Mac:** delete `~/Library/Application Support/PhotoFinder` (descriptions and the log) and `~/Library/Preferences/net.theideaplace.PhotoFinder.plist` (settings and the folders you added). In Finder, Go > Go to Folder reaches them.
+- **Mac:** delete `~/Library/Application Support/PhotoFinder` (descriptions, place names already looked up and the log) and `~/Library/Preferences/net.theideaplace.PhotoFinder.plist` (settings and the folders you added). In Finder, Go > Go to Folder reaches them.
 
 ## Privacy
 
