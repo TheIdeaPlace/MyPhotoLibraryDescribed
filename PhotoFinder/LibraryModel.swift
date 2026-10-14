@@ -74,7 +74,7 @@ final class LibraryModel {
     /// The list's sort, remembered between launches as a column and a direction, as Windows does (#46).
     var sortOrder: [KeyPathComparator<FileRow>] {
         didSet {
-            rows.sort(using: sortOrder)
+            rows = ColumnOrder.sorted(rows, by: sortOrder)
             ColumnOrder.saveSort(sortOrder, to: defaults)
         }
     }
@@ -911,7 +911,7 @@ final class LibraryModel {
             currentFetch = nil
             assetsByID = [:]
             isLoading = false
-            rows = children.map { FileRow(container: $0) }.sorted(using: sortOrder)
+            rows = ColumnOrder.sorted(children.map { FileRow(container: $0) }, by: sortOrder)
             finishLoad(previousSelection: previousSelection, item: item, slow: false)
             if viewMode == .gallery { ensureGallerySelection() }
             return
@@ -936,7 +936,7 @@ final class LibraryModel {
             guard generation == self.loadGeneration else { return }
             Self.log.info("Loaded \(built.value.rows.count) items for \(item.title, privacy: .public) in \(Date().timeIntervalSince(started), format: .fixed(precision: 2))s; \(built.value.needingDetails.count) need details")
             self.assetsByID = built.value.assets
-            self.rows = built.value.rows.sorted(using: self.sortOrder)
+            self.rows = ColumnOrder.sorted(built.value.rows, by: self.sortOrder)
             self.isLoading = false
             self.finishLoad(previousSelection: previousSelection, item: item,
                             slow: Date().timeIntervalSince(started) > 1)
@@ -973,7 +973,7 @@ final class LibraryModel {
             Self.log.info("Read details for \(assets.count) items in \(Date().timeIntervalSince(began), format: .fixed(precision: 2))s")
             let detailColumns: [PartialKeyPath<FileRow>] = [\FileRow.name, \FileRow.caption, \FileRow.keywords, \FileRow.fileType]
             if let key = self.sortOrder.first?.keyPath, detailColumns.contains(key) {
-                self.rows.sort(using: self.sortOrder)
+                self.rows = ColumnOrder.sorted(self.rows, by: self.sortOrder)
             }
             names.save()
         }
@@ -1010,7 +1010,7 @@ final class LibraryModel {
         isLoading = true
         if !keepSelection {
             filesByID = [:]
-            rows = containers.sorted(using: sortOrder)
+            rows = ColumnOrder.sorted(containers, by: sortOrder)
         }
         let started = Date()
         Task {
@@ -1018,7 +1018,7 @@ final class LibraryModel {
             guard generation == self.loadGeneration else { return }
             self.filesByID = Dictionary(files.map { (FolderID.file($0.path), $0) }, uniquingKeysWith: { first, _ in first })
             let fileRows = files.map { FileRow(file: $0, metadata: self.fileMetadata[$0.descriptionKey]) }
-            self.rows = (containers + fileRows).sorted(using: self.sortOrder)
+            self.rows = ColumnOrder.sorted((containers + fileRows), by: self.sortOrder)
             self.isLoading = false
             self.finishLoad(previousSelection: previousSelection, item: item, slow: Date().timeIntervalSince(started) > 1)
             if self.viewMode == .gallery { self.ensureGallerySelection() }
@@ -1057,7 +1057,7 @@ final class LibraryModel {
                 start = end
             }
             self.nameProgress = nil
-            self.rows.sort(using: self.sortOrder)
+            self.rows = ColumnOrder.sorted(self.rows, by: self.sortOrder)
         }
     }
 
@@ -2231,7 +2231,7 @@ final class LibraryModel {
         fillingDescriptions = true
         defer { fillingDescriptions = false }
         var filled = rows.map { row in row.withDescription(descriptionKey(for: row.id).flatMap(descriptions.description(forKey:)) ?? "") }
-        if sortColumnID == "description" { filled.sort(using: sortOrder) }
+        if sortColumnID == "description" { filled = ColumnOrder.sorted(filled, by: sortOrder) }
         if filled.map(\.descriptionText) != rows.map(\.descriptionText) { rows = filled }
     }
 

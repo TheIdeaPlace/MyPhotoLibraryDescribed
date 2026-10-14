@@ -99,6 +99,20 @@ enum ColumnOrder {
         defaults.set(order.first?.order == .reverse, forKey: sortDescendingKey)
     }
 
+    /// Rows in the list's order, as Windows sorts them: folders first whichever way it's sorted, then the column,
+    /// with ties A to Z by name, so folders without dates don't list backwards when the list is newest first.
+    static func sorted(_ rows: [FileRow], by order: [KeyPathComparator<FileRow>]) -> [FileRow] {
+        let byName = sortColumn(of: order) == "name"
+        return rows.sorted { a, b in
+            if a.isContainer != b.isContainer { return a.isContainer }
+            for comparator in order {
+                let result = comparator.compare(a, b)
+                if result != .orderedSame { return result == .orderedAscending }
+            }
+            return !byName && a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+    }
+
     /// The column a sort order is by, or nil if it isn't one of the columns.
     static func sortColumn(of order: [KeyPathComparator<FileRow>]) -> String? {
         guard var first = order.first else { return nil }

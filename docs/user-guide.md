@@ -94,7 +94,7 @@ On the Mac, a photo in your Photos library gets a Photos caption, which syncs wi
 
 Each tab has the same Available and Shown lists, with Add, Remove, Move Up, Move Down, Move to Top, Move to Bottom and Reset to Default, and a preview of how the photo you're on will read. Return in Available adds, Delete or Return in Shown removes, and Option-Up and Option-Down Arrow (Option-Home and Option-End for the top and bottom) move the selected item; each change is announced. OK keeps both tabs' choices and Cancel leaves them. The sheet opens on the tab for the view you're in.
 
-**View > Sort By** sorts by any column; choosing it again reverses the order.
+**View > Sort By** sorts by any column; choosing it again reverses the order. Folders always come before photos, and photos that tie (the same kind or rating, say) are in name order.
 
 ## Get Info
 
