@@ -31,15 +31,15 @@ The two apps work the same wherever the platform allows. Where they differ, this
 
 Both apps are on the [releases page](https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/latest), signed by Kelly Ford.
 
-- **Mac:** download the `My-Photo-Library-Described-<version>-mac.dmg` disk image, open it and move the app to your Applications folder. It's signed by Kelly Ford and notarized by Apple. The first time you open it, macOS asks once whether to open an app downloaded from the Internet; choose Open. Describing photos needs macOS 27 on Apple silicon with Apple Intelligence. It's built to open on macOS 15 and later for browsing, but has only been tested on macOS 26 and 27.
+- **Mac:** download the `My-Photo-Library-Described-<version>-mac.dmg` disk image, open it and move the app to your Applications folder. It's signed by Kelly Ford and notarized by Apple. The first time you open it, macOS asks once whether to open an app downloaded from the Internet; choose Open.
 - **Windows:** download and open `MyPhotoLibraryDescribed.appinstaller`. Windows' App Installer shows the app's name and publisher (Kelly Ford) with an Install button, and installs the Windows App Runtime it needs first if the PC doesn't have it. Windows then checks the same place for updates every few hours and installs them while the app isn't running; Help > Check for Updates checks now.
 
 ## What you need
 
-- **Mac:** macOS 27 or later on Apple silicon, with Apple Intelligence turned on, for descriptions. My Photo Library Described browses your Photos library, so it asks for access to Photos the first time. Without that access, folders you add with File > Add Folder to Library still work, and the sidebar's "Photos library: no access" row opens Privacy Settings. Changing the captions and ratings of photos in your Photos library also needs macOS 27.
-- **Windows:** Windows 11 on a Copilot+ PC, for descriptions. My Photo Library Described browses your Pictures library.
+- **Mac:** macOS 27 or later on Apple silicon, with Apple Intelligence turned on. My Photo Library Described browses your Photos library, so it asks for access to Photos the first time. Without that access, folders you add with File > Add Folder to Library still work, and the sidebar's "Photos library: no access" row opens Privacy Settings.
+- **Windows:** Windows 11 version 24H2 or later on a Copilot+ PC. My Photo Library Described browses your Pictures library.
 
-Without the AI, My Photo Library Described still browses, searches, sorts and shows your photos; it just doesn't describe them. **Help > Check System** says what your computer has and what to do about anything missing.
+If the AI isn't available, My Photo Library Described still browses, searches, sorts and shows your photos; it just doesn't describe them. **Help > Check System** says what your computer has and what to do about anything missing.
 
 ## Layout
 
