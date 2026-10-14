@@ -56,8 +56,11 @@ struct BrowserView: View {
 
     /// Focus to the list or gallery, tried a few times a moment apart while the new view appears.
     private func focusPhotosAgain() {
-        guard !searchFocused else { return }
+        // Only when focus was on the photos (or went with the view that was replaced): reading in the Description
+        // panel or moving in the sidebar or Search stays where it is.
+        guard !searchFocused, pane == nil || pane == .content, !model.showingPhotosNoAccess else { return }
         startedOnPhotos = true
+        model.selectFirstItemIfNone()
         // Cleared first: focus may still read .content from the view that's gone, and setting the same value again
         // would do nothing.
         pane = nil
@@ -313,6 +316,14 @@ struct FileListView: View {
             .overlay { emptyState }
             // Next Photo and Previous Photo change the selection without the list: it's scrolled into view.
             .onChange(of: model.scrollRequest) { if let id = model.scrollRequest.id { proxy.scrollTo(id) } }
+            // Back from the gallery: the photo you were on is scrolled to, once the table is there.
+            .onAppear {
+                guard let id = model.focusedRow?.id else { return }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(50))
+                    proxy.scrollTo(id)
+                }
+            }
         }
     }
 
@@ -417,10 +428,8 @@ struct GalleryView: View {
         .onKeyPress(.space) { model.quickLook(); return .handled }
         .onKeyPress(.return) { model.open(); return .handled }
         .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
-        .onAppear {
-            model.ensureGallerySelection()
-            pane.wrappedValue = .content
-        }
+        // Focus comes from BrowserView: at launch, and on switching views, only when it was on the photos.
+        .onAppear { model.ensureGallerySelection() }
     }
 }
 
