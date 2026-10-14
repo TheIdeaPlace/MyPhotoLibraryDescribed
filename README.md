@@ -2,7 +2,7 @@
 
 A screen-reader-friendly photo library app for the Mac and Windows. It shows your photos the way Finder or File Explorer shows files, in a list or a gallery, and describes each photo as you move to it, using the AI built into your computer: Apple Intelligence on the Mac, Windows AI on a Copilot+ PC. Photos aren't uploaded to describe them.
 
-The Mac app works with VoiceOver, and the Windows app with JAWS, NVDA and Narrator. The two work the same wherever the platform allows; [docs/PLATFORM-DIFFERENCES.md](docs/PLATFORM-DIFFERENCES.md) lists where they don't.
+The Mac app works with VoiceOver, and the Windows app with JAWS, NVDA and Narrator. The two work the same wherever the platform allows; [the platform differences](docs/PLATFORM-DIFFERENCES.md) list where they don't.
 
 ## Download
 
@@ -23,8 +23,8 @@ The [user guide](docs/user-guide.md) covers installing, using and removing the a
 
 ### Windows
 
-- Windows 10 version 2004 or later, or Windows 11, to install the app and browse your photos.
-- To describe photos: Windows 11 on a Copilot+ PC, with Windows AI.
+- Windows 10 version 2004 or later, or Windows 11, to install the app and browse your photos. It has been tested on Windows 11.
+- To describe photos: Windows 11 version 24H2 or later on a Copilot+ PC, with Windows AI.
 
 Without the AI, the app still browses, searches, sorts and shows your photos; it just doesn't describe them. Help > Check System says what your computer has and what to do about anything missing.
 
@@ -49,7 +49,7 @@ Photos are described on your computer and never uploaded to describe them, and t
 
 Choose Help > Report a Bug… in either app. It files a GitHub issue for you, with a preview of exactly what's sent, and you don't need a GitHub account. Everything in a report is public. You can also [open an issue on GitHub](https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/issues) yourself.
 
-Features planned for a later version and known issues are [labelled v-next](https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/issues?q=is%3Aissue+is%3Aopen+label%3Av-next).
+Features planned for a later version and known issues are listed as [issues labelled v-next](https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/issues?q=is%3Aissue+is%3Aopen+label%3Av-next).
 
 ## For developers
 
@@ -59,6 +59,7 @@ Features planned for a later version and known issues are [labelled v-next](http
 - `windows/`: the Windows app (WPF, .NET, and the packaged `PhotoFinderAI` helper for Windows AI). See [windows/README.md](windows/README.md).
 - `docs/`: the user guide, privacy policy, platform differences, goals and release notes.
 - `scripts/`: building and releasing the Mac app.
+- `config/`: `services.json`, which the Windows app reads so place-name lookups can be paused for everyone if needed.
 
 ### Building the Mac app
 
@@ -72,7 +73,7 @@ open "build/Build/Products/Debug/My Photo Library Described.app"
 
 The macOS 27 code (Apple Intelligence and Photos' extended metadata) is inside `#if !PF_SDK26`. GitHub's Mac runners don't have Xcode 27 yet, so CI defines that flag and doesn't compile that code; changes to it need a local Xcode 27 build.
 
-The app is signed with an Apple Development certificate. Don't switch it to ad hoc signing: macOS can't remember Photos permission for ad hoc apps and asks over and over.
+The app is signed with an Apple Development certificate. Don't switch it to ad hoc signing: macOS can't remember Photos permission for ad hoc apps and asks over and over. To build it yourself, set `DEVELOPMENT_TEAM` in `project.yml` to your own team.
 
 ### Building the Windows app
 
