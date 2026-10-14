@@ -107,6 +107,12 @@ final class DescriptionCache: @unchecked Sendable {
     /// The folder the descriptions are saved in: the app's data folder, or a test's.
     var folderURL: URL { fileURL.deletingLastPathComponent() }
     private var saveScheduled = false
+    /// Every write, in order: each takes its snapshot when it runs, so an older one can never land after a newer one.
+    private let writes = DispatchQueue(label: "net.theideaplace.MyPhotoLibraryDescribed.descriptions", qos: .utility)
+    /// The file of corrections from before #199, removed at the first save in the new form.
+    private var legacyEditedURL: URL?
+    /// False when a file that couldn't be read couldn't be moved aside either: it's never written over.
+    private var mayWrite = true
 
     private struct File: Codable {
         var version: Int
@@ -115,16 +121,42 @@ final class DescriptionCache: @unchecked Sendable {
 
     init(fileURL: URL = DescriptionCache.defaultURL) {
         self.fileURL = fileURL
+        let editedURL = folderURL.appendingPathComponent("EditedDescriptions.json")
+        if FileManager.default.fileExists(atPath: editedURL.path) { legacyEditedURL = editedURL }
         guard let data = try? Data(contentsOf: fileURL) else { return }
         if let file = try? JSONDecoder().decode(File.self, from: data) {
             entries = file.descriptions
         } else if let flat = try? JSONDecoder().decode([String: String].self, from: data) {
             // Before #199: text only, and the corrections listed in a file of their own.
-            let editedURL = folderURL.appendingPathComponent("EditedDescriptions.json")
             let edited = (try? Data(contentsOf: editedURL)).flatMap { try? JSONDecoder().decode([String].self, from: $0) } ?? []
             entries = flat.mapValues { DescriptionRecord(text: $0) }
             for key in edited where entries[key] != nil { entries[key]?.source = DescriptionProvenance.person }
+        } else if !data.isEmpty {
+            // Damaged, or from a version that can't be read: kept beside it rather than written over.
+            let aside = Self.asideURL(for: fileURL, at: Date())
+            do {
+                try FileManager.default.moveItem(at: fileURL, to: aside)
+                DiagnosticLog.write("save", "Descriptions.json couldn't be read, so it was kept as \(aside.lastPathComponent) and the descriptions start empty")
+            } catch {
+                mayWrite = false
+                DiagnosticLog.write("save", "Descriptions.json couldn't be read or moved aside, so it won't be written over: \(error.localizedDescription)")
+            }
         }
+    }
+
+    /// Where a file that couldn't be read is kept: "Descriptions.unreadable-20261014-183005.json", beside it.
+    static func asideURL(for url: URL, at date: Date) -> URL {
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.dateFormat = "yyyyMMdd-HHmmss"
+        let name = url.deletingPathExtension().lastPathComponent
+        var aside = url.deletingLastPathComponent().appendingPathComponent("\(name).unreadable-\(format.string(from: date)).json")
+        var n = 2
+        while FileManager.default.fileExists(atPath: aside.path) {
+            aside = url.deletingLastPathComponent().appendingPathComponent("\(name).unreadable-\(format.string(from: date))-\(n).json")
+            n += 1
+        }
+        return aside
     }
 
     /// Whether a new description from Apple Intelligence may replace the saved one: always, unless the person
@@ -178,7 +210,7 @@ final class DescriptionCache: @unchecked Sendable {
         // A couple of seconds after the last change, not after every one: describing in the background adds
         // descriptions one after another, and rewriting the whole file each time adds up.
         if schedule {
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [self] in save() }
+            writes.asyncAfter(deadline: .now() + 2) { [self] in write() }
         }
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: Self.didChange, object: self, userInfo: [Self.keyInfo: key, Self.textInfo: trimmed])
@@ -216,7 +248,7 @@ final class DescriptionCache: @unchecked Sendable {
         saveScheduled = true
         lock.unlock()
         if schedule {
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [self] in save() }
+            writes.asyncAfter(deadline: .now() + 2) { [self] in write() }
         }
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: Self.didChange, object: self)
@@ -235,13 +267,32 @@ final class DescriptionCache: @unchecked Sendable {
         remember(text, forKey: asset.localIdentifier, provenance: provenance)
     }
 
+    /// Writes the descriptions now, after any write already on its way.
     func save() {
+        writes.sync { write() }
+    }
+
+    /// On `writes` only.
+    private func write() {
         lock.lock()
         saveScheduled = false
         let snapshot = entries
+        let legacy = legacyEditedURL
         lock.unlock()
-        guard let data = try? JSONEncoder().encode(File(version: Self.fileVersion, descriptions: snapshot)) else { return }
+        guard mayWrite,
+              let data = try? JSONEncoder().encode(File(version: Self.fileVersion, descriptions: snapshot)) else { return }
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: fileURL, options: .atomic)
+        do {
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            return
+        }
+        // The corrections are in the records now.
+        if let legacy {
+            try? FileManager.default.removeItem(at: legacy)
+            lock.lock()
+            legacyEditedURL = nil
+            lock.unlock()
+        }
     }
 }

@@ -50,9 +50,59 @@ final class DescriptionStoreTests: XCTestCase {
         try write("{ not json", to: descriptionsURL(in: folder))
         let cache = DescriptionCache(fileURL: descriptionsURL(in: folder))
         XCTAssertEqual(cache.count, 0)
+        // Kept beside it first (#201's review), so nothing is lost by writing over it.
+        let aside = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+            .filter { $0.hasPrefix("Descriptions.unreadable-") && $0.hasSuffix(".json") }
+        XCTAssertEqual(aside.count, 1, "\(aside)")
+        XCTAssertEqual(try String(contentsOf: folder.appendingPathComponent(aside[0]), encoding: .utf8), "{ not json")
         cache.remember("A cat.", forKey: "photo")
         cache.save()
         XCTAssertEqual(try savedDescriptions(in: folder), ["photo": "A cat."])
+    }
+
+    func testAnUnreadableFileIsKeptUnderADatedNameThatDoesntReplaceAnother() throws {
+        let folder = makeFolder()
+        let url = descriptionsURL(in: folder)
+        var parts = DateComponents()
+        (parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second) = (2026, 10, 14, 18, 30, 5)
+        let date = try XCTUnwrap(Calendar.current.date(from: parts))
+        let aside = DescriptionCache.asideURL(for: url, at: date)
+        XCTAssertEqual(aside.lastPathComponent, "Descriptions.unreadable-20261014-183005.json")
+        XCTAssertEqual(aside.deletingLastPathComponent().path, folder.path)
+        try write("{}", to: aside)
+        XCTAssertEqual(DescriptionCache.asideURL(for: url, at: date).lastPathComponent,
+                       "Descriptions.unreadable-20261014-183005-2.json")
+    }
+
+    func testAnEmptyFileIsntKeptAside() throws {
+        let folder = makeFolder()
+        try write("", to: descriptionsURL(in: folder))
+        let cache = DescriptionCache(fileURL: descriptionsURL(in: folder))
+        XCTAssertEqual(cache.count, 0)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["Descriptions.json"])
+    }
+
+    func testTheOldEditedFileGoesAtTheFirstSave() throws {
+        let folder = makeFolder()
+        try write(#"{"photo":"Mine"}"#, to: descriptionsURL(in: folder))
+        try write(#"["photo"]"#, to: editedURL(in: folder))
+        let cache = DescriptionCache(fileURL: descriptionsURL(in: folder))
+        cache.save()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: editedURL(in: folder).path))
+        XCTAssertTrue(DescriptionCache(fileURL: descriptionsURL(in: folder)).isEdited(forKey: "photo"),
+                      "the mark is in the record now")
+    }
+
+    func testAWriteOnItsWayNeverPutsBackAnOlderDescription() async throws {
+        let folder = makeFolder()
+        let cache = DescriptionCache(fileURL: descriptionsURL(in: folder))
+        cache.remember("One", forKey: "photo")  // schedules a write in two seconds
+        cache.save()
+        cache.remember("Two", forKey: "photo")
+        cache.save()
+        try await Task.sleep(for: .milliseconds(2600))
+        cache.save()  // after the scheduled write
+        XCTAssertEqual(try savedDescriptions(in: folder), ["photo": "Two"])
     }
 
     func testADamagedEditedFileLosesTheMarksButNotTheDescriptions() throws {
