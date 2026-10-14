@@ -41,6 +41,7 @@ On Windows your photo library is ordinary files, so My Photo Library Described r
 | Next / previous photo, leaving focus where it is (in the description box, say) | Alt+Right / Alt+Left |
 | Turn automatic descriptions on or off | Ctrl+Shift+U |
 | Copy the files (paste them into File Explorer, Mail and so on) | Ctrl+C |
+| Copy the descriptions as text (Edit > Copy Description; several come under each photo's name) | Ctrl+Shift+C |
 | Export to a folder | Ctrl+E |
 | Show in File Explorer | Ctrl+Shift+R |
 | Toggle Favorite | Ctrl+Shift+F |

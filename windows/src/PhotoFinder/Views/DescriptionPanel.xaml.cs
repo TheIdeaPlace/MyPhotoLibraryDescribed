@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -136,6 +135,9 @@ public partial class DescriptionPanel : UserControl
 
     /// <summary>Whether the box holds something the person typed.</summary>
     internal bool IsDirty => DescriptionBox.Text != _loaded;
+
+    /// <summary>A correction typed but not saved yet, for Copy Description to copy as it is.</summary>
+    internal (FileRow Row, string Text)? Draft => _row is not null && IsDirty ? (_row, DescriptionBox.Text) : null;
 
     private void FocusedRowChanged()
     {
@@ -285,22 +287,10 @@ public partial class DescriptionPanel : UserControl
 
     private void Copy_Click(object sender, RoutedEventArgs e)
     {
-        SaveIfChanged();
         if (_model is null || _row is null) return;
-        if (_model.SavedDescription(_row) is not { } text)
-        {
-            Announcer.Announce($"{_row.Name} hasn't been described yet.");
-            return;
-        }
-        try
-        {
-            Clipboard.SetText(text);
-            Announcer.Announce("Description copied");
-        }
-        catch (ExternalException)
-        {
-            Announcer.Announce("The clipboard is busy. Try again.");
-        }
+        // The same as Edit > Copy Description, with the same words (#175): a correction not saved yet is what's copied,
+        // without saving it.
+        _model.CopyDescriptions([_row], Draft);
     }
 
     private void EditCaption_Click(object sender, RoutedEventArgs e)
