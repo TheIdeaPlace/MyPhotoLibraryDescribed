@@ -586,12 +586,26 @@ final class LibraryModel {
     /// Whether the place showing is the "Photos library: no access" row.
     var showingPhotosNoAccess: Bool { currentItem?.kind == .photosNoAccess }
 
+    /// Whether `start` has run this launch.
+    @ObservationIgnored private var started = false
+
     /// Without Photos access, the first added folder is shown once its scan is in, rather than the no-access row.
     @ObservationIgnored private var showFirstFolderWhenScanned = false
 
     func start() async {
+        // Once per launch. The window's task can run again while macOS's question is still showing (the window's
+        // content made again), and asking a second time stacked a second Photos question that never went away
+        // (Kelly, 14 Oct).
+        guard !started else {
+            DiagnosticLog.write("start", "Window started again; Photos was already asked")
+            return
+        }
         guard authState == .unknown else { return }
+        started = true
         DiagnosticLog.started(appleIntelligence: describeUnavailableReason ?? "available")
+        if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined {
+            DiagnosticLog.write("start", "Asking for Photos access")
+        }
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         try? FileManager.default.removeItem(at: PhotoExporter.temporaryRoot)
         guard status == .authorized || status == .limited else {
