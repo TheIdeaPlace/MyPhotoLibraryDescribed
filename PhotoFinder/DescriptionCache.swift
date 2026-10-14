@@ -47,8 +47,7 @@ final class DescriptionCache: @unchecked Sendable {
     }
 
     static var defaultURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(AppInfo.dataFolderName, isDirectory: true)
+        AppInfo.dataFolder
             .appendingPathComponent("Descriptions.json")
     }
 

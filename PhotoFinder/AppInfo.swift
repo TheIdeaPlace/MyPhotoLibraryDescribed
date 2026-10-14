@@ -2,7 +2,7 @@ import Foundation
 
 /// The app's name and version, in one place. "My Photo Library Described" is the name for now (Kelly, 13 Oct; #34, #125): the display name is set once,
 /// in project.yml (CFBundleDisplayName), and everything the app says or shows uses `AppInfo.name`. Identifiers that
-/// are costly to change (the bundle ID, the Application Support folder) are kept separately and on purpose.
+/// are costly to change (the bundle ID) are kept separately and on purpose; the data folder is named after the app.
 enum AppInfo {
     static var name: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
@@ -55,6 +55,12 @@ enum AppInfo {
         URL(string: "https://github.com/\(repository)/releases/tag/\(Updates.tagPrefix)\(version)")!
     }
 
-    /// The folder in Application Support. Not the display name: renaming the app mustn't lose saved descriptions.
-    static let dataFolderName = "PhotoFinder"
+    /// The folder in Application Support, named after the app so people can find it (Kelly, 13 Oct).
+    static let dataFolderName = "My Photo Library Described"
+
+    /// `~/Library/Application Support/My Photo Library Described`.
+    static var dataFolder: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(dataFolderName, isDirectory: true)
+    }
 }

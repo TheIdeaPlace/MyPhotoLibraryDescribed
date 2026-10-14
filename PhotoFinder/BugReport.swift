@@ -211,8 +211,7 @@ enum BugReportRelay {
 /// wrote a crash report for the app in between.
 enum CrashCheck {
     static var dataFolder: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(AppInfo.dataFolderName, isDirectory: true)
+        AppInfo.dataFolder
     }
 
     static func flagURL(in folder: URL) -> URL { folder.appendingPathComponent("Running.flag") }

@@ -56,7 +56,7 @@ The app is signed with an Apple Development certificate. Don't switch it to ad h
 
 - Live Photos export as the still image only.
 - Captions, keywords and ratings need macOS 27 or later. People and photo titles aren't available through Apple's public PhotoKit API.
-- Original file names are saved to `~/Library/Application Support/PhotoFinder` after the first read, so albums open instantly afterwards. Captions and keywords fill in a few seconds after a list appears.
+- Original file names are saved to `~/Library/Application Support/My Photo Library Described` after the first read, so albums open instantly afterwards. Captions and keywords fill in a few seconds after a list appears.
 
 ## Releasing the Mac app
 
