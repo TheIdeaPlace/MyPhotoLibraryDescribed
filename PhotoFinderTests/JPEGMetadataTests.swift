@@ -972,10 +972,14 @@ final class JPEGMetadataTests: XCTestCase {
     private static let makerNoteText = Data((0..<75_000).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) }).base64EncodedString()
 
     /// The extension's packet, with a caption of its own when `caption`.
-    private func extensionPacket(caption: String? = nil) -> [UInt8] {
+    private func extensionPacket(caption: String? = nil, altText: String? = nil) -> [UInt8] {
+        let alt = altText.map { """
+              <Iptc4xmpCore:AltTextAccessibility><rdf:Alt><rdf:li xml:lang="x-default">\($0)</rdf:li></rdf:Alt></Iptc4xmpCore:AltTextAccessibility>
+            """ } ?? ""
         let dc = caption.map { """
-             xmlns:dc="http://purl.org/dc/elements/1.1/">
+             xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:Iptc4xmpCore="http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/">
               <dc:description><rdf:Alt><rdf:li xml:lang="x-default">\($0)</rdf:li></rdf:Alt></dc:description>
+            \(alt)
             </rdf:Description>
             """ } ?? "/>"
         return Array("""
@@ -1083,7 +1087,18 @@ final class JPEGMetadataTests: XCTestCase {
         }
         // The refusal says what it is, as Windows' does.
         XCTAssertEqual(JPEGMetadata.ExtendedXMP.refused,
-                       .malformed("Its metadata is spread over several parts (Extended XMP) that don't add up, so it isn't changed."))
+                       .malformed("Its metadata is spread over several parts (Extended XMP) that don't add up."))
+    }
+
+    func testTheCaptionIsNamedFirstWhenSeveralFieldsAreInTheExtension() throws {
+        // Use Description as Caption writes the caption and alt text together; the caption is named, as on Windows.
+        let packet = extensionPacket(caption: "Their caption", altText: "Their alt text"), guid = md5(packet)
+        let url = try pixelPhoto("both-in-extension.jpg", main: pixelMainXMP(guid: guid),
+                                 extensions: extensionSegments(packet, guid: guid), second: try gainMap())
+        XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(contentsOf: url),
+                                                      setting: ["dc:description": short, "Iptc4xmpCore:AltTextAccessibility": short])) {
+            XCTAssertEqual($0 as? PNGMetadata.Failure, .malformed("Its metadata is spread over several parts (Extended XMP), and its caption is kept in another part."))
+        }
     }
 
     func testAnExtensionHoldingACaptionIsRefusedForTheCaptionButNotForOtherFields() throws {
@@ -1093,7 +1108,6 @@ final class JPEGMetadataTests: XCTestCase {
         try assertRefused(.init(caption: short), url)
         XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(contentsOf: url), setting: ["dc:description": short])) {
             XCTAssertEqual($0 as? PNGMetadata.Failure, JPEGMetadata.ExtendedXMP.heldInExtension("dc:description"))
-            XCTAssertEqual(($0 as? PNGMetadata.Failure).map { "\($0)" }?.contains("its caption is kept in another part") ?? false, true)
         }
         // The alt text isn't in the extension, so it can go in the main XMP.
         let read = try FileMetadataWriter.write(.init(accessibilityDescription: short), to: url)
