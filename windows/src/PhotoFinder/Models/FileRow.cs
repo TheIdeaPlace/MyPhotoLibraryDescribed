@@ -54,7 +54,26 @@ public sealed class FileRow : INotifyPropertyChanged
     public string Orientation { get; private set; } = "";
     public double Megapixels { get; private set; }
     public string MegapixelsText { get; private set; } = "";
+    /// <summary>Place Taken: the place's name when it's known (#172), otherwise the coordinates.</summary>
     public string LocationText { get; private set; } = "";
+    private string _coordinates = "";
+    private string? _placeName;
+
+    /// <summary>Where the photo was taken, or null.</summary>
+    public (double Latitude, double Longitude)? Coordinates =>
+        Item?.Metadata is { Latitude: { } lat, Longitude: { } lon } ? (lat, lon) : null;
+
+    /// <summary>Shows the place's name in Place Taken (null for the coordinates again). The row doesn't move, and
+    /// <paramref name="quietly"/> leaves the spoken name to be told later (the row in focus: hearing it again as a name
+    /// arrives would be noise); <see cref="NotifyAccessibleName"/> tells it.</summary>
+    public void SetPlaceName(string? name, bool quietly = false)
+    {
+        if (name == _placeName) return;
+        _placeName = name;
+        LocationText = name ?? _coordinates;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(LocationText)));
+        if (!quietly) NotifyAccessibleName();
+    }
     public string Folder { get; private set; } = "";
     /// <summary>A Segoe Fluent Icons glyph for rows that have no thumbnail.</summary>
     public string Glyph { get; private set; } = "";
@@ -184,8 +203,11 @@ public sealed class FileRow : INotifyPropertyChanged
         IsFavorite = item.IsFavorite;
         Rating = m.Rating;
         RatingText = StarsText(m.Rating);
-        LocationText = m.Latitude is { } lat && m.Longitude is { } lon
+        _coordinates = m.Latitude is { } lat && m.Longitude is { } lon
             ? string.Format(CultureInfo.CurrentCulture, "{0:0.0000}, {1:0.0000}", lat, lon) : "";
+        // A name found earlier stays while the photo is where it was.
+        if (_coordinates.Length == 0) _placeName = null;
+        LocationText = _placeName ?? _coordinates;
         FileType = MediaTypes.FileTypeDescription(item.Path);
         Size = item.Size;
         SizeText = FormatSize(item.Size);

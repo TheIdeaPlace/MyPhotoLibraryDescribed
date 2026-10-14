@@ -81,9 +81,14 @@ public partial class MainWindow : Window
         }));
 
         model.PropertyChanged += Model_PropertyChanged;
+        // Place Taken's names (#172): the rows showing, the current photo first.
+        _places = new PlaceLookups(Services.PlaceNames.Shared, PlacesWanted, () => _model.Rows, () => _model.FocusedRow);
+        FileList.AddHandler(System.Windows.Controls.ScrollViewer.ScrollChangedEvent, new System.Windows.Controls.ScrollChangedEventHandler((_, _) => ScanShowingRowsSoon()));
+        Closed += (_, _) => _places.Dispose();
         model.SelectionRequested += Model_SelectionRequested;
         model.ErrorRaised += message => ShowError(message);
         model.ColumnsChanged += BuildColumns;
+        model.ColumnsChanged += RefreshPlaces;
         model.SidebarRebuilding += () => _sidebarHadFocus = Sidebar.IsKeyboardFocusWithin;
         model.SidebarRebuilt += () => { if (_sidebarHadFocus) Dispatcher.BeginInvoke(FocusSidebarSelection, System.Windows.Threading.DispatcherPriority.Loaded); };
 
@@ -373,7 +378,8 @@ public partial class MainWindow : Window
         _model.Settings.LookUpPlaceNames = on;
         _model.SaveSettings();
         PlaceNamesItem.IsChecked = on;
-        Services.Announcer.AnnounceAfter(on ? "Get Info looks up place names" : "Place names aren't looked up", "PhotoFinderSetting");
+        Services.Announcer.AnnounceAfter(on ? "Place names are looked up for Get Info and Place Taken" : "Place names aren't looked up", "PhotoFinderSetting");
+        RefreshPlaces();
     }
 
     /// <summary>"caption", "caption and alt text", "caption, alt text and extended description".</summary>
@@ -516,6 +522,78 @@ public partial class MainWindow : Window
         }
     }
 
+    // MARK: Place Taken's names (#172)
+
+    private readonly PlaceLookups _places;
+    private FileRow? _placesFocused;
+    private System.Windows.Threading.DispatcherTimer? _placesSettle;
+    private bool _scanQueued;
+
+    /// <summary>Names are wanted with Look Up Place Names on and Place Taken showing: a list column in the list, a label
+    /// in the gallery.</summary>
+    private bool PlacesWanted() =>
+        _model.Settings.LookUpPlaceNames
+        && (_model.ViewMode == ViewMode.Gallery ? _model.GalleryLabelOrder : _model.Settings.ShownColumnIds()).Contains("location");
+
+    /// <summary>After the rows, the view, the columns, the labels or the setting change: names already known shown (or
+    /// taken away), and the rows showing looked up.</summary>
+    internal void RefreshPlaces()
+    {
+        _places.ShowKnown();
+        ScanShowingRowsSoon();
+        if (_model.FocusedRow is { } row) _places.Current(row);
+    }
+
+    /// <summary>The list's rows on screen (the panel's realized rows), once scrolling settles.</summary>
+    private void ScanShowingRowsSoon()
+    {
+        if (_scanQueued || !PlacesWanted() || _model.ViewMode != ViewMode.List) return;
+        _scanQueued = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _scanQueued = false;
+            if (FindItemsHost(FileList) is not { } panel) return;
+            foreach (var child in panel.Children.OfType<System.Windows.Controls.ListViewItem>())
+                if (child.DataContext is FileRow row) _places.Showing(row);
+        }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+    }
+
+    private static System.Windows.Controls.Panel? FindItemsHost(DependencyObject parent)
+    {
+        for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is System.Windows.Controls.Panel { IsItemsHost: true } panel) return panel;
+            if (FindItemsHost(child) is { } found) return found;
+        }
+        return null;
+    }
+
+    /// <summary>Focus moved: the row left behind is told its name quietly kept back, and the new one is looked up first
+    /// (in the gallery once you've settled on it a moment, so photos passed are never sent).</summary>
+    private void FocusMovedForPlaces()
+    {
+        if (_placesFocused is { } left && left != _model.FocusedRow) left.NotifyAccessibleName();
+        _placesFocused = _model.FocusedRow;
+        _placesSettle?.Stop();
+        if (_model.FocusedRow is not { } row || !PlacesWanted()) return;
+        if (_model.ViewMode == ViewMode.List)
+        {
+            _places.Current(row);
+            return;
+        }
+        _placesSettle ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _placesSettle.Tick -= PlacesSettled;
+        _placesSettle.Tick += PlacesSettled;
+        _placesSettle.Start();
+    }
+
+    private void PlacesSettled(object? sender, EventArgs e)
+    {
+        _placesSettle?.Stop();
+        if (_model.FocusedRow is { } row) _places.Current(row);
+    }
+
     // MARK: Model changes
 
     private void Model_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -528,12 +606,17 @@ public partial class MainWindow : Window
                 break;
             case nameof(LibraryModel.Rows):
                 UpdateEmptyText();
+                RefreshPlaces();
+                break;
+            case nameof(LibraryModel.ViewMode) or nameof(LibraryModel.GalleryLabelOrder):
+                RefreshPlaces();
                 break;
             case nameof(LibraryModel.SortColumn) or nameof(LibraryModel.SortDescending):
                 UpdateSortHeaders();
                 break;
             case nameof(LibraryModel.FocusedRow):
                 if (_model.ViewMode == ViewMode.Gallery) UpdateGallery();
+                FocusMovedForPlaces();
                 break;
             case nameof(LibraryModel.IsLoading):
                 UpdateEmptyText();
