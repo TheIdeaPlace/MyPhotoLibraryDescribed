@@ -1,6 +1,6 @@
 # My Photo Library Described User Guide
 
-My Photo Library Described is a screen-reader-friendly photo browser for the Mac and Windows. It shows your photos the way Finder or File Explorer shows files, in a list or a gallery, and describes each photo as you move to it, using the AI built into your computer.
+My Photo Library Described is a screen-reader-friendly photo library app for the Mac and Windows. It shows your photos the way Finder or File Explorer shows files, in a list or a gallery, and describes each photo as you move to it, using the AI built into your computer.
 
 The two apps work the same wherever the platform allows. Where they differ, this guide says so. Keys are given as Mac / Windows.
 
