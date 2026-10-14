@@ -62,11 +62,24 @@ try {
     Write-Host "Signing $($files.Count) file(s)."
     # signtool writes progress to stderr; with ErrorActionPreference Stop that would end the script before its
     # exit code could be read.
-    $ErrorActionPreference = 'Continue'
-    $log = & $signtool.FullName sign /v /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib $dlib /dmdf $metadata @files 2>&1
-    $signExit = $LASTEXITCODE
-    $ErrorActionPreference = 'Stop'
-    if ($signExit -ne 0) { $log | Write-Host; throw "signtool failed (exit code $signExit). If it mentions credentials, run az login." }
+    # The timestamp server sometimes doesn't answer for a moment ("could not be reached or returned an invalid
+    # response"): tried again, up to three times, a little apart. Any other failure stops at once.
+    for ($attempt = 1; ; $attempt++) {
+        $ErrorActionPreference = 'Continue'
+        $log = & $signtool.FullName sign /v /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib $dlib /dmdf $metadata @files 2>&1
+        $signExit = $LASTEXITCODE
+        $ErrorActionPreference = 'Stop'
+        if ($signExit -eq 0) { break }
+        # Line by line (Out-String would wrap a long line at the console's width), and the other wording signtool uses
+        # when the timestamp request times out.
+        $timestamp = [bool](@($log | ForEach-Object { "$_" }) -match 'timestamp server|SignerTimeStamp|attempting to timestamp')
+        if (-not $timestamp -or $attempt -ge 3) {
+            $log | Write-Host
+            throw "signtool failed (exit code $signExit). If it mentions credentials, run az login."
+        }
+        Write-Host "The timestamp server didn't answer; trying again (attempt $($attempt + 1) of 3)."
+        Start-Sleep -Seconds (10 * $attempt)
+    }
 } finally {
     Remove-Item -LiteralPath $metadata -Force -ErrorAction SilentlyContinue
 }
@@ -76,7 +89,8 @@ foreach ($f in $files) {
     # Get-AuthenticodeSignature can't read an MSIX's signature; signtool verify can, against the PC's trusted roots.
     if ($f -match '\.(msix|msixbundle|appx|appxbundle)$') {
         $ErrorActionPreference = 'Continue'
-        & $signtool.FullName verify /pa /q $f 2>&1 | Out-Null
+        # /tw: a package signed without a timestamp (a timestamp that failed is only a warning) doesn't pass either.
+        & $signtool.FullName verify /pa /tw /q $f 2>&1 | Out-Null
         $ok = $LASTEXITCODE -eq 0
         $ErrorActionPreference = 'Stop'
         Write-Host "$f`n  verified: $ok"
