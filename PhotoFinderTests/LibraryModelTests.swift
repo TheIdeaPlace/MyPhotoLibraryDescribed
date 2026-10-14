@@ -212,6 +212,34 @@ final class LibraryModelTests: XCTestCase {
                        ["a.jpg, 1 of 2"])
     }
 
+    // MARK: - Copy Description
+
+    @MainActor
+    func testCopyDescriptionCopiesTheTextAndSaysWhatsMissing() async throws {
+        let library = try await makeLibrary()
+        let model = library.model
+        let board = NSPasteboard(name: NSPasteboard.Name("PhotoFinderTests-\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        model.pasteboard = board
+
+        model.copyDescription()
+        XCTAssertEqual(library.said.last?.text, "Select a photo to copy its description")
+
+        model.selection = [library.id("a.jpg")]
+        model.copyDescription()
+        XCTAssertEqual(library.said.last?.text, "a.jpg hasn't been described yet")
+
+        library.remember("A red door", for: "a.jpg")
+        model.copyDescription()
+        XCTAssertEqual(board.string(forType: .string), "A red door")
+        XCTAssertEqual(library.said.last?.text, "Copied the description")
+
+        library.remember("A blue boat", for: "c.jpg")
+        model.copyDescription([library.id("a.jpg"), library.id("c.jpg"), library.id("b.mov")])
+        XCTAssertEqual(board.string(forType: .string), "a.jpg\nA red door\n\nc.jpg\nA blue boat")
+        XCTAssertEqual(library.said.last?.text, "Copied 2 descriptions. 1 photo hasn't been described yet")
+    }
+
     // MARK: - Next Photo and Previous Photo
 
     @MainActor

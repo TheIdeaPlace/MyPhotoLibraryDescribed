@@ -1468,6 +1468,32 @@ final class LibraryModel {
         }
     }
 
+    /// Where Copy Description puts its text; tests use their own, so the person's clipboard is never touched.
+    @ObservationIgnored var pasteboard: NSPasteboard = .general
+
+    /// Edit > Copy Description (Shift-Command-C, Kelly 13 Oct): the saved description of the photo you're on, or of
+    /// each photo selected, as text. Copy itself copies the photos.
+    func copyDescription(_ ids: Set<String>? = nil) {
+        var chosen = visibleRows.filter { showing(ids).contains($0.id) && !$0.isContainer }
+        if chosen.isEmpty, ids == nil, let row = focusedRow, !row.isContainer { chosen = [row] }
+        guard !chosen.isEmpty else {
+            announce("Select a photo to copy its description")
+            return
+        }
+        let described = chosen.compactMap { row in savedDescription(for: row.id).map { (row.name, $0) } }
+        guard !described.isEmpty else {
+            announce(chosen.count == 1 ? "\(chosen[0].name) hasn't been described yet" : "None of these photos has been described yet")
+            return
+        }
+        let text = described.count == 1 ? described[0].1 : described.map { "\($0.0)\n\($0.1)" }.joined(separator: "\n\n")
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        let missing = chosen.count - described.count
+        var said = described.count == 1 ? "Copied the description" : "Copied \(described.count) descriptions"
+        if missing > 0 { said += missing == 1 ? ". 1 photo hasn't been described yet" : ". \(missing) photos haven't been described yet" }
+        announce(said)
+    }
+
     func toggleFavorite(_ ids: Set<String>? = nil) {
         guard changesAllowed() else { return }
         let assets = assets(for: showing(ids))
