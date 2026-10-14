@@ -14,8 +14,7 @@ enum DiagnosticLog {
     private static let logger = Logger(subsystem: "net.theideaplace.PhotoFinder", category: "diagnostic")
 
     static var folder: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(AppInfo.dataFolderName, isDirectory: true)
+        AppInfo.dataFolder
             .appendingPathComponent("Logs", isDirectory: true)
     }
 

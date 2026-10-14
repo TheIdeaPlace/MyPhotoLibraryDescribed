@@ -129,8 +129,7 @@ final class PlaceNameCache: @unchecked Sendable {
     static let shared = PlaceNameCache()
 
     static var defaultURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(AppInfo.dataFolderName, isDirectory: true)
+        AppInfo.dataFolder
             .appendingPathComponent("PlaceNames.json")
     }
 

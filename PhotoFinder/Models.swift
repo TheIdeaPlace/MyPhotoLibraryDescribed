@@ -327,8 +327,7 @@ final class NameCache: @unchecked Sendable {
     private let fileURL: URL
 
     init() {
-        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PhotoFinder", isDirectory: true)
+        let folder = AppInfo.dataFolder
         fileURL = folder.appendingPathComponent("FileNames.plist")
         if let data = try? Data(contentsOf: fileURL),
            let saved = try? PropertyListDecoder().decode([String: String].self, from: data) {

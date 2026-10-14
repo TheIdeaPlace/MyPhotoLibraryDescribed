@@ -55,6 +55,38 @@ enum AppInfo {
         URL(string: "https://github.com/\(repository)/releases/tag/\(Updates.tagPrefix)\(version)")!
     }
 
-    /// The folder in Application Support. Not the display name: renaming the app mustn't lose saved descriptions.
-    static let dataFolderName = "PhotoFinder"
+    /// The folder in Application Support, named after the app so people can find it (Kelly, 13 Oct). A folder from
+    /// an earlier name is moved here the first time it's needed, so nothing saved is lost; if the app is renamed
+    /// again, the old name goes in `earlierDataFolderNames`.
+    static let dataFolderName = "My Photo Library Described"
+    static let earlierDataFolderNames = ["PhotoFinder"]
+
+    /// `~/Library/Application Support/My Photo Library Described`, with any earlier folder moved in first.
+    static let dataFolder: URL = {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let folder = support.appendingPathComponent(dataFolderName, isDirectory: true)
+        // Tests never move the person's real folder.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            DataFolder.moveEarlier(earlierDataFolderNames.map { support.appendingPathComponent($0, isDirectory: true) }, to: folder)
+        }
+        return folder
+    }()
+}
+
+enum DataFolder {
+    /// Moves the first earlier folder that exists to `folder`, when `folder` doesn't exist yet. When both exist (an
+    /// older copy of the app ran after a newer one), the new one is kept and the old one left where it is.
+    @discardableResult
+    static func moveEarlier(_ earlier: [URL], to folder: URL) -> URL? {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: folder.path),
+              let old = earlier.first(where: { fm.fileExists(atPath: $0.path) }) else { return nil }
+        do {
+            try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.moveItem(at: old, to: folder)
+            return old
+        } catch {
+            return nil
+        }
+    }
 }
