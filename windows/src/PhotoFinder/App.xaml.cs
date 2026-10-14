@@ -45,7 +45,8 @@ public partial class App : Application
             LibraryRoots.PicturesLibraryAsync) { Descriptions = descriptions };
         var autoDescriber = new AutoDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync,
             describeAhead: DescribeAheadAsync) { MayDescribeAhead = () => !EnergySaverOn() };
-        var backgroundDescriber = new BackgroundDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
+        var backgroundDescriber = new BackgroundDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync,
+            BackgroundDescriber.DefaultFailuresPath);
         backgroundDescriber.ForegroundBusy = () => autoDescriber.IsBusy;
         backgroundDescriber.MayRun = () => !EnergySaverOn();
         // Describe Photo working after background describing gave up waiting for Windows AI: it starts, unasked.

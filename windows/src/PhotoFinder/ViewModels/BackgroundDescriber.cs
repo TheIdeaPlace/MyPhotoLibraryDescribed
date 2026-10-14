@@ -31,14 +31,18 @@ public sealed class BackgroundDescriber : IDisposable
     private int _total;
     private int _done;
 
+    /// <param name="failuresPath">Where the photos that couldn't be described are remembered between starts; none in
+    /// tests unless given.</param>
     public BackgroundDescriber(LibraryModel model, DescriptionStore store, AutoDescriber.DescribeFunc describe,
-        Func<CancellationToken, Task<AIReadiness>> check, Func<CancellationToken, Task<AIReadiness>> prepare)
+        Func<CancellationToken, Task<AIReadiness>> check, Func<CancellationToken, Task<AIReadiness>> prepare, string? failuresPath = null)
     {
         _model = model;
         _store = store;
         _describe = describe;
         _check = check;
         _prepare = prepare;
+        _failuresPath = failuresPath;
+        LoadFailures();
         _resume = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token);
         _model.FolderAdded += (folder, paths) => Busy(FolderAddedAsync(folder, paths));
     }
@@ -82,6 +86,9 @@ public sealed class BackgroundDescriber : IDisposable
                     : "Photos won't be described in the background");
                 return;
             }
+            // Turned on by the person: everything is tried again, including photos that couldn't be described before
+            // (a codec installed since, say).
+            ForgetFailures();
             Announcer.Announce("Photos in the library will be described in the background");
             Busy(TurnedOnAsync());
         }
@@ -102,6 +109,8 @@ public sealed class BackgroundDescriber : IDisposable
     private int StopQueue()
     {
         var left = _front.Count + _queue.Count;
+        // Failures not yet shown to be the photos' own aren't kept once the run ends early, however it was stopped.
+        _pending.Clear();
         _front.Clear();
         _queue.Clear();
         _queued.Clear();
@@ -267,12 +276,16 @@ public sealed class BackgroundDescriber : IDisposable
             };
         }
         var kind = _model.Settings.DescriptionKind;
-        var todo = _model.AllItems
-            .Where(i => !i.IsVideo && !i.IsOnlineOnly && MediaTypes.KindOf(i.Path) == MediaKind.Image && Wanted(i.Path) && _store.Get(i, kind) is null
-                        && !_failed.Contains(FailureKey(i)))
+        var undescribed = _model.AllItems
+            .Where(i => !i.IsVideo && !i.IsOnlineOnly && MediaTypes.KindOf(i.Path) == MediaKind.Image && Wanted(i.Path) && _store.Get(i, kind) is null)
+            .ToList();
+        var todo = undescribed
+            .Where(i => !_failed.Contains(FailureKey(i, kind)))
             .OrderByDescending(i => i.Metadata?.DateTaken ?? i.Modified)
             .Select(i => i.Path)
             .ToList();
+        if (undescribed.Count > todo.Count)
+            Log.Write("background", $"Skipped {undescribed.Count - todo.Count} photos that couldn't be described before");
         if (todo.Count == 0)
         {
             if (!announce) Log.Write("background", "Nothing in the library left to describe");
@@ -307,13 +320,87 @@ public sealed class BackgroundDescriber : IDisposable
     /// <summary>The photo being described now.</summary>
     private string? _current;
 
-    /// <summary>Photos that couldn't be described this session, by path, size and date, so a new run doesn't try them
-    /// again.</summary>
+    /// <summary>Photos that couldn't be described, by path, size and date, so a new run doesn't try them again: not this
+    /// session, and not after a restart either, or the same few photos at the front of the queue (newest first) would
+    /// fail again at every start and stop the run before it reached the rest (Kelly, 13 Oct). Kept per version of the app:
+    /// an update may describe them, so they're tried once more then. An edited photo has a new date, so it's tried too.</summary>
     private readonly HashSet<string> _failed = new(StringComparer.OrdinalIgnoreCase);
-    private static string FailureKey(MediaItem item) => $"{item.Path}|{item.Size}|{item.Modified.Ticks}";
+    /// <summary>The failures kept for later starts: the photo's own verdicts at once, other failures only once a later
+    /// photo in the same run was described, proving describing works. A run that stops after failures in a row keeps
+    /// none of its streak, so a problem with every photo (a missing codec, a broken helper) can't leave good photos
+    /// skipped once it's fixed.</summary>
+    private readonly HashSet<string> _remembered = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _pending = [];
+
+    /// <summary>The photo by path, size and modified time (UTC, so a daylight saving change doesn't lose them all), and the
+    /// description type: one the filter declined as Detailed may be fine as Brief.</summary>
+    private static string FailureKey(MediaItem item, string kind) => $"{item.Path}|{item.Size}|{item.Modified.ToUniversalTime().Ticks}|{kind}";
+    private readonly string? _failuresPath;
+
+    private sealed record Failures(string Version, List<string>? Keys);
+
+    public static string DefaultFailuresPath => Path.Combine(AppPaths.DataFolder, "BackgroundFailures.json");
+
+    private void LoadFailures()
+    {
+        if (_failuresPath is null || !File.Exists(_failuresPath)) return;
+        try
+        {
+            var saved = System.Text.Json.JsonSerializer.Deserialize<Failures>(File.ReadAllText(_failuresPath));
+            if (saved?.Version != Updates.AppVersion) return;
+            var keys = (saved.Keys ?? []).Where(k => !string.IsNullOrEmpty(k)).ToList();
+            _remembered.UnionWith(keys);
+            _failed.UnionWith(keys);
+        }
+        catch (Exception ex)
+        {
+            // Never a reason not to start: they're just tried again.
+            Log.Write("background", $"The photos that couldn't be described before weren't read ({ex.GetType().Name}); they'll be tried again");
+        }
+    }
+
+    private void SaveFailures()
+    {
+        if (_failuresPath is null) return;
+        try
+        {
+            // Photos no longer in the library are dropped, so the file doesn't grow forever. (One on a share that's offline
+            // just now is dropped too, and simply tried again later.)
+            var paths = _model.AllItems.Select(i => i.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _remembered.RemoveWhere(k => !paths.Contains(k[..Math.Max(0, k.IndexOf('|'))]));
+            Directory.CreateDirectory(Path.GetDirectoryName(_failuresPath)!);
+            var temp = _failuresPath + ".tmp";
+            File.WriteAllText(temp, System.Text.Json.JsonSerializer.Serialize(new Failures(Updates.AppVersion, [.. _remembered])));
+            File.Move(temp, _failuresPath, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Write("background", $"The photos that couldn't be described weren't saved ({ex.GetType().Name}); they'll be tried again next start");
+        }
+    }
+
+    private void ForgetFailures()
+    {
+        _failed.Clear();
+        _pending.Clear();
+        if (_remembered.Count == 0) return;
+        _remembered.Clear();
+        SaveFailures();
+    }
+
+    /// <summary>Windows' final verdict on the photo itself, not a sign that describing doesn't work: its content filter
+    /// declining what's in the picture, or too much text in it to describe. These don't count towards stopping the run.
+    /// A missing codec shows as decode_failed or unsupported_format, which do.</summary>
+    internal static bool IsAboutThePhoto(Exception ex) => ex is DescriptionException { Code: "content_filtered" or "too_much_text" };
+
+    /// <summary>A failure that may well not happen next time: Windows taking too long, or the helper stopping partway
+    /// (WindowsAI says "stopped unexpectedly"). Never kept for later starts.</summary>
+    internal static bool IsPassing(Exception ex) =>
+        ex is TimeoutException or DescriptionException { Code: "timeout" }
+        || (ex is DescriptionException { Code: "internal_error" } d && d.Message.Contains("stopped unexpectedly", StringComparison.Ordinal));
 
     /// <summary>After this many photos in a row fail, the run stops and says why, rather than failing through thousands
-    /// of photos (a missing HEIF codec, a broken helper).</summary>
+    /// of photos (a missing HEIF codec, a broken helper). Photos Windows' content filter declines don't count.</summary>
     internal const int FailuresInARow = 5;
 
     /// <summary>Whether it's a good time to work: not on energy saver. Set by the app; it waits meanwhile.</summary>
@@ -428,6 +515,13 @@ public sealed class BackgroundDescriber : IDisposable
                     var text = await _describe(item, kind, _closing.Token);
                     if (text.Length > 0) _store.PutUnlessEdited(item, kind, text);
                     failedInARow = 0;
+                    // Describing works, so the failures before this one were the photos' own: kept for later starts.
+                    if (_pending.Count > 0)
+                    {
+                        _remembered.UnionWith(_pending);
+                        _pending.Clear();
+                        SaveFailures();
+                    }
                 }
                 catch (OperationCanceledException) when (_closing.IsCancellationRequested)
                 {
@@ -435,12 +529,22 @@ public sealed class BackgroundDescriber : IDisposable
                 }
                 catch (Exception ex)
                 {
-                    // One photo that can't be described (filtered, unreadable, timed out) doesn't stop the rest, but many
-                    // in a row means something's wrong with every photo: stop and say what, once.
-                    _failed.Add(FailureKey(item));
-                    Log.Write("background", $"Couldn't describe {item.Name}: {(ex is DescriptionException d ? $"{d.Code}: " : ex.GetType().Name + ": ")}{ex.Message}");
-                    if (run == _run && ++failedInARow >= FailuresInARow)
+                    // One photo that can't be described (filtered, unreadable, timed out) doesn't stop the rest, and is
+                    // remembered so it isn't tried at every start; but many in a row means something's wrong with every
+                    // photo: stop and say what, once.
+                    var key = FailureKey(item, kind);
+                    _failed.Add(key);
+                    if (IsAboutThePhoto(ex))
                     {
+                        _remembered.Add(key);
+                        SaveFailures();
+                    }
+                    // A timeout, or the helper stopping partway, says nothing about the photo: skipped this session only.
+                    else if (!IsPassing(ex)) _pending.Add(key);
+                    Log.Write("background", $"Couldn't describe {item.Name}: {(ex is DescriptionException d ? $"{d.Code}: " : ex.GetType().Name + ": ")}{ex.Message}");
+                    if (run == _run && !IsAboutThePhoto(ex) && ++failedInARow >= FailuresInARow)
+                    {
+                        // Something may be wrong with every photo: StopQueue drops the streak, so it isn't kept for later starts.
                         var left = StopQueue();
                         Log.Write("background", $"Stopped after {FailuresInARow} failures in a row; {left} not tried");
                         Announcer.AnnounceAfter(
