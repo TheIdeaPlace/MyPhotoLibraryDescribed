@@ -473,6 +473,20 @@ public partial class MainWindow : Window
             ShowError("The captions couldn't be read, so they weren't changed.", owner);
             return;
         }
+        // Photos whose caption would be refused (an older Photoshop caption would still be read, #179) are left out of
+        // the question, and said after; with none left, said now, without asking anything.
+        var refused = new List<FileRow>();
+        foreach (var c in current)
+            if (await XmpFields.WouldRefuseCaptionAsync(c.Row.Item!.Path, c.Text)) refused.Add(c.Row);
+        string? refusal = refused.Count == 0 ? null
+            : refused.Count == 1 ? $"{refused[0].Name}: {new OlderCaptionException().Message}, so it was left as it is."
+            : $"{refused.Count} photos weren't changed: an older caption saved in each by Photoshop or a similar app would still be read instead of the new one.";
+        if (refused.Count == current.Count)
+        {
+            ShowError(refusal!, owner);
+            return;
+        }
+        current = current.Where(c => !refused.Contains(c.Row)).ToList();
         // The Mac's question: "Replace the caption and alt text of name?" with what each holds, or, for several photos,
         // "Replace what's already in N photos?".
         var replacing = current
@@ -495,6 +509,7 @@ public partial class MainWindow : Window
                 && (c.AltText != FileFields.AltText(c.Text) || c.Extended != (FileFields.ExtendedDescription(c.Text) ?? ""))))
             .Select(c => (c.Row.Item!, c.Text)).ToList();
         await _model.SaveCaptionsAsync(toWrite, current.Count - toWrite.Count, photos.Count - described.Count);
+        if (refusal is not null) ShowError(refusal, owner);
         if (unreadable > 0)
             ShowError(unreadable == 1 ? "1 caption couldn't be read, so it wasn't changed." : $"{unreadable} captions couldn't be read, so they weren't changed.", owner);
     }
@@ -1281,6 +1296,13 @@ public partial class MainWindow : Window
                 }
             }
             else initial = item.Metadata.Caption;
+            // A caption that would be refused whatever's typed (an older Photoshop caption would still be read, #179):
+            // said now, rather than after it's been typed.
+            if (await XmpFields.HasOlderCaptionAsync(item.Path))
+            {
+                ShowError($"{item.Name}: {new OlderCaptionException().Message}, so its caption can't be changed.");
+                return;
+            }
         }
         var dialog = new CaptionDialog(rows.Count, initial) { Owner = this };
         var saved = dialog.ShowDialog() == true;

@@ -264,10 +264,23 @@ public sealed class FileFieldsTests : IDisposable
         var roomy = _lib.AddJpeg("roomy.jpg");
         File.WriteAllBytes(roomy, WithoutRoom(File.ReadAllBytes(roomy)));
         await XmpFields.WriteAsync(roomy, "First.", null, null);
-        // The read-back's decoder keeps the file mapped until it's collected.
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        File.WriteAllBytes(roomy, [.. WithSegment(File.ReadAllBytes(roomy), 0xE2, mpf), .. "the gain map"u8.ToArray()]);
+        // The read-back's decoder keeps the file mapped until it's collected, which can take a moment: tried again, as
+        // the app's own swap does.
+        byte[] withIndex = [.. WithSegment(File.ReadAllBytes(roomy), 0xE2, mpf), .. "the gain map"u8.ToArray()];
+        for (var attempt = 1; ; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            try
+            {
+                File.WriteAllBytes(roomy, withIndex);
+                break;
+            }
+            catch (IOException) when (attempt < 20)
+            {
+                await Task.Delay(50);
+            }
+        }
         var size = new FileInfo(roomy).Length;
         await XmpFields.WriteAsync(roomy, "Second.", null, null);
         Assert.Equal(size, new FileInfo(roomy).Length);
@@ -655,6 +668,80 @@ public sealed class FileFieldsTests : IDisposable
         // Split inside the IPTC resource; WithSegment puts each first, so the second half goes in first.
         var half = resources.Length / 2;
         return WithSegment(WithSegment(jpeg, 0xED, [.. photoshop, .. resources[half..]]), 0xED, [.. photoshop, .. resources[..half]]);
+    }
+
+    [Fact]
+    public async Task TheIptcCaptionOtherAppsRead_IsTheCaptionShown_WhenItWins()
+    {
+        // #181: Get Info and the list show the caption everyone else sees.
+        var stale = _lib.PathOf("stale-shown.jpg");
+        File.WriteAllBytes(stale, WithPhotoshopIptc("An old caption", "stale"));
+        Assert.Equal(new XmpFields.Fields("An old caption", "", "", HasCaption: true), await XmpFields.ReadAsync(stale));
+        Assert.Equal("An old caption", (await MetadataReader.ReadAsync(stale)).Caption);
+        // In step: the XMP's (none here) is read, as other apps do.
+        var right = _lib.PathOf("right-shown.jpg");
+        File.WriteAllBytes(right, WithPhotoshopIptc("An old caption", "right"));
+        Assert.False((await XmpFields.ReadAsync(right)).HasCaption);
+        // Split across two segments too.
+        var split = _lib.PathOf("split-shown.jpg");
+        File.WriteAllBytes(split, WithPhotoshopIptc("An old caption", "stale", split: true));
+        Assert.Equal("An old caption", (await XmpFields.ReadAsync(split)).Caption);
+    }
+
+    [Fact]
+    public async Task TheSameCaptionWithCRLineBreaks_IsSaved_AndReadsBack()
+    {
+        // Photoshop writes CR; the description has LF. Allowed (it's the same caption), and the read-back agrees.
+        var path = _lib.PathOf("cr.jpg");
+        File.WriteAllBytes(path, WithPhotoshopIptc("Line one\rLine two", "stale"));
+        Assert.Equal(1, (await MetadataWriter.SetCaptionAsync([ItemFor(path)], "Line one\nLine two")).Succeeded);
+        Assert.Equal("Line one\nLine two", (await XmpFields.ReadAsync(path)).Caption);
+    }
+
+    [Fact]
+    public async Task ARefusal_IsKnownBeforeAnythingIsAsked_AndAnEmptyIptcCaptionShowsTheXmps()
+    {
+        var stale = _lib.PathOf("refuse.jpg");
+        File.WriteAllBytes(stale, WithPhotoshopIptc("An old caption", "stale"));
+        Assert.True(await XmpFields.WouldRefuseCaptionAsync(stale, "A dog."));
+        Assert.False(await XmpFields.WouldRefuseCaptionAsync(stale, "An old caption"));
+        var right = _lib.PathOf("fine.jpg");
+        File.WriteAllBytes(right, WithPhotoshopIptc("An old caption", "right"));
+        Assert.False(await XmpFields.WouldRefuseCaptionAsync(right, "A dog."));
+        // A present but empty IPTC caption isn't shown in place of the XMP's, as on the Mac, but a new caption would
+        // still be refused, so Edit Caption says so before opening.
+        var emptyFile = _lib.PathOf("empty-iptc.jpg");
+        File.WriteAllBytes(emptyFile, WithPhotoshopIptc("", "stale"));
+        using (var empty = File.OpenRead(emptyFile)) Assert.Null(JpegMetadata.IptcCaptionReadFirst(empty));
+        Assert.True(await XmpFields.HasOlderCaptionAsync(emptyFile));
+        Assert.True(await XmpFields.WouldRefuseCaptionAsync(emptyFile, "A dog."));
+        Assert.True(await XmpFields.HasOlderCaptionAsync(stale));
+        Assert.False(await XmpFields.HasOlderCaptionAsync(right));
+    }
+
+    public static TheoryData<string> OddJpegs() => ["fill bytes", "not a jpeg", "not photoshop", "truncated", "past the end", "after the picture"];
+
+    [Theory]
+    [MemberData(nameof(OddJpegs))]
+    public void TheIptcWalk_FollowsOddFiles_WithoutFailing(string what)
+    {
+        var good = WithPhotoshopIptc("An old caption", "stale");
+        var app13 = Segments(good).Single(x => x.Marker == 0xED);
+        byte[] file = what switch
+        {
+            // Fill bytes before a marker are allowed; the caption is still found.
+            "fill bytes" => [0xFF, 0xD8, 0xFF, 0xFF, .. good[2..]],
+            "not a jpeg" => "GIF89a not a jpeg at all"u8.ToArray(),
+            "not photoshop" => WithSegment(WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("odd.jpg"))), 0xED, "Something else\0 8BIM"u8.ToArray()),
+            "truncated" => good[..(app13.Offset + 10)],
+            "past the end" => [.. good[..(app13.Offset + 2)], 0xFF, 0xF0, .. good[(app13.Offset + 4)..(app13.Offset + 40)]],
+            // Photoshop's segment only after the picture starts: not read.
+            _ => [.. WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("plain.jpg")))[..^2], .. good[app13.Offset..(app13.Offset + app13.Length)], 0xFF, 0xD9],
+        };
+        using var stream = new MemoryStream(file);
+        var caption = JpegMetadata.IptcCaptionReadFirst(stream);
+        if (what == "fill bytes") Assert.Equal("An old caption", caption);
+        else Assert.Null(caption);
     }
 
     [Fact]
