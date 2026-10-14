@@ -85,7 +85,7 @@ My Photo Library Described starts in **Read-Only Mode** every time: nothing it d
 
 To change photos (favorites, ratings, captions), turn off **File > Read-Only Mode**. My Photo Library Described asks "Let My Photo Library Described change your photos?" first; Keep Read-Only Mode is the default. Changes are then allowed until My Photo Library Described quits, and the title ends with "Editing Mode".
 
-**Photo > Rating** gives a photo 1 to 5 stars, or No Rating. On the Mac, favorites and ratings are for photos in your Photos library; they aren't available for files in added folders yet. On Windows, files get them too.
+**Photo > Rating** gives a photo 1 to 5 stars, or No Rating. On the Mac, favorites and ratings are for photos in your Photos library; they aren't available for files in added folders yet. On Windows, files get them too; a favorite there is a five-star rating.
 
 ## Captions and saving descriptions in photos
 
@@ -128,15 +128,15 @@ OK keeps both parts' choices and Cancel leaves them. The sheet opens on the part
 **Get Info** (Command-I / Ctrl+I) lists everything known about a photo: its dates, size, camera settings, caption, keywords, rating, coordinates, and its saved description. Escape closes it.
 
 - **Mac:** Redescribe describes the photo afresh (it's Describe Image when there's no description yet). You can then ask Apple Intelligence follow-up questions about the photo. Find Objects and Text lists what's in the photo and reads any text in it.
-- **Windows:** Describe Image describes the photo, with a Description Type choice, and Use as Caption makes that description the caption. There's no Redescribe. Read Text in Image reads any text in the photo.
+- **Windows:** Describe Image describes the photo, in the Description Type you choose there; once a description of that type is saved, the button is Redescribe. Use as Caption makes that description the caption. Read Text in Image reads any text in the photo.
 
 ## Place names
 
 Photos often record where they were taken, as coordinates. Get Info always shows the coordinates. **Look Up Place Names** (in Settings on the Mac, the Photo menu on Windows) also names the place, such as "Pike Place Market, Seattle, Washington, United States".
 
-To find the name, only the photo's coordinates are sent to a location service, nothing about you or the photo. That happens when you open Get Info, and for the photos showing when Place Taken is a list column or gallery label. The service is Apple's on the Mac, and OpenStreetMap's Nominatim on Windows. On Windows, the language Windows uses is sent too, so the name comes back in it, and each name ends "(© OpenStreetMap contributors)" as its licence asks. Because of all this, it's off until you turn it on, and it asks first.
+To find the name, the photo's coordinates are sent to a location service. Nothing else about the photo is sent. That happens when you open Get Info. The service is Apple's on the Mac, and OpenStreetMap's Nominatim on Windows. On Windows, the language Windows uses is sent too, so the name comes back in it, and each name ends "(© OpenStreetMap contributors)" as its licence asks. Because of all this, it's off until you turn it on, and it asks first. Names found are kept, so a place is sent once. The two services sometimes name the same place a little differently.
 
- On Windows it also reads a small settings file from the app's GitHub repository, at most once a day, so lookups can be paused for everyone without an update if Nominatim asks; Get Info then says place names are paused. Names found are kept, so a place is sent once. The two services sometimes name the same place a little differently.
+On Windows it also reads a small settings file from the app's GitHub repository, at most once a day, so lookups can be paused for everyone without an update if Nominatim asks; Get Info then says place names are paused.
 
 With Look Up Place Names on, the list's Place Taken column and the gallery's Place Taken label (View > Labels…) show the place's name too, once it's known, and the coordinates until then. For that, the coordinates of the photos showing are sent as well, a few at a time, then one every few seconds; names fill in as they arrive, without moving focus, moving rows or saying anything. Nothing is looked up while Place Taken isn't a column or label.
 
@@ -206,6 +206,6 @@ Photos are described on your computer and never uploaded to describe them. My Ph
 - to look up place names, if you turn that on;
 - to send a bug report when you choose Send (or open GitHub to file it);
 - to open pages you choose in your web browser: this guide, the privacy policy, an update's release notes, the links in About, and a filed report's issue;
-- to download a photo that's only in the cloud (in iCloud or another cloud folder on the Mac, or OneDrive on Windows), from your own account, when you open, preview or describe it. On the Mac, Describe Photo downloads it; describing as you arrow and in the background never do.
+- to download a photo that's only in the cloud (in iCloud or another cloud folder on the Mac, or OneDrive on Windows), from your own account, when you open, preview, export or Get Info it, when the gallery shows it, or when a caption is written into it (which asks first). On the Mac, Describe Photo and Redescribe download it too. On Windows they don't, but Get Info's Describe Image does. Describing as you arrow, ahead of you and in the background never download.
 
 Each saved description records which AI made it and when, and stays on your computer. The [privacy policy](PRIVACY.md) has the details.
