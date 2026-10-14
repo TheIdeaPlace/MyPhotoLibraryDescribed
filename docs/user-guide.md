@@ -31,7 +31,7 @@ The two apps work the same wherever the platform allows. Where they differ, this
 
 Both apps are on the [releases page](https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/latest), signed by Kelly Ford.
 
-- **Mac:** download the `My-Photo-Library-Described-<version>-mac.dmg` disk image, open it and move the app to your Applications folder. It's signed by Kelly Ford and notarized by Apple, so it opens without warnings. Describing photos needs macOS 27 on Apple silicon with Apple Intelligence. It's built to open on macOS 15 and later for browsing, but has only been tested on macOS 26 and 27.
+- **Mac:** download the `My-Photo-Library-Described-<version>-mac.dmg` disk image, open it and move the app to your Applications folder. It's signed by Kelly Ford and notarized by Apple. The first time you open it, macOS asks once whether to open an app downloaded from the Internet; choose Open. Describing photos needs macOS 27 on Apple silicon with Apple Intelligence. It's built to open on macOS 15 and later for browsing, but has only been tested on macOS 26 and 27.
 - **Windows:** download and open `MyPhotoLibraryDescribed.appinstaller`. Windows' App Installer shows the app's name and publisher (Kelly Ford) with an Install button, and installs the Windows App Runtime it needs first if the PC doesn't have it. Windows then checks the same place for updates every few hours and installs them while the app isn't running; Help > Check for Updates checks now.
 
 ## What you need
@@ -51,7 +51,7 @@ The window has a sidebar (the library, albums on the Mac, and folders), the list
 
 ## Hearing photos described
 
-**Photo > Describe Photos Automatically** is on by default. Arrow to a photo and pause: its name is read first, then its description. Arrowing quickly past photos describes only the one you stop on. Descriptions are saved, so going back to a photo reads its description at once.
+**Photo > Describe Photos Automatically** is on by default. Arrow to a photo and pause: you hear the photo, then its description. In the list that's its row, its columns in the order View > Labels… sets; in the gallery it's what View > Labels… chooses, its position ("12 of 400") to start with. Arrowing quickly past photos describes only the one you stop on. Descriptions are saved, so going back to a photo reads its description at once.
 
 While you step through photos one at a time, My Photo Library Described quietly describes the next one in the direction you're going, so it's ready when you get there. It doesn't do this on Low Power Mode / energy saver.
 
@@ -113,7 +113,7 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 ## Help menu
 
 - **Check for Updates** says whether there's a newer version. My Photo Library Described also checks quietly once a day, and the item then reads "Update to *version* available…".
-- **Report a Bug…** opens a form. Choose Bug or Suggestion, give it a title, and say what happened, what you expected and the steps (or, for a suggestion, what you'd like). Contact is optional. "Include the system check" adds Check System's results, without folder paths, and is on to start with. The preview shows exactly what will be sent.
+- **Report a Bug…** opens a form. Choose Bug or Suggestion, give it a title, and say what happened, what you expected and the steps (or, for a suggestion, what you'd like). Contact is optional. "Include the system check" adds Check System's results, with your user folder left out (they can still name photos and other folders), and is on to start with. The preview shows exactly what will be sent.
   - Send files the report as a GitHub issue for you, through The Idea Place's bug-report service, so you don't need a GitHub account. The form then says "Report filed as issue" and the number, with a button to open it.
   - If the report can't be sent that way, the form says so and the whole report is copied; Open in Browser opens a new GitHub issue with the details filled in, for you to submit.
   - **Everything in a report is public on GitHub, including the contact.**
@@ -130,9 +130,9 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 
 | Action | Mac | Windows |
 |---|---|---|
-| Open a photo, or go into a folder | Command-O or Command-Down Arrow | Enter, Ctrl+O or Alt+Down Arrow |
+| Open a photo, or go into a folder | Return, Command-O or Command-Down Arrow | Enter, Ctrl+O or Alt+Down Arrow |
 | Go to the enclosing folder | Command-Up Arrow | Alt+Up Arrow or Backspace |
-| Preview | Command-Y (Quick Look) | Space or Ctrl+Y |
+| Preview | Space or Command-Y (Quick Look) | Space or Ctrl+Y |
 | Get Info | Command-I | Ctrl+I or Alt+Enter |
 | Describe Photo | Command-D | Ctrl+D |
 | Go to the description, and back to the list or gallery | Shift-Command-D | Ctrl+Shift+D |
@@ -154,12 +154,12 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 ## Removing the app
 
 - **Windows:** open Settings > Apps > Installed apps, find My Photo Library Described, choose More options, then Uninstall. Or find it in the Start menu, open its context menu (Shift+F10 or the Applications key) and choose Uninstall. It isn't in Control Panel's Programs and Features (appwiz.cpl): apps installed with App Installer, as packages, are listed only in Settings. Uninstalling removes the app and its AI helper together.
-- **Mac:** quit it and move My Photo Library Described from Applications to the Trash.
+- **Mac:** quit it and move My Photo Library Described from Applications to the Trash. To have macOS forget that you let it use Photos, run `tccutil reset Photos net.theideaplace.MyPhotoLibraryDescribed` in Terminal.
 
 Your photos are never touched by removing the app, and descriptions saved into photos stay in them. The app's own files are left, so reinstalling picks up where you left off; to remove them too:
 
 - **Windows:** delete the folder `%LOCALAPPDATA%\My Photo Library Described` (type it into File Explorer's address bar). It holds the descriptions, settings, place names already looked up and the log. If it isn't there, Windows kept it inside the app's package, and uninstalling removed it.
-- **Mac:** quit the app, then delete the folder `~/Library/Application Support/My Photo Library Described` (descriptions and your corrections, place names already looked up, and the log; in Finder, Go > Go to Folder reaches it). Settings and the folders you added are in macOS's preferences; to remove them, run `defaults delete net.theideaplace.MyPhotoLibraryDescribed` in Terminal. Deleting the preferences file itself doesn't work, as macOS keeps a copy and writes it back.
+- **Mac:** quit the app, then delete the folder `~/Library/Application Support/My Photo Library Described` (descriptions and your corrections, place names already looked up, the original file names of your Photos library's photos, and the log; in Finder, Go > Go to Folder reaches it). Settings and the folders you added are in macOS's preferences; to remove them, run `defaults delete net.theideaplace.MyPhotoLibraryDescribed` in Terminal. Deleting the preferences file itself doesn't work, as macOS keeps a copy and writes it back.
 
 ## Privacy
 
