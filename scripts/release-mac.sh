@@ -32,6 +32,8 @@ OUT=build/release
 # in a working folder that's removed at the end, so build/release holds only the disk image.
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/mpld-release.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+# zsh skips the EXIT trap when a signal ends the script, so Control-C or closing the window exits through it.
+trap 'exit 130' INT TERM HUP
 FILE="${NAME// /-}-$VERSION-mac.dmg"
 [ -n "$VERSION" ] && [ -n "$NAME" ] || { echo "Couldn't read the version or name from project.yml"; exit 1; }
 [ -f "$KIT/asc-api-key.p8" ] || { echo "No App Store Connect key at $KIT/asc-api-key.p8"; exit 1; }
