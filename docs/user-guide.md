@@ -81,6 +81,8 @@ To change photos (favorites, ratings, captions), turn off **File > Read-Only Mod
 
 On the Mac, a photo in your Photos library gets a Photos caption, which syncs with iCloud Photos. A file in a folder you added gets its caption, and its accessibility alt text, written in the file itself. Only those fields change; the picture and everything else in the file stay exactly as they were.
 
+**About alt text in files.** Most photo metadata has no alt text field: EXIF has a title and a description, and older IPTC data has a caption. In 2021 the IPTC, which looks after the standard for photo metadata, added two fields for accessibility, stored in a file's XMP: **Alt Text (Accessibility)**, a short text of up to about 250 characters, and **Extended Description (Accessibility)**, for more. These are the fields the app writes, in JPEG, PNG, TIFF and HEIC files: the alt text is the description when it's short enough, otherwise the whole sentences that fit, and the extended description is the whole description when the alt text had to be shortened. They stay with the file wherever it goes. Some professional photo tools and publishing systems read them, and websites can use them when you upload a photo; Finder, File Explorer and Apple Photos don't show them, so on your own computer it's the caption you'll see. Photos in your Photos library have no such fields, so they get a caption only.
+
 ## Adding folders
 
 **File > Add Folder to Library…** adds a folder of photos to the sidebar, under Folders, and its photos are described like the rest. **Remove Folder from Library** (or Delete on it in the sidebar) removes it after asking. The folder and its photos stay on your computer.
