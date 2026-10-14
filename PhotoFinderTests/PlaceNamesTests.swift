@@ -236,17 +236,48 @@ final class PlaceNamesTests: XCTestCase {
 
     @MainActor
     func testTooManyBacksOffLongerEachTimeAndAsksAgain() async {
-        let (lookup, cache, recorder) = lookup(["1.00000,1.00000": "One"], busy: ["1.00000,1.00000": 6])
-        lookup.want(key(1, 1))
+        // Six spots, each busy once: each asked again after the rest, the waits doubling up to 15 minutes.
+        let spots = (1...6).map { key(Double($0), 0) }
+        let (lookup, cache, recorder) = lookup(Dictionary(uniqueKeysWithValues: spots.map { ($0.text, "Found") }),
+                                               busy: Dictionary(uniqueKeysWithValues: spots.map { ($0.text, 1) }))
+        for spot in spots { lookup.want(spot) }
         await lookup.whenIdle()
-        XCTAssertEqual(recorder.keys, Array(repeating: "1.00000,1.00000", count: 7))
-        XCTAssertEqual(recorder.waits, [.seconds(60), .seconds(120), .seconds(240), .seconds(480), .seconds(900),
-                                        .seconds(900), PlaceNameLookup.burstGap])
-        XCTAssertEqual(cache.name(for: key(1, 1)), "One")
+        XCTAssertEqual(recorder.keys, spots.map(\.text) + spots.map(\.text))
+        XCTAssertEqual(recorder.waits, [.seconds(60), .seconds(120), .seconds(240), .seconds(480), .seconds(900), .seconds(900)]
+                       + Array(repeating: PlaceNameLookup.burstGap, count: 6))
+        XCTAssertTrue(spots.allSatisfy { cache.name(for: $0) == "Found" })
         XCTAssertTrue(PlaceNames.isTransient(URLError(.notConnectedToInternet)))
         XCTAssertTrue(PlaceNames.isTransient(MKError(.loadingThrottled)))
         XCTAssertTrue(PlaceNames.isTransient(CLError(.network)))
         XCTAssertFalse(PlaceNames.isTransient(NotThisSpot()))
+    }
+
+    @MainActor
+    func testASpotThatKeepsFailingDoesntHoldUpTheRest() async {
+        let (lookup, cache, recorder) = lookup([text(2, 2): "Two", text(3, 3): "Three"], busy: [text(1, 1): 99])
+        lookup.want(key(1, 1))
+        lookup.want(key(2, 2))
+        lookup.want(key(3, 3))
+        await lookup.whenIdle()
+        // Back of the line each time, and after three tries not asked again this session.
+        XCTAssertEqual(recorder.keys, [text(1, 1), text(2, 2), text(3, 3), text(1, 1), text(1, 1)])
+        XCTAssertEqual(recorder.waits, [.seconds(60), PlaceNameLookup.burstGap, PlaceNameLookup.burstGap,
+                                        .seconds(60), .seconds(120)])
+        XCTAssertEqual(cache.name(for: key(3, 3)), "Three")
+        XCTAssertNil(cache.name(for: key(1, 1)))
+        lookup.want(key(1, 1))
+        lookup.want(key(1, 1), first: true)
+        await lookup.whenIdle()
+        XCTAssertEqual(recorder.keys.count, 5)
+    }
+
+    @MainActor
+    func testThePhotoYoureOnIsAskedAgainFirst() async {
+        let (lookup, _, recorder) = lookup([:], busy: [text(1, 1): 1])
+        lookup.want(key(1, 1), first: true)
+        lookup.want(key(2, 2))
+        await lookup.whenIdle()
+        XCTAssertEqual(recorder.keys, [text(1, 1), text(1, 1), text(2, 2)])
     }
 
     @MainActor

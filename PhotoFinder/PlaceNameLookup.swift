@@ -36,6 +36,13 @@ final class PlaceNameLookup {
 
     /// The photo you're on, asked first.
     private(set) var current: PlaceKey?
+    /// The photo you're on now, even while it's being asked, so one that failed for a moment goes first again only if
+    /// you're still on it.
+    private var currentPhoto: PlaceKey?
+    /// Busy or offline answers for each spot: after `maxTransientFailures`, it isn't asked again this session, so a
+    /// spot Apple always fails on can't keep coming back.
+    private var transientFailures: [PlaceKey: Int] = [:]
+    nonisolated static let maxTransientFailures = 3
     /// Rows that came into view, oldest first.
     private var rowsWanted: [PlaceKey] = []
     private var inFlight: PlaceKey?
@@ -62,7 +69,10 @@ final class PlaceNameLookup {
     /// Asks for a spot's name, unless it's known, being asked or failed already. `first` makes it the photo you're on,
     /// asked next, in place of the one before; otherwise it waits its turn, and only the latest `maxPending` wait.
     func want(_ key: PlaceKey?, first: Bool = false) {
-        if first { current = nil }
+        if first {
+            current = nil
+            currentPhoto = key
+        }
         guard let key, isAllowed(), key != inFlight, !failed.contains(key), cache.name(for: key) == nil else { return }
         if first {
             current = key
@@ -84,6 +94,7 @@ final class PlaceNameLookup {
     /// finishes and is kept.
     func clear() {
         current = nil
+        currentPhoto = nil
         rowsWanted.removeAll()
     }
 
@@ -123,11 +134,19 @@ final class PlaceNameLookup {
                 refusals = 0
                 wait = gap()
             } catch where isTransient(error) {
-                // Busy or offline: wait longer each time, and ask for this spot again unless something else is now
-                // the photo you're on.
+                // Busy or offline: wait longer each time, and ask for this spot again later: first if it's still the
+                // photo you're on, otherwise after the rest, so one that keeps failing doesn't hold the others up.
                 refusals += 1
                 wait = min(Self.firstBackOff * (1 << min(refusals - 1, 10)), Self.longestBackOff)
-                if current == nil { current = key } else if !rowsWanted.contains(key) { rowsWanted.insert(key, at: 0) }
+                transientFailures[key, default: 0] += 1
+                if transientFailures[key, default: 0] >= Self.maxTransientFailures {
+                    failed.insert(key)
+                } else if key == currentPhoto, current == nil {
+                    current = key
+                } else if !rowsWanted.contains(key) {
+                    rowsWanted.append(key)
+                    if rowsWanted.count > Self.maxPending { rowsWanted.removeFirst(rowsWanted.count - Self.maxPending) }
+                }
             } catch {
                 failed.insert(key)
                 wait = gap()
