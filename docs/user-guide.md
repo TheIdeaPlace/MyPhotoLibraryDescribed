@@ -1,6 +1,6 @@
 # My Photo Library Described User Guide
 
-My Photo Library Described is a photo browser built for screen reader users, on the Mac and on Windows. It shows your photos the way Finder or File Explorer shows files, in a list or a gallery, and describes each photo as you move to it, using the AI built into your computer. "My Photo Library Described" is a working name.
+My Photo Library Described is a photo browser built for screen reader users, on the Mac and on Windows. It shows your photos the way Finder or File Explorer shows files, in a list or a gallery, and describes each photo as you move to it, using the AI built into your computer.
 
 The two apps work the same wherever the platform allows. Where they differ, this guide says so. Keys are given as Mac / Windows.
 
@@ -31,7 +31,7 @@ The two apps work the same wherever the platform allows. Where they differ, this
 
 Both apps are on the [releases page](https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/latest), signed by Kelly Ford.
 
-- **Mac:** download the `My-Photo-Library-Described-<version>-mac.dmg` disk image, open it and drag the app to Applications. It's signed by Kelly Ford and notarized by Apple, so it opens without warnings. Describing photos needs macOS 27 on Apple silicon with Apple Intelligence. It's built to open on macOS 15 and later for browsing, but has only been tested on macOS 26 and 27.
+- **Mac:** download the `My-Photo-Library-Described-<version>-mac.dmg` disk image, open it and move the app to your Applications folder. It's signed by Kelly Ford and notarized by Apple, so it opens without warnings. Describing photos needs macOS 27 on Apple silicon with Apple Intelligence. It's built to open on macOS 15 and later for browsing, but has only been tested on macOS 26 and 27.
 - **Windows:** download and open `MyPhotoLibraryDescribed.appinstaller`. Windows' App Installer shows the app's name and publisher (Kelly Ford) with an Install button, and installs the Windows App Runtime it needs first if the PC doesn't have it. Windows then checks the same place for updates every few hours and installs them while the app isn't running; Help > Check for Updates checks now.
 
 ## What you need
