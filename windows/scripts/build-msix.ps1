@@ -47,7 +47,7 @@ The version's fourth number, instead of the one from the git history (see above)
 Sign the executables, then the bundle, with the kellyford-public certificate.
 
 .EXAMPLE
-.\scripts\build-msix.ps1 -Sign -Destination "$env:USERPROFILE\OneDrive\testing\photos\PhotoFinder"
+.\scripts\build-msix.ps1 -Sign -Destination "$env:USERPROFILE\OneDrive\testing\photos\MyPhotoLibraryDescribed"
 #>
 param(
     [string]$Destination,
@@ -85,6 +85,14 @@ $publisher = if ($Sign) { $certificateSubject } else { 'CN=My Photo Library Desc
 $appInfo = Get-Content -LiteralPath (Join-Path $windows 'src\PhotoFinder\AppInfo.cs') -Raw -Encoding UTF8
 if ($appInfo -notmatch 'const string Name = "([^"]+)"') { throw "AppInfo.cs has no Name constant." }
 $displayName = [Security.SecurityElement]::Escape($Matches[1])
+# The installer's file name, which the app names in its messages (AppInfo.InstallerFile), and the package's name, which
+# the .appinstaller's MainBundle must repeat exactly.
+if ($appInfo -notmatch 'const string InstallerFile = "([^"]+)"') { throw "AppInfo.cs has no InstallerFile constant." }
+$installerFile = $Matches[1]
+$installerBase = [IO.Path]::GetFileNameWithoutExtension($installerFile)
+$packageManifest = Get-Content -LiteralPath (Join-Path $windows 'packaging\AppxManifest.xml') -Raw -Encoding UTF8
+if ($packageManifest -notmatch '<Identity Name="([^"]+)"') { throw "packaging\AppxManifest.xml has no Identity Name." }
+$packageName = $Matches[1]
 
 $text = (Get-Content -LiteralPath (Join-Path $windows 'VERSION') -Raw).Trim()
 if ($text -notmatch '^(\d+)\.(\d+)\.(\d+)$') { throw "windows\VERSION should be three numbers, not '$text'." }
@@ -211,11 +219,11 @@ foreach ($a in $arches) {
             (Join-Path $layout 'App\PhotoFinder.exe') (Join-Path $layout 'AI\PhotoFinderAI.exe')
     }
     # Fully validated, so a manifest mistake fails here rather than when someone installs it.
-    Invoke-Tool $makeappx @('pack', '/d', $layout, '/p', (Join-Path $packed "MyPhotoLibraryDescribed_$($version)_$a.msix"), '/o') "Packing $a"
+    Invoke-Tool $makeappx @('pack', '/d', $layout, '/p', (Join-Path $packed "$($installerBase)_$($version)_$a.msix"), '/o') "Packing $a"
     Write-Host "Packed My Photo Library Described $version for $a"
 }
 
-$bundleName = "MyPhotoLibraryDescribed_$version.msixbundle"
+$bundleName = "$($installerBase)_$version.msixbundle"
 $bundle = Join-Path $work $bundleName
 Invoke-Tool $makeappx @('bundle', '/d', $packed, '/p', $bundle, '/bv', $version, '/o') 'Bundling'
 if ($Sign) { & (Join-Path $PSScriptRoot 'sign-files.ps1') -ExpectedSubject $certificateSubject $bundle }
@@ -227,8 +235,8 @@ $appInstaller = @"
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Opening this installs My Photo Library Described with App Installer: the Windows App Runtime first if needed, then My Photo Library Described
      for this PC's architecture. Updates are looked for here. -->
-<AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021" Version="$version" Uri="$BaseUri/MyPhotoLibraryDescribed.appinstaller">
-  <MainBundle Name="TheIdeaPlace.MyPhotoLibraryDescribed" Publisher="$([Security.SecurityElement]::Escape($publisher))" Version="$version" Uri="$BaseUri/$bundleName" />
+<AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021" Version="$version" Uri="$BaseUri/$installerFile">
+  <MainBundle Name="$packageName" Publisher="$([Security.SecurityElement]::Escape($publisher))" Version="$version" Uri="$BaseUri/$bundleName" />
   <Dependencies>
 $($dependencyXml -join "`r`n")
   </Dependencies>
@@ -248,11 +256,11 @@ $dependencies = if ($Flat) { $Destination } else { Join-Path $Destination 'Depen
 New-Item -ItemType Directory -Force -Path $dependencies | Out-Null
 foreach ($r in $runtimes) { Copy-Item -LiteralPath $r.Source -Destination (Join-Path $dependencies $r.File) -Force }
 Copy-Item -LiteralPath $bundle -Destination $Destination -Force
-[IO.File]::WriteAllText((Join-Path $Destination 'MyPhotoLibraryDescribed.appinstaller'), $appInstaller, (New-Object Text.UTF8Encoding $false))
-Get-ChildItem -LiteralPath $Destination -Filter 'MyPhotoLibraryDescribed_*.msixbundle' | Where-Object { $_.Name -ne $bundleName } | Remove-Item -Force
+[IO.File]::WriteAllText((Join-Path $Destination $installerFile), $appInstaller, (New-Object Text.UTF8Encoding $false))
+Get-ChildItem -LiteralPath $Destination -Filter "$($installerBase)_*.msixbundle" | Where-Object { $_.Name -ne $bundleName } | Remove-Item -Force
 
 if ($Sign) {
-    Write-Host "My Photo Library Described $($version): open $(Join-Path $Destination 'MyPhotoLibraryDescribed.appinstaller') to install."
+    Write-Host "My Photo Library Described $($version): open $(Join-Path $Destination $installerFile) to install."
 } else {
     Write-Host "My Photo Library Described $version, unsigned, in $Destination. Windows won't install it; build with -Sign for that."
 }

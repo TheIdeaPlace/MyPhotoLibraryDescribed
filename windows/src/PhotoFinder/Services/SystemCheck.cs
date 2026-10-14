@@ -104,7 +104,7 @@ public sealed partial class SystemCheck : ICheckResult
             {
                 "Ready" => new("Windows AI", Status.Ok, "Ready to describe photos, on this PC."),
                 "NotReady" => new("Windows AI", Status.Problem, "Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+D) downloads it."),
-                "NotInstalled" => new("Windows AI", Status.Problem, $"The {AppInfo.HelperName} isn't installed. Install {AppInfo.Name} from {AppInfo.InstallerFile}."),
+                "NotInstalled" => new("Windows AI", Status.Problem, $"The {AppInfo.HelperName} isn't installed. Install the app again from {AppInfo.InstallerFile}."),
                 var state => new("Windows AI", Status.Problem, facts.Readiness?.Message ?? $"Not available ({state ?? "no answer"})."),
             });
 

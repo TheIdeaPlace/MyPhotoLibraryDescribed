@@ -16,8 +16,8 @@ internal static class AppInfo
     /// <summary>The Windows AI helper's name, as people see it.</summary>
     public const string HelperName = Name + " AI helper";
 
-    /// <summary>The folder under %LOCALAPPDATA%. Not the display name: renaming the app mustn't lose saved settings
-    /// and descriptions.</summary>
+    /// <summary>The folder under %LOCALAPPDATA%. It matches today's name, but it mustn't follow <see cref="Name"/> if the
+    /// app is renamed after a release: that would lose saved settings and descriptions.</summary>
     public const string DataFolderName = "My Photo Library Described";
 
     /// <summary>The installer people open, and where every copy looks for updates (the latest release's).</summary>
