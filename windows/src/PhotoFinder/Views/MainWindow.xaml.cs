@@ -568,14 +568,16 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(() =>
         {
             _scanQueued = false;
-            if (FindItemsHost(FileList) is not { } panel || FindAncestor<System.Windows.Controls.ScrollViewer>(panel) is not { } viewer) return;
-            var view = new Rect(0, 0, viewer.ViewportWidth > 0 ? viewer.ActualWidth : 0, viewer.ActualHeight);
+            // The rows' own viewport: the scroll viewer's content area, below the column headers and above any scroll bar.
+            if (FindItemsHost(FileList) is not { } panel || FindAncestor<System.Windows.Controls.ScrollContentPresenter>(panel) is not { } viewer) return;
+            var view = new Rect(viewer.RenderSize);
             var showing = new List<(double Top, FileRow Row)>();
             foreach (var child in panel.Children.OfType<System.Windows.Controls.ListViewItem>())
             {
                 if (child.DataContext is not FileRow row || !child.IsVisible) continue;
-                var bounds = child.TransformToAncestor(viewer).TransformBounds(new Rect(child.RenderSize));
-                if (bounds.IntersectsWith(view) && bounds.Height > 0) showing.Add((bounds.Top, row));
+                var bounds = Rect.Intersect(child.TransformToAncestor(viewer).TransformBounds(new Rect(child.RenderSize)), view);
+                // Some of it showing, not just touching an edge.
+                if (!bounds.IsEmpty && bounds.Height > 1) showing.Add((bounds.Top, row));
             }
             _places.Showing(showing.OrderBy(s => s.Top).Select(s => s.Row));
         }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);

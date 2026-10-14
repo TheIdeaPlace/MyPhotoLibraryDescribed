@@ -205,6 +205,48 @@ public sealed class PlaceLookupsTests : IDisposable
         await stopped.WhenIdleAsync();
         // One asked, refused: nothing more this session.
         Assert.Single(_asked);
+
+        // A pause that ends: the photo is asked about then, as nothing was counted against it.
+        _asked.Clear();
+        var off = true;
+        var switched = Service(getSwitch: _ => Task.FromResult(off ? """{"placeNames":{"windows":{"enabled":false}}}""" : """{"placeNames":{"windows":{"enabled":true}}}"""), folder: "third");
+        PlaceNames.SwitchMaxAge = TimeSpan.Zero;
+        try
+        {
+            using var resumed = new PlaceLookups(switched, () => true, () => [row], () => null);
+            for (var i = 0; i < PlaceLookups.MostTries; i++)
+            {
+                resumed.Current(row);
+                await resumed.WhenIdleAsync();
+            }
+            Assert.Empty(_asked);
+            off = false;
+            resumed.Current(row);
+            await resumed.WhenIdleAsync();
+            Assert.Single(_asked);
+        }
+        finally
+        {
+            PlaceNames.SwitchMaxAge = TimeSpan.FromDays(1);
+        }
+    }
+
+    [Fact]
+    public void TurningNamesOff_ClearsEveryRowShowing_EvenOnesNamedBeforeASearch()
+    {
+        var a = Row("a.jpg", 1, 1);
+        var b = Row("b.jpg", 2, 2);
+        a.SetPlaceName("Here");
+        b.SetPlaceName("There");
+        var showing = new List<FileRow> { a };
+        var wanted = false;
+        using var places = new PlaceLookups(Service(), () => wanted, () => showing, () => null);
+        // Searched down to a, names turned off: a is cleared; then the search is cleared and b comes back.
+        places.ShowKnown();
+        showing.Add(b);
+        places.ShowKnown();
+        Assert.DoesNotContain("Here", a.LocationText);
+        Assert.DoesNotContain("There", b.LocationText);
     }
 
     [Fact]
@@ -240,21 +282,25 @@ public sealed class PlaceLookupsTests : IDisposable
         var arrived = new List<FileRow>();
         void Arrived(FileRow r) => arrived.Add(r);
         FileRow.CoordinatesArrived += Arrived;
-        FileRow.KnownPlaceName = (lat, _) => lat == 47.6 ? "Seattle" : null;
+        // An unusual spot, so rows other tests make at the same time aren't named by it.
+        FileRow.KnownPlaceName = (lat, _) => lat == 12.34567 ? "Seattle" : null;
         try
         {
             var item = new MediaItem(@"C:\photos\a.jpg", 1000, DateTime.Now, DateTime.Now);
             var known = FileRow.ForItem(item);
-            item.Metadata = MediaMetadata.Empty with { Latitude = 47.6, Longitude = -122.3 };
+            item.Metadata = MediaMetadata.Empty with { Latitude = 12.34567, Longitude = -122.3 };
             known.Refresh();
             Assert.Equal("Seattle", known.LocationText);
-            Assert.Empty(arrived);
+            Assert.DoesNotContain(known, arrived);
 
             var other = new MediaItem(@"C:\photos\b.jpg", 1000, DateTime.Now, DateTime.Now);
             var unknown = FileRow.ForItem(other);
             other.Metadata = MediaMetadata.Empty with { Latitude = 1, Longitude = 2 };
             unknown.Refresh();
-            Assert.Equal([unknown], arrived);
+            Assert.Contains(unknown, arrived);
+            // A row made with its coordinates already doesn't say they arrived.
+            var made = Row("c.jpg", 3, 4);
+            Assert.DoesNotContain(made, arrived);
         }
         finally
         {

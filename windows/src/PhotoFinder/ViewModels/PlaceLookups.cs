@@ -39,7 +39,6 @@ public sealed class PlaceLookups : IDisposable
     private TimeSpan _wait = TimeSpan.Zero;
     private int _asked;
     private DateTime _lastAsked = DateTime.MinValue;
-    private bool _anyNamed;
 
     /// <param name="wanted">Whether names are wanted now: the setting on and Place Taken showing.</param>
     /// <param name="rows">The rows showing in the list, for giving a name to every photo taken at that spot, and so a row
@@ -65,14 +64,11 @@ public sealed class PlaceLookups : IDisposable
         var focused = _focused();
         if (_current is { } current && current != focused) _current = null;
         if (!wanted) _current = null;
-        if (!wanted && !_anyNamed) return;
-        _anyNamed = false;
+        // Every row showing, every time: a name given as details arrived, or before a search, is cleared too.
         foreach (var row in _rows())
         {
             if (row.Coordinates is not { } c) continue;
-            var name = wanted ? _names.TryCached(c.Latitude, c.Longitude) : null;
-            row.SetPlaceName(name, quietly: row == focused);
-            _anyNamed |= name is not null;
+            row.SetPlaceName(wanted ? _names.TryCached(c.Latitude, c.Longitude) : null, quietly: row == focused);
         }
     }
 
@@ -106,7 +102,6 @@ public sealed class PlaceLookups : IDisposable
         if (_names.TryCached(c.Latitude, c.Longitude) is { } known)
         {
             row.SetPlaceName(known, quietly: row == _focused());
-            _anyNamed = true;
             return false;
         }
         return _failures.GetValueOrDefault(PlaceNames.Key(c.Latitude, c.Longitude)) < MostTries;
@@ -173,7 +168,6 @@ public sealed class PlaceLookups : IDisposable
                 foreach (var other in _rows())
                     if (other.Coordinates is { } o && PlaceNames.Key(o.Latitude, o.Longitude) == key)
                         other.SetPlaceName(name, quietly: other == focused);
-                _anyNamed = true;
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
