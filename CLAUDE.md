@@ -19,6 +19,7 @@ Work is usually split between a Claude Code session on Kelly's Mac (the **Mac se
 4. **One change, both apps.** When a change to one app should also happen in the other, either do both in the same PR, or open an issue for the other side (`parity` plus its platform label) and link it from your PR.
 5. **Remote Control messages are only for pings** ("posted on #13, please look"). Acknowledge one with a short reply starting `ACK`. Never rely on a message alone for anything that matters.
 6. **When Kelly is needed** (a decision, a VoiceOver/JAWS/NVDA check, a credential), add `needs-kelly` to the issue and say exactly what's needed in a comment.
+7. **Anything we might do in a later version, feature or known bug, gets the `v-next` label** (Kelly, 14 Oct), so a release can point people to what's already on the radar: `gh issue list --label v-next`.
 
 ## Branches, PRs and merging
 
