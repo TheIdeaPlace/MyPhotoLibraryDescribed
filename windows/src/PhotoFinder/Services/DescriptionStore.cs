@@ -10,8 +10,8 @@ namespace PhotoFinder.Services;
 /// The file is <c>{"version": 2, "descriptions": {key: record}}</c>, as on the Mac.</summary>
 public sealed class DescriptionStore
 {
-    /// <summary>The file's format: 2 has a record for each description; 1 (no version) was a plain {key: text} map, with
-    /// the corrected keys in EditedDescriptions.json beside it.</summary>
+    /// <summary>The file's format: a record for each description. The plain {key: text} map before it, with the corrected
+    /// keys in EditedDescriptions.json, isn't read (Kelly, 14 Oct: never released): such a file is set aside, unread.</summary>
     public const int FormatVersion = 2;
 
     private readonly string _filePath;
@@ -21,8 +21,7 @@ public sealed class DescriptionStore
 
     public DescriptionStore(string filePath) => _filePath = filePath;
 
-    /// <summary>Where the first format kept the corrected keys. Read with an old file, and removed once the new one is
-    /// written, since the records say which are corrections now.</summary>
+    /// <summary>Where the old format kept the corrected keys: removed once a file in this one is written.</summary>
     private string EditedPath => Path.Combine(Path.GetDirectoryName(_filePath)!, "EditedDescriptions.json");
 
     public static string DefaultPath => Path.Combine(AppPaths.DataFolder, "Descriptions.json");
@@ -188,15 +187,13 @@ public sealed class DescriptionStore
             if (root.ValueKind != JsonValueKind.Object) throw new JsonException("Not an object.");
             var loaded = new Dictionary<string, DescriptionRecord>();
             var skipped = 0;
-            var v2 = root.TryGetProperty("descriptions", out var records) && records.ValueKind == JsonValueKind.Object;
-            // The first format, from before 0.2.0, was {key: text}: its details aren't known, only which were corrections.
-            var edited = v2 ? null : LoadEdited(EditedPath);
-            foreach (var p in (v2 ? records : root).EnumerateObject())
+            if (!root.TryGetProperty("descriptions", out var records) || records.ValueKind != JsonValueKind.Object)
+                throw new JsonException("No descriptions: the old format, or not this app's.");
+            foreach (var p in records.EnumerateObject())
             {
                 var record = Read(p.Value);
                 if (record is null) { skipped++; continue; }
                 if (record.Unread) { skipped++; record = record with { Unread = false }; }
-                if (edited?.Contains(p.Name) == true) record = record with { Source = DescriptionProvenance.Person };
                 loaded[p.Name] = record;
             }
             if (skipped > 0)
@@ -214,14 +211,13 @@ public sealed class DescriptionStore
         }
     }
 
-    /// <summary>One record, or a plain string (the first format's); null when it's neither, or has no text.</summary>
+    /// <summary>One record; null when it isn't one, or has no text.</summary>
     private static DescriptionRecord? Read(JsonElement value)
     {
         try
         {
             var record = value.ValueKind switch
             {
-                JsonValueKind.String => new DescriptionRecord { Text = value.GetString()! },
                 JsonValueKind.Object => value.Deserialize<DescriptionRecord>(Json),
                 _ => null,
             };
@@ -255,19 +251,5 @@ public sealed class DescriptionStore
             Log.Error("descriptions", "The saved descriptions couldn't be kept aside, so they're left as they are", ex);
             _keepFile = true;
         }
-    }
-
-    private static HashSet<string> LoadEdited(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-                return new HashSet<string>(JsonSerializer.Deserialize<List<string>>(File.ReadAllText(path)) ?? [], StringComparer.Ordinal);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
-        {
-            // A damaged file: corrections lose their mark, not their text.
-        }
-        return new HashSet<string>(StringComparer.Ordinal);
     }
 }

@@ -212,6 +212,20 @@ final class LibraryModelTests: XCTestCase {
                        ["a.jpg, 1 of 2"])
     }
 
+    // MARK: - Opening
+
+    @MainActor
+    func testTheFirstItemIsSelectedWhenTheWindowOpensUnlessOneIs() async throws {
+        let library = try await makeLibrary()
+        let model = library.model
+        model.selection = []
+        model.selectFirstItemIfNone()
+        XCTAssertEqual(model.selection, [model.visibleRows[0].id])
+        model.selection = [library.id("c.jpg")]
+        model.selectFirstItemIfNone()
+        XCTAssertEqual(model.selection, [library.id("c.jpg")], "a selection already made stays")
+    }
+
     // MARK: - Copy Description
 
     @MainActor

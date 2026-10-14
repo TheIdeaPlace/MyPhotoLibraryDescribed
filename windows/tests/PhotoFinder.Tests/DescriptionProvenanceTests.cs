@@ -152,27 +152,21 @@ public sealed class DescriptionProvenanceTests : IDisposable
     }
 
     [Fact]
-    public void TheFirstFormat_IsStillRead_ItsCorrectionsKept_AndWrittenInTheNewForm()
+    public void TheOldFormat_IsntRead_ButSetAside_AndItsCorrectionsFileRemovedOnSaving()
     {
+        // Kelly, 14 Oct: nothing was released before #199, so the plain {key: text} file isn't read, as on the Mac (#202).
         Directory.CreateDirectory(_lib.PathOf("data"));
-        var made = KeyOf(Item, "accessible");
-        var corrected = KeyOf(Item, "brief");
-        File.WriteAllText(File_, JsonSerializer.Serialize(new Dictionary<string, string> { [made] = "From Windows.", [corrected] = "Mine." }));
+        var old = JsonSerializer.Serialize(new Dictionary<string, string> { [KeyOf(Item, "accessible")] = "From Windows." });
+        File.WriteAllText(File_, old);
         var editedFile = _lib.PathOf(@"data\EditedDescriptions.json");
-        File.WriteAllText(editedFile, JsonSerializer.Serialize(new[] { corrected }));
+        File.WriteAllText(editedFile, "[]");
 
         var store = new DescriptionStore(File_);
-        Assert.Equal("From Windows.", store.Get(Item, "accessible"));
-        Assert.False(store.IsEdited(Item, "accessible"));
-        Assert.True(store.IsEdited(Item, "brief"));
-        // Its details aren't known, so they're left out.
-        Assert.Equal(new DescriptionRecord { Text = "From Windows." }, store.Record(Item, "accessible"));
-
-        var file = Saved(store);
-        Assert.Equal(2, file["version"]!.GetValue<int>());
-        Assert.Equal(["text"], file["descriptions"]![made]!.AsObject().Select(p => p.Key).ToArray());
+        Assert.Null(store.Get(Item, "accessible"));
+        Assert.Equal(old, File.ReadAllText(Assert.Single(SetAside())));
+        store.Put(Item, "accessible", "A cat.");
+        Assert.Equal(2, Saved(store)["version"]!.GetValue<int>());
         Assert.False(File.Exists(editedFile));
-        Assert.True(new DescriptionStore(File_).IsEdited(Item, "brief"));
     }
 
     [Fact]
@@ -225,7 +219,7 @@ public sealed class DescriptionProvenanceTests : IDisposable
             ["descriptions"] = new JsonObject
             {
                 [good] = new JsonObject { ["text"] = "A dog.", ["source"] = "windows-ai", ["durationMs"] = 3120 },
-                [mixed] = "A plain one.",
+                [mixed] = "A plain one, the old format's.",
                 [bad] = new JsonObject { ["text"] = "Odd.", ["durationMs"] = 3.5 },
                 ["empty"] = new JsonObject { ["text"] = "" },
                 ["number"] = 12,
@@ -234,7 +228,7 @@ public sealed class DescriptionProvenanceTests : IDisposable
         File.WriteAllText(File_, file.ToJsonString());
         var store = new DescriptionStore(File_);
         Assert.Equal("A dog.", store.Get(Item, "accessible"));
-        Assert.Equal("A plain one.", store.Get(Item, "brief"));
+        Assert.Null(store.Get(Item, "brief"));
         // A field of the wrong kind: the description is kept, the rest of that record isn't.
         Assert.Equal(new DescriptionRecord { Text = "Odd." }, store.Record(Item, "detailed"));
         Assert.Equal(file.ToJsonString(), File.ReadAllText(Assert.Single(SetAside())));

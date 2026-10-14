@@ -91,8 +91,7 @@ enum AppleIntelligenceModel {
 /// (#36) are keyed by path, size and modified time instead (see FileDescriptionKey), as on Windows.
 ///
 /// Descriptions.json is `{"version": 2, "descriptions": {key: record}}` (#199), each record a DescriptionRecord; the
-/// person's corrections are marked in their records. A file from before #199 (`{key: text}`, with the corrected keys in
-/// EditedDescriptions.json beside it) is read, its details unknown, and written in the new form at the next save.
+/// person's corrections are marked in their records. Earlier formats aren't read: nothing was released before it.
 final class DescriptionCache: @unchecked Sendable {
     /// Posted (on the main queue) when a description is saved or replaced, so what's on screen can show it.
     static let didChange = Notification.Name("DescriptionCacheDidChange")
@@ -109,8 +108,6 @@ final class DescriptionCache: @unchecked Sendable {
     private var saveScheduled = false
     /// Every write, in order: each takes its snapshot when it runs, so an older one can never land after a newer one.
     private let writes = DispatchQueue(label: "net.theideaplace.MyPhotoLibraryDescribed.descriptions", qos: .utility)
-    /// The file of corrections from before #199, removed at the first save in the new form.
-    private var legacyEditedURL: URL?
     /// False when a file that couldn't be read couldn't be moved aside either: it's never written over.
     private var mayWrite = true
 
@@ -121,8 +118,6 @@ final class DescriptionCache: @unchecked Sendable {
 
     init(fileURL: URL = DescriptionCache.defaultURL) {
         self.fileURL = fileURL
-        let editedURL = folderURL.appendingPathComponent("EditedDescriptions.json")
-        if FileManager.default.fileExists(atPath: editedURL.path) { legacyEditedURL = editedURL }
         guard let data = try? Data(contentsOf: fileURL) else {
             // There but unreadable (permissions, a disk error): never written over, rather than lost.
             if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -133,11 +128,6 @@ final class DescriptionCache: @unchecked Sendable {
         }
         if let file = try? JSONDecoder().decode(File.self, from: data) {
             entries = file.descriptions
-        } else if let flat = try? JSONDecoder().decode([String: String].self, from: data) {
-            // Before #199: text only, and the corrections listed in a file of their own.
-            let edited = (try? Data(contentsOf: editedURL)).flatMap { try? JSONDecoder().decode([String].self, from: $0) } ?? []
-            entries = flat.mapValues { DescriptionRecord(text: $0) }
-            for key in edited where entries[key] != nil { entries[key]?.source = DescriptionProvenance.person }
         } else if !data.isEmpty {
             // Damaged, or from a version that can't be read: kept beside it rather than written over.
             let aside = Self.asideURL(for: fileURL, at: Date())
@@ -284,22 +274,10 @@ final class DescriptionCache: @unchecked Sendable {
         lock.lock()
         saveScheduled = false
         let snapshot = entries
-        let legacy = legacyEditedURL
         lock.unlock()
         guard mayWrite,
               let data = try? JSONEncoder().encode(File(version: Self.fileVersion, descriptions: snapshot)) else { return }
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        do {
-            try data.write(to: fileURL, options: .atomic)
-        } catch {
-            return
-        }
-        // The corrections are in the records now.
-        if let legacy {
-            try? FileManager.default.removeItem(at: legacy)
-            lock.lock()
-            legacyEditedURL = nil
-            lock.unlock()
-        }
+        try? data.write(to: fileURL, options: .atomic)
     }
 }
