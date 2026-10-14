@@ -407,6 +407,24 @@ public sealed class BackgroundDescriberTests : IDisposable
         }
     }
 
+    [WpfTheory]
+    [InlineData(6, "Background describing stopped: 5 photos in a row couldn't be described, so 1 photo wasn't tried. ")]
+    [InlineData(5, "Background describing stopped: 5 photos in a row couldn't be described. ")]
+    public async Task TheStopSaysHowManyWerentTried_InWords(int photos, string said)
+    {
+        // #158, as the Mac's #159: not "so 1 photo weren't tried" or "so 0 photos weren't tried".
+        // home.jpg is there already.
+        for (var i = 1; i < photos; i++) _lib.AddJpeg($"broken{i}.jpg");
+        var (model, background, _) = await StartAsync(enabled: false,
+            describe: _ => throw new DescriptionException("decode_failed", "The picture couldn't be read."));
+        using (model) using (background)
+        {
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Single(_announced, s => s.StartsWith(said, StringComparison.Ordinal));
+        }
+    }
+
     [WpfFact]
     public async Task PhotosTheContentFilterDeclines_DontStopTheRun_AndArentTriedAgainAfterARestart()
     {

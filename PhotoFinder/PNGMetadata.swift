@@ -121,7 +121,22 @@ enum PNGMetadata {
             }
         }
         output.append(contentsOf: trailing)
+        try check(output, against: chunks, trailing)
         return output
+    }
+
+    /// A last look before the file is written (#111): the same chunks in the same order but the XMP, the EXIF changed
+    /// only by its description being taken out, and whatever follows IEND exactly as it was.
+    static func check(_ result: Data, against before: [Chunk], _ trailing: [UInt8]) throws {
+        let (after, newTrailing) = try chunks(of: result)
+        func others(_ list: [Chunk]) -> [Chunk] { list.filter { !($0.type == "iTXt" && isXMP($0)) } }
+        let a = others(before), b = others(after)
+        guard newTrailing == trailing, a.count == b.count, after.count - b.count <= 1,
+              zip(a, b).allSatisfy({ old, new in
+                  old == new || (old.type == "eXIf" && new.type == "eXIf"
+                                 && onlyImageDescriptionRemoved(from: Array(old.body), to: Array(new.body)))
+              })
+        else { throw Failure.malformed("The new copy didn't keep the rest of the file as it was.") }
     }
 
     /// Sets each field through its `[x-default]` path, as FileMetadataWriter does, or removes it for nil. Other
@@ -253,10 +268,9 @@ enum PNGMetadata {
         let entry = entries + index * 12
         var blanked = 0..<0
         // The text, when it's too long to sit in the entry itself.
-        let sizes: [UInt16: Int] = [1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8]
         let type = readUInt16(exif, entry + 2, bigEndian: big)
         let valueCount = Int(readUInt32(exif, entry + 4, bigEndian: big))
-        if let size = sizes[type] {
+        if let size = typeSizes[type] {
             let (byteCount, overflow) = valueCount.multipliedReportingOverflow(by: size)
             if !overflow, byteCount > 4 {
                 let offset = Int(readUInt32(exif, entry + 8, bigEndian: big))
@@ -286,11 +300,62 @@ enum PNGMetadata {
         return exif
     }
 
+    /// The size of one value of each TIFF type, by its number.
+    static let typeSizes: [UInt16: Int] = [1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8]
+
+    /// Whether `new` is `old` with IFD0's ImageDescription taken out and nothing else changed (#111): the same size,
+    /// IFD0's table holding the same entries less that one, in the same order, with the same next directory's offset
+    /// and zeros where its last entry was, and the old text either kept or zeroed. Every other byte is the same, so the
+    /// maker note, the thumbnail and every other value are untouched. It's worked out from `old` alone, apart from
+    /// `removingImageDescription`, so the JPEG and PNG writers' last look would catch a mistake there.
+    static func onlyImageDescriptionRemoved(from old: [UInt8], to new: [UInt8]) -> Bool {
+        guard old.count == new.count, old.count >= 8 else { return false }
+        let big: Bool
+        switch (old[0], old[1]) {
+        case (0x4D, 0x4D): big = true
+        case (0x49, 0x49): big = false
+        default: return false
+        }
+        let ifd = Int(readUInt32(old, 4, bigEndian: big))
+        guard ifd >= 8, ifd + 2 <= old.count else { return false }
+        let count = Int(readUInt16(old, ifd, bigEndian: big))
+        let entries = ifd + 2
+        let tableEnd = entries + count * 12 + 4
+        guard tableEnd <= old.count,
+              let index = (0..<count).first(where: { readUInt16(old, entries + $0 * 12, bigEndian: big) == 0x010E })
+        else { return false }
+
+        // IFD0's table as it should now be.
+        let newCount = UInt16(count - 1)
+        var table: [UInt8] = big ? [UInt8(newCount >> 8), UInt8(newCount & 0xFF)]
+                                 : [UInt8(newCount & 0xFF), UInt8(newCount >> 8)]
+        for i in 0..<count where i != index { table += old[(entries + i * 12)..<(entries + i * 12 + 12)] }
+        table += old[(tableEnd - 4)..<tableEnd]
+        table += [UInt8](repeating: 0, count: 12)
+        guard Array(new[ifd..<tableEnd]) == table else { return false }
+
+        // The old text, when it was too long to sit in the entry: kept, or zeroed.
+        let entry = entries + index * 12
+        var text = 0..<0
+        if let size = typeSizes[readUInt16(old, entry + 2, bigEndian: big)] {
+            let (bytes, overflow) = Int(readUInt32(old, entry + 4, bigEndian: big)).multipliedReportingOverflow(by: size)
+            let offset = Int(readUInt32(old, entry + 8, bigEndian: big))
+            let (end, past) = offset.addingReportingOverflow(bytes)
+            // Only where the rewrite may zero it: outside the header and IFD0's table, and used by nothing else.
+            if !overflow, !past, bytes > 4, offset >= 8, end <= old.count, end <= ifd || offset >= tableEnd,
+               !usedElsewhere(offset..<end, in: old, ifd: ifd, count: count, except: index, bigEndian: big) {
+                text = offset..<end
+            }
+        }
+        return old.indices.allSatisfy { i in
+            old[i] == new[i] || (ifd..<tableEnd).contains(i) || (text.contains(i) && new[i] == 0)
+        }
+    }
+
     /// Whether anything else in the EXIF overlaps `range`: another IFD0 entry's out-of-line value, or a directory
     /// reached from IFD0 (Exif, GPS, Interop, the next IFD with the embedded thumbnail), its values, or the thumbnail.
     static func usedElsewhere(_ range: Range<Int>, in exif: [UInt8], ifd: Int, count: Int, except skip: Int,
                               bigEndian big: Bool) -> Bool {
-        let sizes: [UInt16: Int] = [1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8]
         let pointerTags: Set<UInt16> = [0x8769, 0x8825, 0xA005]
         var used: [Range<Int>] = []
         var visited: Set<Int> = [ifd]
@@ -312,22 +377,23 @@ enum PNGMetadata {
             let tableEnd = offset + 2 + n * 12
             clamp(offset, 2 + n * 12 + 4)
             // Its entries are followed even when the next directory's offset after them is missing, as some writers
-            // leave it out of the Exif directory (#111).
-            guard tableEnd <= exif.count else { return }
+            // leave it out of the Exif directory, and when the table itself is cut short, as far as whole entries go
+            // (#111).
+            let whole = min(n, (exif.count - offset - 2) / 12)
             var thumbnail: (at: Int?, length: Int?) = (nil, nil)
-            for i in 0..<n where i != skip {
+            for i in 0..<whole where i != skip {
                 let entry = offset + 2 + i * 12
                 let tag = readUInt16(exif, entry, bigEndian: big)
                 let value = Int(readUInt32(exif, entry + 8, bigEndian: big))
                 if pointerTags.contains(tag) { directory(at: value); continue }
                 if tag == 0x0201 { thumbnail.at = value }
                 if tag == 0x0202 { thumbnail.length = value }
-                guard let size = sizes[readUInt16(exif, entry + 2, bigEndian: big)] else { continue }
+                guard let size = typeSizes[readUInt16(exif, entry + 2, bigEndian: big)] else { continue }
                 let (bytes, overflow) = Int(readUInt32(exif, entry + 4, bigEndian: big)).multipliedReportingOverflow(by: size)
                 if !overflow, bytes > 4 { clamp(value, bytes) }
             }
             if let at = thumbnail.at, let length = thumbnail.length { clamp(at, length) }
-            if tableEnd + 4 <= exif.count { directory(at: Int(readUInt32(exif, tableEnd, bigEndian: big))) }
+            if whole == n, tableEnd + 4 <= exif.count { directory(at: Int(readUInt32(exif, tableEnd, bigEndian: big))) }
         }
         directory(at: ifd, skipping: skip)
         // IFD0's own table is where the entry is removed, which is never "used elsewhere".

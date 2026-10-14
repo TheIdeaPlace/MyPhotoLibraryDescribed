@@ -17,7 +17,9 @@ final class DescriptionCache: @unchecked Sendable {
     private var edited: Set<String> = []
     private let lock = NSLock()
     private let fileURL: URL
-    private var editedURL: URL { fileURL.deletingLastPathComponent().appendingPathComponent("EditedDescriptions.json") }
+    private var editedURL: URL { folderURL.appendingPathComponent("EditedDescriptions.json") }
+    /// The folder the descriptions are saved in: the app's data folder, or a test's.
+    var folderURL: URL { fileURL.deletingLastPathComponent() }
     private var saveScheduled = false
 
     init(fileURL: URL = DescriptionCache.defaultURL) {

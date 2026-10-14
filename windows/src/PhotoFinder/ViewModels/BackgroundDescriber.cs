@@ -548,7 +548,8 @@ public sealed class BackgroundDescriber : IDisposable
                         var left = StopQueue();
                         Log.Write("background", $"Stopped after {FailuresInARow} failures in a row; {left} not tried");
                         Announcer.AnnounceAfter(
-                            $"Background describing stopped: {Plural(FailuresInARow)} in a row couldn't be described, so {Plural(left)} weren't tried. " +
+                            // "so 1 photo wasn't tried", and nothing about the rest when none are left (#158, as the Mac's #159).
+                            $"Background describing stopped: {Plural(FailuresInARow)} in a row couldn't be described{(left switch { 0 => "", 1 => ", so 1 photo wasn't tried", _ => $", so {Plural(left)} weren't tried" })}. " +
                             (ex is DescriptionException ? ex.Message : $"Windows couldn't describe them: {ex.Message}"), "PhotoFinderBackground");
                         break;
                     }

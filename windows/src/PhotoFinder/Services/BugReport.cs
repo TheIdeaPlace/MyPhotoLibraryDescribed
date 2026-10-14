@@ -89,6 +89,8 @@ public sealed class BugReport
                 {
                     var frame = $"**{a.Heading}**\n```\n\n```".Length + 2;
                     var section = Fitted(a.Text, room - frame) is { } text ? $"**{a.Heading}**\n```\n{text}\n```" : $"**{a.Heading}**\n{DidntFit}";
+                    // Even the note saying it was left out must fit, or the relay would cut the end (#154, as the Mac's #152).
+                    if (section.Length + 2 > room) continue;
                     sections.Add(section);
                     room -= section.Length + 2;
                 }

@@ -17,6 +17,7 @@ final class FileMetadataWriterTests: XCTestCase {
 
     override func tearDownWithError() throws {
         PhotoChanges.allowed = false
+        FileMetadataWriter.beforeReplacing = nil
         try? FileManager.default.removeItem(at: temp)
     }
 
@@ -286,6 +287,63 @@ final class FileMetadataWriterTests: XCTestCase {
         XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: renamed)) { error in
             XCTAssertEqual(error as? FileMetadataWriteError, .unsupportedFormat("GIF"))
         }
+    }
+
+    // MARK: - Changed while it's saved (#111)
+
+    /// Another app writing into the file after it was read: the new copy was made from the old bytes, so it isn't
+    /// swapped in, and the file is left as the other app left it, with no copy left behind.
+    func testAFileChangedWhileItsSavedIsLeftAsTheOtherAppLeftIt() throws {
+        for (ext, type) in Self.formats {
+            let url = try makePhoto("changed.\(ext)", type: type)
+            var theirs = Data()
+            FileMetadataWriter.beforeReplacing = { url in
+                // Appended to in place, as an editor saving over it might, keeping its inode.
+                guard let handle = try? FileHandle(forWritingTo: url) else { return }
+                handle.seekToEndOfFile()
+                handle.write(Data("more".utf8))
+                try? handle.close()
+                theirs = (try? Data(contentsOf: url)) ?? Data()
+            }
+            XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: url), ext) { error in
+                XCTAssertEqual(error as? FileMetadataWriteError, FileMetadataWriter.changedWhileSaving, ext)
+            }
+            XCTAssertFalse(theirs.isEmpty, ext)
+            XCTAssertEqual(try Data(contentsOf: url), theirs, ext)
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: temp.path), ["changed.\(ext)"], ext)
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    /// Another file put in its place, the same size with the same modified time: still refused, being a different file.
+    func testAFileReplacedWhileItsSavedIsLeftAlone() throws {
+        let url = try makePhoto("replaced.jpg", type: .jpeg)
+        var theirs = Data()
+        FileMetadataWriter.beforeReplacing = { url in
+            let other = url.deletingLastPathComponent().appendingPathComponent("other.tmp")
+            guard var bytes = try? Data(contentsOf: url),
+                  let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else { return }
+            bytes[bytes.count - 3] ^= 0xFF
+            try? bytes.write(to: other)
+            try? FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: other.path)
+            _ = rename(other.path, url.path)
+            theirs = bytes
+        }
+        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: url)) {
+            XCTAssertEqual($0 as? FileMetadataWriteError, FileMetadataWriter.changedWhileSaving)
+        }
+        XCTAssertFalse(theirs.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: url), theirs)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: temp.path), ["replaced.jpg"])
+    }
+
+    /// Nothing changed it: written as usual, the hook seeing the original still there.
+    func testAFileNobodyElseTouchesIsWritten() throws {
+        let url = try makePhoto("untouched.png", type: .png)
+        var called = false
+        FileMetadataWriter.beforeReplacing = { _ in called = true }
+        XCTAssertEqual(try FileMetadataWriter.write(.init(caption: short), to: url).caption, short)
+        XCTAssertTrue(called)
     }
 
     // MARK: - Alt text
