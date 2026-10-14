@@ -90,7 +90,7 @@ On the Mac, a photo in your Photos library gets a Photos caption, which syncs wi
 **View > Labels…** chooses what's read for each photo, in two parts, List and Gallery: tabs on Windows, and a List/Gallery choice at the top of the sheet on the Mac, which opens on the Shown list.
 
 - **List** chooses which columns the list shows and in what order. The order is also the order a screen reader reads each row in, so putting Caption first means hearing it before the name.
-- **Gallery** (Mac) chooses what's said, and in what order, when you move to a photo in the gallery: Position ("12 of 400"), Name, Kind, Date Taken, Dimensions, Caption, Keywords, Rating and Place Taken. The default is Position only. The description isn't one of them: it follows after a pause when Describe Photos Automatically is on. The details under the photo stay the same whatever you choose.
+- **Gallery** chooses what's said, and in what order, when you move to a photo in the gallery: Position ("12 of 400"), Name, Kind, Date Taken, Dimensions, Caption, Keywords, Rating and Place Taken. The default is Position only. The description isn't one of them: it follows after a pause when Describe Photos Automatically is on. The details under the photo stay the same whatever you choose.
 
 Each tab has the same Available and Shown lists, with Add, Remove, Move Up, Move Down, Move to Top, Move to Bottom and Reset to Default, and a preview of how the photo you're on will read. Return in Available adds, Delete or Return in Shown removes, and Option-Up and Option-Down Arrow (Option-Home and Option-End for the top and bottom) move the selected item; each change is announced. OK keeps both tabs' choices and Cancel leaves them. The sheet opens on the tab for the view you're in.
 
@@ -113,7 +113,7 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 ## Help menu
 
 - **Check for Updates** says whether there's a newer version. My Photo Library Described also checks quietly once a day, and the item then reads "Update to *version* available…".
-- **Report a Bug…** opens a form. Choose Bug or Suggestion, give it a title, and say what happened, what you expected and the steps (or, for a suggestion, what you'd like). Contact is optional. "Include the system check" adds Check System's results, with your user folder left out (they can still name photos and other folders), and is on to start with. The preview shows exactly what will be sent.
+- **Report a Bug…** opens a form. Choose Bug or Suggestion, give it a title, and say what happened, what you expected and the steps (or, for a suggestion, what you'd like). Contact is optional. "Include the system check" adds Check System's results, which name no folders (on Windows the library's folders are counted, not named), and is on to start with. The preview shows exactly what will be sent.
   - Send files the report as a GitHub issue for you, through The Idea Place's bug-report service, so you don't need a GitHub account. The form then says "Report filed as issue" and the number, with a button to open it.
   - If the report can't be sent that way, the form says so and the whole report is copied; Open in Browser opens a new GitHub issue with the details filled in, for you to submit.
   - **Everything in a report is public on GitHub, including the contact.**
