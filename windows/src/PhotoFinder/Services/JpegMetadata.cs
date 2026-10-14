@@ -161,6 +161,10 @@ public static class JpegMetadata
     public static bool WouldRefuseCaption(Stream file, string caption) =>
         IptcCaptionReadings(file) is { } readings && !readings.Any(t => SameText(t, caption));
 
+    /// <summary>Whether Photoshop's IPTC caption, even an empty one, would still be read instead of any new caption (a
+    /// stale digest): then only its own text could be written.</summary>
+    public static bool HasOlderCaption(Stream file) => IptcCaptionReadings(file) is not null;
+
     /// <summary>
     /// The IPTC caption's readings when its digest is stale, reading only the segment headers and Photoshop's segments, not
     /// the picture, so it's cheap for a library scan. Null when there's none, or the file can't be followed. (The same

@@ -235,7 +235,14 @@ public static class XmpFields
 
     /// <summary>Whether a new caption for this photo would be refused (#179), so it's said before anything is asked. Never
     /// throws: a file that can't be read now is found out when it's written.</summary>
-    public static async Task<bool> WouldRefuseCaptionAsync(string path, string caption)
+    public static Task<bool> WouldRefuseCaptionAsync(string path, string caption) =>
+        WithJpegAsync(path, file => JpegMetadata.WouldRefuseCaption(file, caption));
+
+    /// <summary>Whether any new caption for this photo would be refused (an older Photoshop caption, even an empty one,
+    /// would still be read, #179), so Edit Caption can say so instead of opening.</summary>
+    public static Task<bool> HasOlderCaptionAsync(string path) => WithJpegAsync(path, JpegMetadata.HasOlderCaption);
+
+    private static async Task<bool> WithJpegAsync(string path, Func<Stream, bool> check)
     {
         if (!IsJpeg(path)) return false;
         try
@@ -243,7 +250,7 @@ public static class XmpFields
             return await Task.Run(() =>
             {
                 using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 12);
-                return JpegMetadata.WouldRefuseCaption(file, caption);
+                return check(file);
             });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

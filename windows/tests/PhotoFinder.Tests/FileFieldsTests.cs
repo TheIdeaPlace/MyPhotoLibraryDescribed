@@ -708,9 +708,15 @@ public sealed class FileFieldsTests : IDisposable
         var right = _lib.PathOf("fine.jpg");
         File.WriteAllBytes(right, WithPhotoshopIptc("An old caption", "right"));
         Assert.False(await XmpFields.WouldRefuseCaptionAsync(right, "A dog."));
-        // A present but empty IPTC caption isn't shown in place of the XMP's, as on the Mac.
-        using var empty = new MemoryStream(WithPhotoshopIptc("", "stale"));
-        Assert.Null(JpegMetadata.IptcCaptionReadFirst(empty));
+        // A present but empty IPTC caption isn't shown in place of the XMP's, as on the Mac, but a new caption would
+        // still be refused, so Edit Caption says so before opening.
+        var emptyFile = _lib.PathOf("empty-iptc.jpg");
+        File.WriteAllBytes(emptyFile, WithPhotoshopIptc("", "stale"));
+        using (var empty = File.OpenRead(emptyFile)) Assert.Null(JpegMetadata.IptcCaptionReadFirst(empty));
+        Assert.True(await XmpFields.HasOlderCaptionAsync(emptyFile));
+        Assert.True(await XmpFields.WouldRefuseCaptionAsync(emptyFile, "A dog."));
+        Assert.True(await XmpFields.HasOlderCaptionAsync(stale));
+        Assert.False(await XmpFields.HasOlderCaptionAsync(right));
     }
 
     public static TheoryData<string> OddJpegs() => ["fill bytes", "not a jpeg", "not photoshop", "truncated", "past the end", "after the picture"];
