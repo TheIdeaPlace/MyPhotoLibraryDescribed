@@ -54,6 +54,24 @@ struct BrowserView: View {
         }
     }
 
+    /// Focus to the list or gallery, tried a few times a moment apart while the new view appears.
+    private func focusPhotosAgain() {
+        guard !searchFocused else { return }
+        startedOnPhotos = true
+        // Cleared first: focus may still read .content from the view that's gone, and setting the same value again
+        // would do nothing.
+        pane = nil
+        let serial = model.paneRequest.serial
+        Task { @MainActor in
+            for _ in 0..<6 {
+                try? await Task.sleep(for: .milliseconds(60))
+                guard !searchFocused, model.paneRequest.serial == serial else { return }
+                if pane == .content { return }
+                pane = .content
+            }
+        }
+    }
+
     /// Moves focus into the status bar once its sections can take it: a few tries, a moment apart, stopping as soon
     /// as focus is there or another move (F6 again, a click) replaced this one.
     private func focusStatusBar(_ target: Pane) {
@@ -110,6 +128,9 @@ struct BrowserView: View {
             startOnPhotos()
         }
         .onChange(of: model.launchPlaceSettled) { startOnPhotos() }
+        // View > as List or as Gallery replaces the view focus was in: it goes to the new one, on the photo you were
+        // on, so the arrows keep working (Kelly, 14 Oct: a release blocker).
+        .onChange(of: model.viewMode) { focusPhotosAgain() }
         // Go > Next Pane (F6) and Previous Pane (Shift-F6): sidebar, list or gallery, Description, Search, status bar,
         // and round.
         .onChange(of: model.paneRequest) {

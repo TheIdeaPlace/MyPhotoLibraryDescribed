@@ -141,6 +141,10 @@ final class LibraryModel {
         didSet {
             defaults.set(viewMode.rawValue, forKey: "viewMode")
             if viewMode == .gallery { ensureGallerySelection() }
+            // Back in the list, its selected row is scrolled to, so focus lands on the photo you were on (Kelly, 14 Oct).
+            if viewMode == .list, viewMode != oldValue, let id = focusedRow?.id {
+                scrollRequest = PaneScroll(id: id, serial: scrollRequest.serial + 1)
+            }
             if viewMode != oldValue { placeNamesShownChanged() }
         }
     }
