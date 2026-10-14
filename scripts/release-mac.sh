@@ -53,7 +53,13 @@ if [ "$PUBLISH" = "--publish" ]; then
   git fetch -q origin
   git merge-base --is-ancestor HEAD origin/main || { echo "Release from a commit that's on origin/main (pull, or merge first)."; exit 1; }
 fi
-[ -z "$(git status --porcelain -- PhotoFinder project.yml)" ] || { echo "Commit the app's changes first, so the release matches a commit."; exit 1; }
+[ -z "$(git status --porcelain -- PhotoFinder project.yml scripts)" ] || { echo "Commit the app's changes first, so the release matches a commit."; exit 1; }
+# The disk image's window is laid out by Finder, which has to allow being controlled from here. Asked now, so a
+# refusal shows in seconds rather than after the build and the wait for Apple; macOS asks the first time.
+osascript -e 'tell application "Finder" to get name of startup disk' >/dev/null 2>&1 || {
+  echo "This needs to control Finder, to lay out the disk image's window. Allow it in System Settings > Privacy & Security > Automation, then run it again."
+  exit 1
+}
 
 # Report a Bug's relay key (#33), which isn't in the repo: from the environment, or the signing kit's file (the PC
 # keeps the same key as appkit-relay-photofinder.key, so that name is read too). Without it the release still builds,
@@ -93,8 +99,8 @@ notarize "$WORK/app.zip"
 xcrun stapler staple "$APP"
 
 echo "Making the disk image"
-mkdir -p "$WORK/dmg" && cp -R "$APP" "$WORK/dmg/" && ln -s /Applications "$WORK/dmg/Applications"
-hdiutil create -volname "$NAME $VERSION" -srcfolder "$WORK/dmg" -fs HFS+ -format UDZO -ov "$OUT/$FILE" -quiet
+# Laid out by Finder, so it opens as a designed window: move the app to Applications (scripts/make-dmg.sh).
+scripts/make-dmg.sh "$APP" "$OUT/$FILE" "$NAME $VERSION"
 codesign --sign "$IDENTITY" --timestamp "$OUT/$FILE"
 notarize "$OUT/$FILE"
 xcrun stapler staple "$OUT/$FILE"
