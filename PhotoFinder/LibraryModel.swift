@@ -608,6 +608,10 @@ final class LibraryModel {
     /// Without Photos access, the first added folder is shown once its scan is in, rather than the no-access row.
     private var showFirstFolderWhenScanned = false
 
+    /// The added folder the app moved to by itself at launch without Photos access, so that move isn't taken for you
+    /// choosing a place.
+    @ObservationIgnored private(set) var launchFolderID: String?
+
     /// Whether the place the window opens on has settled: access asked, its first place loaded (or, without Photos
     /// access, the first added folder shown), so focus can go to its first item (Kelly, 14 Oct).
     var launchPlaceSettled: Bool { authState != .unknown && !isLoading && !showFirstFolderWhenScanned }
@@ -1186,8 +1190,8 @@ final class LibraryModel {
                 if !backlog.isEmpty { describeFilesLater(backlog, first: false, announce: nil) }
             }
             guard !fresh.isEmpty else {
-                // No folder could be listed: the no-access row it is.
-                showFirstFolderWhenScanned = false
+                // Every folder removed: the no-access row it is. (Scans replaced by a newer one leave it to that one.)
+                if results.allSatisfy({ !$0.0.isCancelled }) { showFirstFolderWhenScanned = false }
                 return
             }
             // In the order they were added; folders removed meanwhile drop out.
@@ -1200,6 +1204,7 @@ final class LibraryModel {
                 showFirstFolderWhenScanned = false
                 if selectedSourceID == SidebarID.photosNoAccess,
                    let root = folderRoots.first(where: { itemsByID[FolderID.folder($0)] != nil }) {
+                    launchFolderID = FolderID.folder(root)
                     selectedSourceID = FolderID.folder(root)
                     return
                 }

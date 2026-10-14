@@ -36,9 +36,10 @@ struct BrowserView: View {
     private func startOnPhotos() {
         guard !startedOnPhotos, model.launchPlaceSettled else { return }
         startedOnPhotos = true
-        // Without Photos access the window opens on the no-access row and moves to the first added folder itself.
-        let movedPlace = placeAtAppear != nil && placeAtAppear != SidebarID.photosNoAccess
-            && model.selectedSourceID != placeAtAppear
+        // Without Photos access the window opens on the no-access row and moves to the first added folder itself:
+        // that isn't you moving, but choosing another place meanwhile is.
+        let movedPlace = placeAtAppear != nil && model.selectedSourceID != placeAtAppear
+            && model.selectedSourceID != model.launchFolderID
         guard !searchFocused, !movedPlace, model.paneRequest.serial == paneMovesAtAppear else { return }
         model.selectFirstItemIfNone()
         pane = .content
