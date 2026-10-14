@@ -98,6 +98,12 @@ struct DescriptionPanel: View {
         // Hidden with Option-Command-I, or the window closed, while you were typing: keep what you typed.
         .onDisappear {
             if let draftID { save(draftID) }
+            model.panelDraft = nil
+        }
+        // Copy Description copies what the box shows, even before Return saves it.
+        .onChange(of: draft) {
+            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            model.panelDraft = isDirty && !text.isEmpty ? draftID.map { ($0, text) } : nil
         }
     }
 
@@ -107,12 +113,13 @@ struct DescriptionPanel: View {
         Button("Use as Caption") { model.useDescriptionAsCaption([id]) }
             .disabled(model.savedDescription(for: id) == nil)
             .fixedSize()
-        Button("Copy") { model.copyDescription(for: id) }
+        Button("Copy") { model.copyDescription([id]) }
             .disabled(model.savedDescription(for: id) == nil)
             .fixedSize()
     }
 
     private func load() {
+        model.panelDraft = nil
         draftID = model.focusedRow?.id
         loadedText = draftID.flatMap(model.savedDescription(for:)) ?? ""
         draft = loadedText

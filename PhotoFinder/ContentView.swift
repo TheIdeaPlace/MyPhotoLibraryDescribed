@@ -234,6 +234,7 @@ struct FileListView: View {
                     Button("Edit Caption…") { model.editCaption(ids) }
                     Divider()
                     Button("Copy") { model.copySelection(ids) }
+                    Button("Copy Description") { model.copyDescription(ids) }
                     Button("Export…") { model.exportSelection(ids) }
                     Divider()
                     Button("Toggle Favorite") { model.toggleFavorite(ids) }

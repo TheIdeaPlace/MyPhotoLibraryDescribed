@@ -1468,6 +1468,44 @@ final class LibraryModel {
         }
     }
 
+    /// Where Copy Description puts its text; tests use their own, so the person's clipboard is never touched.
+    @ObservationIgnored var pasteboard: NSPasteboard = .general
+
+    /// Edit > Copy Description (Shift-Command-C, Kelly 13 Oct): the saved description of the photo you're on, or of
+    /// each photo selected, as text. Copy itself copies the photos.
+    func copyDescription(_ ids: Set<String>? = nil) {
+        let picked = visibleRows.filter { showing(ids).contains($0.id) }
+        guard !picked.isEmpty else {
+            announce("Select a photo to copy its description")
+            return
+        }
+        let chosen = picked.filter { !$0.isContainer && isDescribable($0.id) }
+        guard !chosen.isEmpty else {
+            announce("Videos and folders aren't described")
+            return
+        }
+        // What the Description panel's box shows, when you've changed it and not yet pressed Return.
+        func text(_ row: FileRow) -> String? {
+            if let draft = panelDraft, draft.id == row.id { return draft.text }
+            return savedDescription(for: row.id)
+        }
+        let described = chosen.compactMap { row in text(row).map { (row.name, $0) } }
+        guard !described.isEmpty else {
+            announce(chosen.count == 1 ? "\(chosen[0].name) hasn't been described yet" : "None of these photos has been described yet")
+            return
+        }
+        let copied = chosen.count == 1 ? described[0].1 : described.map { "\($0.0)\n\($0.1)" }.joined(separator: "\n\n")
+        pasteboard.clearContents()
+        pasteboard.setString(copied, forType: .string)
+        let missing = chosen.count - described.count
+        var said = described.count == 1 ? "Copied the description" : "Copied \(described.count) descriptions"
+        if missing > 0 { said += missing == 1 ? ". 1 photo hasn't been described yet" : ". \(missing) photos haven't been described yet" }
+        announce(said)
+    }
+
+    /// The Description panel's correction not yet saved, so Copy Description copies what the box shows.
+    @ObservationIgnored var panelDraft: (id: String, text: String)?
+
     func toggleFavorite(_ ids: Set<String>? = nil) {
         guard changesAllowed() else { return }
         let assets = assets(for: showing(ids))
@@ -2249,14 +2287,6 @@ final class LibraryModel {
         guard trimmed != descriptions.description(forKey: key) else { return }
         descriptions.remember(trimmed, forKey: key, edited: true)
         announce("Description saved")
-    }
-
-    /// The Description panel's Copy.
-    func copyDescription(for id: String) {
-        guard let text = savedDescription(for: id) else { NSSound.beep(); return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        announce("Description copied")
     }
 
     /// Whether rows need their descriptions: the Description column is showing, or the list is sorted by it (Sort By

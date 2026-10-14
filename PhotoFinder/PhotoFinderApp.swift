@@ -128,6 +128,11 @@ struct PhotoCommands: Commands {
             Button("Export…") { model.exportSelection() }
                 .keyboardShortcut("e")
         }
+        CommandGroup(after: .pasteboard) {
+            // Copy copies the photos; this copies what's said about them, as text (Kelly, 13 Oct).
+            Button("Copy Description") { model.copyDescription() }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+        }
         CommandGroup(after: .textEditing) {
             Button("Find") { model.searchFocusRequest += 1 }
                 .keyboardShortcut("f")
