@@ -25,6 +25,9 @@ public static class JpegMetadata
     private static readonly byte[] ExtendedSignature = Encoding.ASCII.GetBytes("http://ns.adobe.com/xmp/extension/\0");
     private static readonly byte[] ExifSignature = Encoding.ASCII.GetBytes("Exif\0\0");
     private static readonly byte[] MpfSignature = Encoding.ASCII.GetBytes("MPF\0");
+    private static readonly byte[] PhotoshopSignature = Encoding.ASCII.GetBytes("Photoshop 3.0\0");
+    /// <summary>Image resource signatures: Photoshop's own and the ones other apps use, as ExifTool walks them.</summary>
+    private static readonly byte[][] ResourceSignatures = [.. new[] { "8BIM", "PHUT", "DCSR", "AgHg", "MeSa" }.Select(Encoding.ASCII.GetBytes)];
 
     /// <summary>A segment's largest length field: the length counts itself, not the marker.</summary>
     private const int MaxSegmentLength = 65535;
@@ -70,6 +73,8 @@ public static class JpegMetadata
             if (segments.Count(s => IsApp1With(jpeg, s, XmpSignature)) > 1) throw new MetadataRefusedException(DontAddUp);
             guid = CheckExtension(jpeg, extension, xmpAt >= 0 ? document : null, changes);
         }
+        if (changes.Caption is { } caption && StaleIptcCaption(jpeg, segments) is { } old && !old.Any(t => SameText(t, caption)))
+            throw new OlderCaptionException();
         XmpPacket.Edit(document, changes);
         // And after the change, the main packet still names it (as the Mac checks), or the extension would be lost.
         if (guid is not null && XmpPacket.ExtendedGuid(document) != guid) throw new MetadataRefusedException(DontAddUp);
@@ -115,6 +120,57 @@ public static class JpegMetadata
         var exif = Segments(result).FirstOrDefault(s => IsApp1With(result, s, ExifSignature));
         if (exif.Length > 0) XmpPacket.PatchExif(result, exif.Offset + 4 + ExifSignature.Length, exif.End, changes);
         return result;
+    }
+
+    // MARK: Photoshop's IPTC
+
+    /// <summary>The same caption, allowing for the ends trimmed and line breaks written as CR (as Photoshop does).</summary>
+    private static bool SameText(string a, string b) =>
+        a.Replace("\r\n", "\n").Replace('\r', '\n').Trim() == b.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+
+    /// <summary>
+    /// The caption in Photoshop's IPTC (APP13, image resource 0x0404, dataset 2:120), as UTF-8 and as Latin-1, when readers
+    /// would show it ahead of the XMP's: when there's an IPTC digest (resource 0x0425) and it isn't the MD5 of the IPTC
+    /// block, an app changed the IPTC after the XMP was written, so ImageIO and others take the IPTC's (#169, as the
+    /// Mac's #169, and as the metadata guidelines say). Null when there's no such caption, or the digest matches, or
+    /// there's no digest (then the XMP is read). The IPTC itself isn't changed.
+    ///
+    /// The Photoshop segments are joined first (a long resource list is split to fit, each part repeating the header), and
+    /// the first IPTC block and the first digest count, as ExifTool reads them.
+    /// </summary>
+    private static string[]? StaleIptcCaption(byte[] jpeg, IReadOnlyList<Segment> segments)
+    {
+        var list = new List<byte>();
+        foreach (var s in segments.Where(s => s.Marker == 0xED && Has(jpeg, s.Offset + 4, PhotoshopSignature)))
+            list.AddRange(jpeg.AsSpan((s.Offset + 4 + PhotoshopSignature.Length)..s.End));
+        var b = list.ToArray();
+        byte[]? iptc = null, digest = null;
+        var p = 0;
+        while (p + 12 <= b.Length && ResourceSignatures.Any(sig => b.AsSpan(p, 4).SequenceEqual(sig)))
+        {
+            var id = (b[p + 4] << 8) | b[p + 5];
+            // A Pascal name, padded to an even length with its length byte.
+            var q = p + 6 + ((b[p + 6] + 2) & ~1);
+            if (q + 4 > b.Length) break;
+            var size = (long)(uint)((b[q] << 24) | (b[q + 1] << 16) | (b[q + 2] << 8) | b[q + 3]);
+            q += 4;
+            // Compared without adding, so a huge size can't wrap round and pass.
+            if (size > b.Length - q) break;
+            if (id == 0x0404) iptc ??= b[q..(q + (int)size)];
+            if (id == 0x0425) digest ??= b[q..(q + (int)size)];
+            p = q + (int)size + (int)(size & 1);
+        }
+        // Any digest that isn't the IPTC's MD5 (a damaged one too) means the IPTC changed since.
+        if (iptc is null || digest is null || System.Security.Cryptography.MD5.HashData(iptc).AsSpan().SequenceEqual(digest)) return null;
+        // Datasets: 0x1C, record, dataset, a 2-byte length (an extended length isn't followed).
+        for (var i = 0; i + 5 <= iptc.Length && iptc[i] == 0x1C; )
+        {
+            int record = iptc[i + 1], dataset = iptc[i + 2], length = (iptc[i + 3] << 8) | iptc[i + 4];
+            if ((length & 0x8000) != 0 || i + 5 + length > iptc.Length) return null;
+            if (record == 2 && dataset == 120) return [.. XmpPacket.TextOf(iptc, i + 5, length)];
+            i += 5 + length;
+        }
+        return null;
     }
 
     // MARK: Extended XMP
