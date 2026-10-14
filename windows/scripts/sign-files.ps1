@@ -70,7 +70,9 @@ try {
         $signExit = $LASTEXITCODE
         $ErrorActionPreference = 'Stop'
         if ($signExit -eq 0) { break }
-        $timestamp = ($log | Out-String) -match 'timestamp server'
+        # Line by line (Out-String would wrap a long line at the console's width), and the other wording signtool uses
+        # when the timestamp request times out.
+        $timestamp = [bool](@($log | ForEach-Object { "$_" }) -match 'timestamp server|SignerTimeStamp|attempting to timestamp')
         if (-not $timestamp -or $attempt -ge 3) {
             $log | Write-Host
             throw "signtool failed (exit code $signExit). If it mentions credentials, run az login."
@@ -87,7 +89,8 @@ foreach ($f in $files) {
     # Get-AuthenticodeSignature can't read an MSIX's signature; signtool verify can, against the PC's trusted roots.
     if ($f -match '\.(msix|msixbundle|appx|appxbundle)$') {
         $ErrorActionPreference = 'Continue'
-        & $signtool.FullName verify /pa /q $f 2>&1 | Out-Null
+        # /tw: a package signed without a timestamp (a timestamp that failed is only a warning) doesn't pass either.
+        & $signtool.FullName verify /pa /tw /q $f 2>&1 | Out-Null
         $ok = $LASTEXITCODE -eq 0
         $ErrorActionPreference = 'Stop'
         Write-Host "$f`n  verified: $ok"
