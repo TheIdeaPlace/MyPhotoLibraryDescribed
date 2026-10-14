@@ -499,6 +499,9 @@ final class JPEGMetadataTests: XCTestCase {
         bytes.replaceSubrange(at..<(at + old.count), with: new)
         try Data(bytes).write(to: url)
         try assertRefused(.init(caption: short), url)
+        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: url)) {
+            XCTAssertEqual($0 as? FileMetadataWriteError, FileMetadataWriter.olderCaptionWins, "says why")
+        }
         XCTAssertEqual(try FileMetadataWriter.write(.init(accessibilityDescription: short), to: url).altText, short)
     }
 
