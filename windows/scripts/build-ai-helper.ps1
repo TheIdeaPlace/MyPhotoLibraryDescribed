@@ -39,7 +39,7 @@ photofinder-ai --check
 param(
     [ValidateSet('x64', 'arm64')]
     [string]$Arch = $(if ((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }),
-    [string]$Publisher = 'CN=Photo Finder Development',
+    [string]$Publisher = 'CN=My Photo Library Described Development',
     [string]$Version,
     [ValidateRange(0, 65535)]
     [int]$Revision = 0,

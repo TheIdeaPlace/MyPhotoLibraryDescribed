@@ -201,11 +201,11 @@ public partial class MainWindow : Window
             try
             {
                 Directory.CreateDirectory(Services.Log.Folder);
-                OpenUrl(Services.Log.Folder);
+                OpenUrl(Services.AppPaths.ForExplorer(Services.Log.Folder));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
             {
-                ShowError($"File Explorer couldn't open the log folder. It's at {Services.Log.Folder}.");
+                ShowError($"File Explorer couldn't open the log folder. It's at {Services.AppPaths.ForExplorer(Services.Log.Folder)}.");
             }
         });
         Bind(AppCommands.GoToStatusBar, FocusStatusBar);
@@ -1487,8 +1487,8 @@ public partial class MainWindow : Window
                     Inform($"This copy of {AppInfo.Name} isn't installed, so it can't update itself.");
                     break;
                 case Services.Updates.State.NotFromAppInstaller:
-                    Inform($"{AppInfo.Name} was installed without PhotoFinder.appinstaller, so Windows doesn't know where its updates are. " +
-                           "Open PhotoFinder.appinstaller to install it again; your settings are kept.");
+                    Inform($"{AppInfo.Name} wasn't installed from the releases page, so Windows doesn't know where its updates are. " +
+                           $"Open {AppInfo.InstallerFile} from there to install it again; your settings are kept.");
                     break;
                 case Services.Updates.State.UpToDate:
                     Found(result.State, null);

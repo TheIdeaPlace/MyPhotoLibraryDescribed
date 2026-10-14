@@ -7,7 +7,7 @@ using Windows.Management.Deployment;
 namespace PhotoFinder.Services;
 
 /// <summary>
-/// Updates for My Photo Library Described as installed from PhotoFinder.appinstaller. Windows also checks in the background every
+/// Updates for My Photo Library Described as installed from its .appinstaller (AppInfo.InstallerFile). Windows also checks in the background every
 /// few hours and installs an update while My Photo Library Described isn't running; this is Help > Check for Updates, for now.
 /// (Checking at every launch, the .appinstaller's OnLaunch setting, stopped the AI helper's alias from starting, so
 /// the package doesn't use it.) Installing follows Microsoft's "Update non-Store published apps from your code".
@@ -40,7 +40,7 @@ public static class Updates
     public static string AppVersion =>
         PackageVersion ?? typeof(Updates).Assembly.GetName().Version?.ToString(3) ?? "unknown";
 
-    /// <summary>Installed from PhotoFinder.appinstaller, so Windows knows where its updates are.</summary>
+    /// <summary>Installed from the .appinstaller, so Windows knows where its updates are.</summary>
     public static bool UpdatesItself
     {
         get

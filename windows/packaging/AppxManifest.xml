@@ -18,7 +18,7 @@
   xmlns:systemai="http://schemas.microsoft.com/appx/manifest/systemai/windows10"
   IgnorableNamespaces="uap uap5 desktop4 rescap systemai">
 
-  <Identity Name="TheIdeaPlace.PhotoFinder" Publisher="$PUBLISHER$" Version="$VERSION$" ProcessorArchitecture="$ARCH$" />
+  <Identity Name="TheIdeaPlace.MyPhotoLibraryDescribed" Publisher="$PUBLISHER$" Version="$VERSION$" ProcessorArchitecture="$ARCH$" />
 
   <Properties>
     <DisplayName>$DISPLAYNAME$</DisplayName>
