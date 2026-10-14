@@ -48,6 +48,10 @@ public sealed record DescriptionRecord
 
     [JsonIgnore]
     public bool IsEdited => Source == DescriptionProvenance.Person;
+
+    /// <summary>Read from a record with a field of the wrong kind: only its text and source were kept.</summary>
+    [JsonIgnore]
+    internal bool Unread { get; init; }
 }
 
 /// <summary>A description Windows made, and how long it took over it (not the wait for the helper), when that's known.
@@ -76,7 +80,8 @@ public static class DescriptionProvenance
     public static string? Os => OsOverride ?? _os.Value;
     public static string App => _app.Value;
     public static string? Model => ModelOverride ?? _model.Value;
-    public static string Locale => CultureInfo.CurrentUICulture.Name;
+    /// <summary>Null, so it's left out, when the app runs in no particular language.</summary>
+    public static string? Locale => CultureInfo.CurrentUICulture.Name is { Length: > 0 } name ? name : null;
     public static DateTime Now => ClockOverride?.Invoke() ?? DateTime.UtcNow;
 
     /// <summary>ISO 8601 UTC to the second, as the Mac writes it: "2026-10-14T18:30:05Z".</summary>

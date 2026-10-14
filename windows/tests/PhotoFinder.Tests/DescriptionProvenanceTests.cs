@@ -235,9 +235,38 @@ public sealed class DescriptionProvenanceTests : IDisposable
         var store = new DescriptionStore(File_);
         Assert.Equal("A dog.", store.Get(Item, "accessible"));
         Assert.Equal("A plain one.", store.Get(Item, "brief"));
-        Assert.Null(store.Get(Item, "detailed"));
+        // A field of the wrong kind: the description is kept, the rest of that record isn't.
+        Assert.Equal(new DescriptionRecord { Text = "Odd." }, store.Record(Item, "detailed"));
         Assert.Equal(file.ToJsonString(), File.ReadAllText(Assert.Single(SetAside())));
         Assert.True(File.Exists(File_));
+    }
+
+    [Fact]
+    public void AFileThatCantBeOpened_IsNeverWrittenOver()
+    {
+        Directory.CreateDirectory(_lib.PathOf("data"));
+        File.WriteAllText(File_, "{\"version\": 2, \"descriptions\": {}}");
+        var before = File.ReadAllBytes(File_);
+        using (new FileStream(File_, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var store = new DescriptionStore(File_);
+            store.Put(Item, "accessible", "A cat.");
+            Assert.Equal("A cat.", store.Get(Item, "accessible"));
+            store.Save();
+        }
+        Assert.Equal(before, File.ReadAllBytes(File_));
+        Assert.Empty(SetAside());
+    }
+
+    [Fact]
+    public void AFileSetAsideTwice_KeepsBothCopies()
+    {
+        Directory.CreateDirectory(_lib.PathOf("data"));
+        File.WriteAllText(File_, "first damaged");
+        _ = new DescriptionStore(File_).Get(Item, "accessible");
+        File.WriteAllText(File_, "second damaged");
+        _ = new DescriptionStore(File_).Get(Item, "accessible");
+        Assert.Equal(["first damaged", "second damaged"], SetAside().Select(File.ReadAllText).Order().ToArray());
     }
 
     [WpfFact]

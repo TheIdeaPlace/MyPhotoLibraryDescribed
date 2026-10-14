@@ -55,7 +55,22 @@ public sealed class DescriptionStore
     /// described and the AI's first text. Otherwise it's a description Windows made, replacing the record whole.</param>
     /// <param name="took">How long Windows took to make it. Without it, saving the same text as is already saved (a
     /// description read back from here) keeps the record as it was.</param>
-    public void Put(MediaItem item, string kind, string text, bool edited = false, TimeSpan? took = null)
+    public void Put(MediaItem item, string kind, string text, bool edited = false, TimeSpan? took = null) =>
+        Put(item, kind, text, edited, took, _ => true);
+
+    /// <summary>Saves a description Windows made, unless the person has corrected this one meanwhile: only Redescribe,
+    /// after asking, replaces a correction. Returns whether it was saved.</summary>
+    public bool PutUnlessEdited(MediaItem item, string kind, string text, TimeSpan? took = null) =>
+        Put(item, kind, text, false, took, before => before?.IsEdited != true);
+
+    /// <summary>Redescribe on a correction, agreed to when the saved description was <paramref name="expected"/>: the
+    /// new description replaces it only if nobody has corrected it again since. Returns whether it was saved.</summary>
+    public bool PutIfUnchanged(MediaItem item, string kind, string expected, string text, TimeSpan? took = null) =>
+        Put(item, kind, text, false, took, before => before?.Text == expected || before?.IsEdited != true);
+
+    /// <param name="allowed">Decided under the lock, against the record as it is then: a correction saved while this one
+    /// was being made is never replaced by it.</param>
+    private bool Put(MediaItem item, string kind, string text, bool edited, TimeSpan? took, Func<DescriptionRecord?, bool> allowed)
     {
         // Made before the lock: what it reads about this PC may still be being read at startup.
         var made = DescriptionProvenance.Made(text, kind, took);
@@ -63,28 +78,12 @@ public sealed class DescriptionStore
         {
             var key = Key(item, kind);
             Entries.TryGetValue(key, out var before);
+            if (!allowed(before)) return false;
             if (edited) Entries[key] = DescriptionProvenance.Corrected(before, made);
             else if (took is not null || before is null || before.Text != text || before.IsEdited) Entries[key] = made;
         }
         ScheduleSave();
         Saved?.Invoke(item, kind, text);
-    }
-
-    /// <summary>Saves a description Windows made, unless the person has corrected this one meanwhile: only Redescribe,
-    /// after asking, replaces a correction. Returns whether it was saved.</summary>
-    public bool PutUnlessEdited(MediaItem item, string kind, string text, TimeSpan? took = null)
-    {
-        if (IsEdited(item, kind)) return false;
-        Put(item, kind, text, took: took);
-        return true;
-    }
-
-    /// <summary>Redescribe on a correction, agreed to when the saved description was <paramref name="expected"/>: the
-    /// new description replaces it only if nobody has corrected it again since. Returns whether it was saved.</summary>
-    public bool PutIfUnchanged(MediaItem item, string kind, string expected, string text, TimeSpan? took = null)
-    {
-        if (Get(item, kind) != expected && IsEdited(item, kind)) return false;
-        Put(item, kind, text, took: took);
         return true;
     }
 
@@ -196,12 +195,13 @@ public sealed class DescriptionStore
             {
                 var record = Read(p.Value);
                 if (record is null) { skipped++; continue; }
+                if (record.Unread) { skipped++; record = record with { Unread = false }; }
                 if (edited?.Contains(p.Name) == true) record = record with { Source = DescriptionProvenance.Person };
                 loaded[p.Name] = record;
             }
             if (skipped > 0)
             {
-                Log.Write("descriptions", $"{skipped} saved description(s) couldn't be read and were skipped");
+                Log.Write("descriptions", $"{skipped} saved description(s) couldn't be read in full");
                 SetAside(copy: true);
             }
             return loaded;
@@ -229,19 +229,25 @@ public sealed class DescriptionStore
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
         {
-            return null;
+            // A field of the wrong kind: the description itself is kept, and whether it's the person's.
+            if (!value.TryGetProperty("text", out var text) || text.ValueKind != JsonValueKind.String) return null;
+            var source = value.TryGetProperty("source", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
+            return text.GetString() is { Length: > 0 } t ? new DescriptionRecord { Text = t, Source = source, Unread = true } : null;
         }
     }
 
     /// <summary>Keeps the file as it was beside it, before anything is saved over it. If that fails, nothing is saved.</summary>
     private void SetAside(bool copy)
     {
-        var aside = Path.Combine(Path.GetDirectoryName(_filePath)!,
-            $"{Path.GetFileNameWithoutExtension(_filePath)}.unreadable-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+        var folder = Path.GetDirectoryName(_filePath)!;
+        var name = $"{Path.GetFileNameWithoutExtension(_filePath)}.unreadable-{DateTime.Now:yyyyMMdd-HHmmss}";
+        var aside = Path.Combine(folder, name + ".json");
+        // Never over an earlier one: -2, -3… as on the Mac.
+        for (var n = 2; File.Exists(aside); n++) aside = Path.Combine(folder, $"{name}-{n}.json");
         try
         {
-            if (copy) File.Copy(_filePath, aside, overwrite: true);
-            else File.Move(_filePath, aside, overwrite: true);
+            if (copy) File.Copy(_filePath, aside, overwrite: false);
+            else File.Move(_filePath, aside, overwrite: false);
             Log.Write("descriptions", $"The saved descriptions were kept as {Path.GetFileName(aside)}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
