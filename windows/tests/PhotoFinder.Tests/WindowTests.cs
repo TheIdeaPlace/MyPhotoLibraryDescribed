@@ -327,8 +327,9 @@ public sealed class WindowTests : IDisposable
         try
         {
             // After the details arrive and the list re-sorts newest first, it's still on the first photo.
-            Assert.True(await WaitFor(() => model.Rows.Count == 3 && model.DetailProgress is null && FocusedListRow(window) is not null));
-            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.True(await WaitFor(() => model.Rows.Count == 3 && FocusedListRow(window) is not null));
+            await model.DetailFillTask;
+            Assert.True(await WaitFor(() => FocusedListRow(window) == window.FileList.Items.Cast<FileRow>().First()));
             var first = window.FileList.Items.Cast<FileRow>().First();
             Assert.Equal("a.jpg", first.Name);
             Assert.Same(first, FocusedListRow(window));
@@ -350,6 +351,65 @@ public sealed class WindowTests : IDisposable
             AppCommands.AsList.Execute(null, window);
             Assert.True(await WaitFor(() => FocusedListRow(window) == third));
             Assert.Same(third, model.FocusedRow);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [WpfFact]
+    public async Task AfterLaunch_SortingOrANewPhoto_LeavesYouOnThePhotoYoureOn()
+    {
+        _lib.AddJpeg("a.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 3) });
+        _lib.AddJpeg("b.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 2) });
+        var model = new LibraryModel(new Settings(), _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
+            () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1));
+        var window = new MainWindow(model) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.True(await WaitFor(() => model.Rows.Count == 2 && FocusedListRow(window) is not null));
+            await model.DetailFillTask;
+            Assert.True(await WaitFor(() => model.FocusedRow?.Name == "a.jpg"));
+
+            // Oldest first: still on a.jpg, now last.
+            model.SortBy("date");
+            Assert.Equal("b.jpg", model.Rows[0].Name);
+            Assert.Equal("a.jpg", model.FocusedRow?.Name);
+
+            // A newer photo arriving doesn't move you either.
+            model.SortBy("date");
+            _lib.AddJpeg("new.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2023, 1, 1) });
+            await model.RescanAsync();
+            await model.DetailFillTask;
+            Assert.True(await WaitFor(() => model.Rows.Count == 3 && model.Rows[0].Name == "new.jpg"));
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.Equal("a.jpg", model.FocusedRow?.Name);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [WpfFact]
+    public async Task OpeningInTheGallery_StartsOnTheFirstPhoto_AfterTheDetailsArrive()
+    {
+        _lib.AddJpeg("a.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 3) });
+        _lib.AddJpeg("b.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 2) });
+        _lib.AddJpeg("c.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 1) });
+        var model = new LibraryModel(new Settings { ViewMode = ViewMode.Gallery }, _lib.PathOf(@"data\Settings.json"),
+            new MetadataCache(_lib.PathOf(@"data\m.json")), () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1));
+        var window = new MainWindow(model) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.True(await WaitFor(() => model.Rows.Count == 3 && model.FocusedRow is not null));
+            await model.DetailFillTask;
+            Assert.True(await WaitFor(() => model.FocusedRow?.Name == "a.jpg"));
+            Assert.True(await WaitFor(() => window.GalleryPositionText.Text == "1 of 3"));
+            Assert.True(window.GalleryImage.IsKeyboardFocused);
         }
         finally
         {
