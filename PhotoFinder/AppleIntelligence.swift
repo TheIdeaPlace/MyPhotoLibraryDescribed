@@ -30,7 +30,7 @@ final class ImageConversation {
 
     /// Whether this started from a saved description rather than describing.
     var startedFromSaved: Bool { saved != nil }
-    private let onDescribed: (String) -> Void
+    private let onDescribed: (String, DescriptionProvenance) -> Void
 
     static let instructions = """
         You describe photos for a person who is blind and uses a screen reader. \
@@ -42,7 +42,8 @@ final class ImageConversation {
     /// The standard prompt, or the one chosen in Settings.
     static var describePrompt: String { DescriptionPrompt.current }
 
-    init?(imageData: Data, saved: String? = nil, onDescribed: @escaping (String) -> Void = { _ in }) {
+    init?(imageData: Data, saved: String? = nil,
+          onDescribed: @escaping (String, DescriptionProvenance) -> Void = { _, _ in }) {
         guard let image = Self.makeImage(from: imageData) else { return nil }
         self.image = image
         self.saved = saved
@@ -112,6 +113,7 @@ final class ImageConversation {
         defer { isWorking = false }
         do {
             let answer: String
+            var provenance: DescriptionProvenance?
             if let session, let question {
                 answer = try await session.respond(to: question).content
             } else {
@@ -127,7 +129,9 @@ final class ImageConversation {
                 }
                 // A first description is counted for Check System; a question about a saved one isn't a description.
                 if question == nil {
+                    let start = ContinuousClock.now
                     answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image)
+                    provenance = .appleIntelligence(prompt: prompt, seconds: PhotoDescriber.seconds(since: start))
                 } else {
                     answer = try await session.respond {
                         prompt
@@ -137,7 +141,7 @@ final class ImageConversation {
             }
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             exchanges.append(Exchange(question: question, answer: trimmed))
-            if question == nil { onDescribed(trimmed) }
+            if let provenance { onDescribed(trimmed, provenance) }
             AccessibilityNotification.Announcement(trimmed).post()
         } catch {
             errorMessage = Self.message(for: error)
@@ -185,14 +189,14 @@ final class ImageConversation {
 @available(macOS 27, *)
 @MainActor
 enum PhotoDescriber {
-    static func describe(_ data: Data) async throws -> String? {
+    static func describe(_ data: Data, prompt: String) async throws -> String? {
         // Decoded off the main actor: a 2048-pixel decode would stall the window.
         let image = await Task.detached(priority: .userInitiated) { ImageConversation.makeImage(from: data) }.value
         guard let image else { return nil }
         // Dropped while decoding: don't ask the model, which another photo may be waiting for.
         try Task.checkCancellation()
         let session = LanguageModelSession(instructions: ImageConversation.instructions)
-        let answer = try await respond(session, prompt: ImageConversation.describePrompt, image: image)
+        let answer = try await respond(session, prompt: prompt, image: image)
         return answer.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -326,10 +330,10 @@ struct AppleIntelligenceSection: View {
         guard let imageData else { return }
         let cache = model.descriptions
         let key = descriptionKey
-        guard let conversation = conversation ?? ImageConversation(imageData: imageData, onDescribed: { text in
+        guard let conversation = conversation ?? ImageConversation(imageData: imageData, onDescribed: { text, provenance in
             if DescriptionCache.mayReplace(edited: cache.isEdited(forKey: key), saved: cache.description(forKey: key),
                                            agreed: replacingEdit) {
-                cache.remember(text, forKey: key)
+                cache.remember(text, forKey: key, provenance: provenance)
             }
         }) else {
             return

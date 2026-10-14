@@ -11,7 +11,10 @@ enum DescriptionPrompt {
         and any text that appears in the photo.
         """
 
-    static var current: String { resolve(UserDefaults.standard.string(forKey: key)) }
+    static var current: String { current(in: .standard) }
+
+    /// The prompt in use with these settings: the app's own, or a test's.
+    static func current(in defaults: UserDefaults) -> String { resolve(defaults.string(forKey: key)) }
 
     /// The saved prompt, or the standard one when nothing (or only spaces) was saved.
     static func resolve(_ saved: String?) -> String {

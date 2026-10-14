@@ -447,12 +447,14 @@ final class LibraryModelTests: XCTestCase {
 @MainActor
 final class StandInDescriber {
     private(set) var calls = 0
+    /// The prompt each request was asked with.
+    private(set) var prompts: [String] = []
     var reply: String?
     private var waiting: [CheckedContinuation<String?, Never>] = []
     var waitingCount: Int { waiting.count }
 
     var describing: PhotoDescribing {
-        PhotoDescribing(unavailableReason: { nil }, describe: { [self] _ in await answer() },
+        PhotoDescribing(unavailableReason: { nil }, describe: { [self] _, prompt in prompts.append(prompt); return await answer() },
                         failureMessage: { "Failed: \($0.localizedDescription)" })
     }
 

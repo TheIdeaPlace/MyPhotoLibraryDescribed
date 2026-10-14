@@ -263,9 +263,11 @@ final class BackgroundDescriber {
         let prompt = ImageConversation.describePrompt
         do {
             // Through PhotoDescriber, so Check System's timings and failures count it (#94).
+            let start = ContinuousClock.now
             let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image, countsBusy: false)
+            let provenance = DescriptionProvenance.appleIntelligence(prompt: prompt, seconds: PhotoDescriber.seconds(since: start))
             // Corrected in the Description panel while this was being described: the person's words win.
-            if !cache.isEdited(forKey: asset.localIdentifier) { cache.remember(answer, for: asset) }
+            if !cache.isEdited(forKey: asset.localIdentifier) { cache.remember(answer, for: asset, provenance: provenance) }
             if run == generation { queue.finished(described: true) }
             return nil
         } catch {
@@ -313,8 +315,10 @@ final class BackgroundDescriber {
         let prompt = ImageConversation.describePrompt
         do {
             // Through PhotoDescriber, so Check System's timings and failures count it (#94).
+            let start = ContinuousClock.now
             let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: picture, countsBusy: false)
-            if !cache.isEdited(forKey: key) { cache.remember(answer, forKey: key) }
+            let provenance = DescriptionProvenance.appleIntelligence(prompt: prompt, seconds: PhotoDescriber.seconds(since: start))
+            if !cache.isEdited(forKey: key) { cache.remember(answer, forKey: key, provenance: provenance) }
             if run == generation { queue.finished(described: true) }
             return nil
         } catch {
