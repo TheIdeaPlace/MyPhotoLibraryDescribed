@@ -1,3 +1,5 @@
+import CoreLocation
+import MapKit
 import XCTest
 @testable import Photo_Finder
 
@@ -72,6 +74,8 @@ final class PlaceNamesTests: XCTestCase {
         let cache = PlaceNameCache(fileURL: url)
         XCTAssertNil(cache.name(for: key))
         cache.remember("Pike Place Market, Seattle, WA, United States", for: key)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path), "written a moment later, not at once")
+        cache.flush()
 
         let saved = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
         XCTAssertEqual(saved, ["47.60970,-122.34220": "Pike Place Market, Seattle, WA, United States"])
@@ -86,6 +90,7 @@ final class PlaceNamesTests: XCTestCase {
         let first = await cache.lookUp(key) { _, _ in asked.add(); return nil }
         XCTAssertNil(first)
         XCTAssertEqual(cache.name(for: key), "")
+        cache.flush()
         let again = await PlaceNameCache(fileURL: url).lookUp(key) { _, _ in asked.add(); return "Somewhere" }
         XCTAssertNil(again)
         XCTAssertEqual(asked.count, 1)
@@ -115,6 +120,7 @@ final class PlaceNamesTests: XCTestCase {
         let cache = PlaceNameCache(fileURL: url)
         XCTAssertNil(cache.name(for: key))
         cache.remember("Here", for: key)
+        cache.flush()
         XCTAssertEqual(PlaceNameCache(fileURL: url).name(for: key), "Here")
 
         // Keys that aren't spots are left out; the rest are read.
@@ -165,26 +171,33 @@ final class PlaceNamesTests: XCTestCase {
 
     // MARK: - Looking up what's showing (#172)
 
+    private struct NotThisSpot: Error {}
+
+    /// A lookup with a stand-in for Apple: `names` by key, `busy` keys answer "too many" that many times first, and
+    /// `bad` keys fail for the spot itself. Waits move the test's clock instead of waiting.
     @MainActor
-    private func lookup(_ names: [String: String?], allowed: Bool = true, fails: Set<String> = [])
+    private func lookup(_ names: [String: String?], allowed: Bool = true, busy: [String: Int] = [:], bad: Set<String> = [])
         -> (PlaceNameLookup, PlaceNameCache, Recorder) {
         let recorder = Recorder()
         let cache = PlaceNameCache(fileURL: cacheURL())
         let lookup = PlaceNameLookup(cache: cache, geocode: { latitude, longitude in
             let key = PlaceKey(latitude: latitude, longitude: longitude)!.text
-            recorder.asked(key)
-            if fails.contains(key) { throw URLError(.timedOut) }
+            let times = recorder.asked(key)
+            if times <= busy[key, default: 0] { throw URLError(.timedOut) }
+            if bad.contains(key) { throw NotThisSpot() }
             return names[key] ?? nil
         })
         lookup.sleep = { recorder.waited($0) }
+        lookup.now = { recorder.now }
         lookup.isAllowed = { allowed }
         return (lookup, cache, recorder)
     }
 
     private func key(_ latitude: Double, _ longitude: Double) -> PlaceKey { PlaceKey(latitude: latitude, longitude: longitude)! }
+    private func text(_ latitude: Double, _ longitude: Double) -> String { key(latitude, longitude).text }
 
     @MainActor
-    func testEachSpotIsAskedOnceOneAtATimeWithAGap() async {
+    func testEachSpotIsAskedOnceOneAtATime() async {
         let (lookup, cache, recorder) = lookup(["1.00000,1.00000": "One", "2.00000,2.00000": nil])
         lookup.want(key(1, 1))
         lookup.want(key(1, 1))
@@ -193,8 +206,7 @@ final class PlaceNamesTests: XCTestCase {
         lookup.want(nil)
         await lookup.whenIdle()
         XCTAssertEqual(recorder.keys, ["1.00000,1.00000", "2.00000,2.00000"])
-        XCTAssertEqual(recorder.waits, [PlaceNameLookup.defaultGap, PlaceNameLookup.defaultGap])
-        XCTAssertGreaterThanOrEqual(PlaceNameLookup.defaultGap, .seconds(1.2), "well under Apple's 50 a minute")
+        XCTAssertEqual(recorder.waits, [PlaceNameLookup.burstGap, PlaceNameLookup.burstGap])
         XCTAssertEqual(cache.name(for: key(1, 1)), "One")
         XCTAssertEqual(cache.name(for: key(2, 2)), "")
 
@@ -203,6 +215,52 @@ final class PlaceNamesTests: XCTestCase {
         lookup.want(key(2, 2))
         await lookup.whenIdle()
         XCTAssertEqual(recorder.keys.count, 2)
+    }
+
+    @MainActor
+    func testAShortBurstThenOneEveryFewSeconds() async {
+        let (lookup, _, recorder) = lookup([:])
+        for index in 1...12 { lookup.want(key(Double(index), 0)) }
+        await lookup.whenIdle()
+        XCTAssertEqual(recorder.waits, Array(repeating: PlaceNameLookup.burstGap, count: 9)
+                       + Array(repeating: PlaceNameLookup.slowGap, count: 3))
+        XCTAssertGreaterThanOrEqual(PlaceNameLookup.slowGap, .seconds(5))
+        XCTAssertLessThanOrEqual(PlaceNameLookup.burst, 10)
+
+        // A quiet minute later, the burst is back.
+        recorder.waited(.seconds(120))
+        lookup.want(key(50, 0))
+        await lookup.whenIdle()
+        XCTAssertEqual(recorder.waits.last, PlaceNameLookup.burstGap)
+    }
+
+    @MainActor
+    func testTooManyBacksOffLongerEachTimeAndAsksAgain() async {
+        let (lookup, cache, recorder) = lookup(["1.00000,1.00000": "One"], busy: ["1.00000,1.00000": 6])
+        lookup.want(key(1, 1))
+        await lookup.whenIdle()
+        XCTAssertEqual(recorder.keys, Array(repeating: "1.00000,1.00000", count: 7))
+        XCTAssertEqual(recorder.waits, [.seconds(60), .seconds(120), .seconds(240), .seconds(480), .seconds(900),
+                                        .seconds(900), PlaceNameLookup.burstGap])
+        XCTAssertEqual(cache.name(for: key(1, 1)), "One")
+        XCTAssertTrue(PlaceNames.isTransient(URLError(.notConnectedToInternet)))
+        XCTAssertTrue(PlaceNames.isTransient(MKError(.loadingThrottled)))
+        XCTAssertTrue(PlaceNames.isTransient(CLError(.network)))
+        XCTAssertFalse(PlaceNames.isTransient(NotThisSpot()))
+    }
+
+    @MainActor
+    func testASpotAppleCantAnswerIsntAskedAgainThisSession() async {
+        let (lookup, cache, recorder) = lookup(["2.00000,2.00000": "Two"], bad: ["1.00000,1.00000"])
+        lookup.want(key(1, 1))
+        lookup.want(key(2, 2))
+        await lookup.whenIdle()
+        XCTAssertEqual(recorder.waits, [PlaceNameLookup.burstGap, PlaceNameLookup.burstGap])
+        XCTAssertNil(cache.name(for: key(1, 1)), "not remembered, so it's tried another time")
+        lookup.want(key(1, 1))
+        lookup.want(key(1, 1), first: true)
+        await lookup.whenIdle()
+        XCTAssertEqual(recorder.keys, ["1.00000,1.00000", "2.00000,2.00000"])
     }
 
     @MainActor
@@ -239,40 +297,45 @@ final class PlaceNamesTests: XCTestCase {
         lookup.unwant(key(3, 3))
         lookup.want(key(4, 4), first: true)
         await lookup.whenIdle()
-        XCTAssertEqual(recorder.keys, ["4.00000,4.00000", "1.00000,1.00000", "2.00000,2.00000"])
+        XCTAssertEqual(recorder.keys, [text(4, 4), text(1, 1), text(2, 2)])
+    }
+
+    @MainActor
+    func testPhotosPassedInTheGalleryArentSentLater() async {
+        let (lookup, _, recorder) = lookup([:])
+        lookup.want(key(1, 1), first: true)
+        lookup.want(key(2, 2), first: true)
+        lookup.want(key(3, 3), first: true)
+        await lookup.whenIdle()
+        XCTAssertEqual(recorder.keys, [text(3, 3)])
+
+        // Moving to a photo without coordinates drops the one before too.
+        lookup.want(key(4, 4), first: true)
+        lookup.want(nil, first: true)
+        await lookup.whenIdle()
+        XCTAssertEqual(recorder.keys, [text(3, 3)])
     }
 
     @MainActor
     func testChangingFolderDropsWhatsWaiting() async {
         let (lookup, _, recorder) = lookup([:])
-        lookup.want(key(1, 1))
+        lookup.want(key(1, 1), first: true)
         lookup.want(key(2, 2))
         lookup.clear()
         lookup.want(key(5, 5))
         await lookup.whenIdle()
-        XCTAssertEqual(recorder.keys, ["5.00000,5.00000"])
+        XCTAssertEqual(recorder.keys, [text(5, 5)])
     }
 
     @MainActor
-    func testAFailureWaitsLongerAndIsntAskedAgainThisSession() async {
-        let (lookup, cache, recorder) = lookup(["2.00000,2.00000": "Two"], fails: ["1.00000,1.00000"])
-        lookup.want(key(1, 1))
-        lookup.want(key(2, 2))
-        await lookup.whenIdle()
-        XCTAssertEqual(recorder.waits, [PlaceNameLookup.defaultFailurePause, PlaceNameLookup.defaultGap])
-        XCTAssertNil(cache.name(for: key(1, 1)), "not remembered, so it's tried another time")
-        lookup.want(key(1, 1))
-        await lookup.whenIdle()
-        XCTAssertEqual(recorder.keys, ["1.00000,1.00000", "2.00000,2.00000"])
-    }
-
-    @MainActor
-    func testOnlyAScreenfulWaits() {
+    func testOnlyTheLatestRowsWaitAndThePhotoYoureOnIsNeverDropped() {
         let (lookup, _, _) = lookup([:])
-        lookup.isAllowed = { true }
+        lookup.want(key(89, 89), first: true)
         for index in 0..<(PlaceNameLookup.maxPending + 20) { lookup.want(key(Double(index) / 10, 0)) }
-        XCTAssertEqual(lookup.pending.count, PlaceNameLookup.maxPending)
+        XCTAssertEqual(lookup.pending.count, PlaceNameLookup.maxPending + 1)
+        XCTAssertEqual(lookup.pending.first, key(89, 89))
         XCTAssertEqual(lookup.pending.last, key(Double(PlaceNameLookup.maxPending + 19) / 10, 0), "the latest are kept")
+        XCTAssertEqual(lookup.pending[1], key(2, 0), "the oldest are dropped")
     }
 }
 
@@ -295,13 +358,26 @@ final class Flag: @unchecked Sendable {
     }
 }
 
-/// What a stand-in geocoder was asked, and the waits between.
+/// What a stand-in geocoder was asked, and the waits between, which move its clock.
 final class Recorder: @unchecked Sendable {
     private let lock = NSLock()
     private var askedKeys: [String] = []
     private var waitsSeen: [Duration] = []
+    private var time = ContinuousClock.now
     var keys: [String] { lock.withLock { askedKeys } }
     var waits: [Duration] { lock.withLock { waitsSeen } }
-    func asked(_ key: String) { lock.withLock { askedKeys.append(key) } }
-    func waited(_ duration: Duration) { lock.withLock { waitsSeen.append(duration) } }
+    var now: ContinuousClock.Instant { lock.withLock { time } }
+    /// How many times this key has been asked, this one included.
+    @discardableResult func asked(_ key: String) -> Int {
+        lock.withLock {
+            askedKeys.append(key)
+            return askedKeys.filter { $0 == key }.count
+        }
+    }
+    func waited(_ duration: Duration) {
+        lock.withLock {
+            waitsSeen.append(duration)
+            time += duration
+        }
+    }
 }

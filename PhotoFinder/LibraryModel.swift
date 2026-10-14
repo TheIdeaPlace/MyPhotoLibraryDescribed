@@ -79,6 +79,8 @@ final class LibraryModel {
     /// The list's sort, remembered between launches as a column and a direction, as Windows does (#46).
     var sortOrder: [KeyPathComparator<FileRow>] {
         didSet {
+            // Sorting by Place Taken sorts by the names shown, so they're filled in first.
+            fillPlaceNames()
             rows = ColumnOrder.sorted(rows, by: sortOrder)
             ColumnOrder.saveSort(sortOrder, to: defaults)
         }
@@ -306,7 +308,10 @@ final class LibraryModel {
         // Descriptions are saved a couple of seconds after each change; don't lose one made just before quitting.
         let cache = descriptions
         terminationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in cache.save() }
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [placeNames] _ in
+            cache.save()
+            placeNames.flush()
+        }
         // Back from another app: the photo you're on is described if you left during the pause.
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -328,8 +333,9 @@ final class LibraryModel {
         }
         // A place's name found: the list and gallery show it, without a word, wherever focus is.
         placeNameObserver = NotificationCenter.default.addObserver(
-            forName: PlaceNameCache.didChange, object: placeNames, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.fillPlaceNames() }
+            forName: PlaceNameCache.didChange, object: placeNames, queue: .main) { [weak self] note in
+            let key = note.userInfo?[PlaceNameCache.keyInfo] as? PlaceKey
+            MainActor.assumeIsolated { if let key { self?.fillPlaceName(for: key) } }
         }
         placeLookup.isAllowed = { [weak self] in self?.placeNamesShowing ?? false }
     }
@@ -966,7 +972,7 @@ final class LibraryModel {
             guard generation == self.loadGeneration else { return }
             Self.log.info("Loaded \(built.value.rows.count) items for \(item.title, privacy: .public) in \(Date().timeIntervalSince(started), format: .fixed(precision: 2))s; \(built.value.needingDetails.count) need details")
             self.assetsByID = built.value.assets
-            self.rows = ColumnOrder.sorted(built.value.rows, by: self.sortOrder)
+            self.rows = ColumnOrder.sorted(self.withPlaceNames(built.value.rows), by: self.sortOrder)
             self.isLoading = false
             self.finishLoad(previousSelection: previousSelection, item: item,
                             slow: Date().timeIntervalSince(started) > 1)
@@ -1048,7 +1054,7 @@ final class LibraryModel {
             guard generation == self.loadGeneration else { return }
             self.filesByID = Dictionary(files.map { (FolderID.file($0.path), $0) }, uniquingKeysWith: { first, _ in first })
             let fileRows = files.map { FileRow(file: $0, metadata: self.fileMetadata[$0.descriptionKey]) }
-            self.rows = ColumnOrder.sorted((containers + fileRows), by: self.sortOrder)
+            self.rows = ColumnOrder.sorted(self.withPlaceNames(containers + fileRows), by: self.sortOrder)
             self.isLoading = false
             self.finishLoad(previousSelection: previousSelection, item: item, slow: Date().timeIntervalSince(started) > 1)
             if self.viewMode == .gallery { self.ensureGallerySelection() }
@@ -1714,7 +1720,7 @@ final class LibraryModel {
         lookUpPlaceNames = on
         defaults.set(on, forKey: PlaceNames.key)
         placeNamesShownChanged()
-        announce(on ? "Get Info looks up place names" : "Place names aren't looked up")
+        announce(on ? "Place names are looked up for Get Info and Place Taken" : "Place names aren't looked up")
     }
 
     /// Photo > Use Description as Caption: each selected photo's saved description becomes its caption. Asks before
@@ -2281,25 +2287,40 @@ final class LibraryModel {
         lookUpPlaceNames && (viewMode == .list ? columnOrder.contains("location") : galleryLabels.contains(.location))
     }
 
-    /// Copies known place names into the rows, or clears them when they aren't shown, and re-sorts if Place Taken is
-    /// the sort.
+    /// Copies known place names into the rows in place, or clears them when they aren't shown. Never re-sorts: rows
+    /// mustn't move under the VoiceOver cursor as names arrive. Sorting, loading a folder and Refresh sort by them.
     private func fillPlaceNames() {
+        guard showsPlaceNames || rowsHavePlaceNames else { return }
+        let filled = withPlaceNames(rows)
+        rowsHavePlaceNames = showsPlaceNames
+        guard filled != rows else { return }
+        fillingRows = true
+        defer { fillingRows = false }
+        rows = filled
+    }
+
+    /// Rows with the names known for them while they're shown, and none otherwise.
+    private func withPlaceNames(_ rows: [FileRow]) -> [FileRow] {
         let shows = showsPlaceNames
-        guard shows || rowsHavePlaceNames else { return }
         let known = shows ? placeNames.snapshot() : [:]
-        if known.isEmpty, !rowsHavePlaceNames { return }
+        guard !known.isEmpty || rows.contains(where: { !$0.placeName.isEmpty }) else { return rows }
+        return rows.map { row in
+            let name = row.placeKey.flatMap { known[$0] } ?? ""
+            return row.placeName == name ? row : row.withPlaceName(name)
+        }
+    }
+
+    /// One spot's name was found: the rows taken there show it, where they are.
+    private func fillPlaceName(for key: PlaceKey) {
+        guard showsPlaceNames, let name = placeNames.name(for: key), !name.isEmpty else { return }
         var filled = rows
         var changed = false
-        for index in filled.indices {
-            let name = filled[index].placeKey.flatMap { known[$0] } ?? ""
-            if filled[index].placeName != name {
-                filled[index] = filled[index].withPlaceName(name)
-                changed = true
-            }
+        for index in filled.indices where filled[index].placeKey == key && filled[index].placeName != name {
+            filled[index] = filled[index].withPlaceName(name)
+            changed = true
         }
-        rowsHavePlaceNames = shows
         guard changed else { return }
-        if sortColumnID == "location" { filled = ColumnOrder.sorted(filled, by: sortOrder) }
+        rowsHavePlaceNames = true
         fillingRows = true
         defer { fillingRows = false }
         rows = filled
@@ -2314,10 +2335,12 @@ final class LibraryModel {
     }
 
     /// The photo you're on goes ahead of the rest.
+    /// The photo you're on goes ahead of the rest, in place of the one you left, so photos passed in the gallery
+    /// aren't sent later.
     private func wantCurrentPlaceName() {
-        guard placeNamesShowing, selection.count == 1, let id = selection.first,
-              let row = rows.first(where: { $0.id == id }) else { return }
-        placeLookup.want(row.placeKey, first: true)
+        guard placeNamesShowing else { return placeLookup.want(nil, first: true) }
+        let row = selection.count == 1 ? selection.first.flatMap { id in rows.first { $0.id == id } } : nil
+        placeLookup.want(row?.placeKey, first: true)
     }
 
     /// A row's Place Taken cell came into view, or Look Up Place Names was turned on while it was: its name is looked

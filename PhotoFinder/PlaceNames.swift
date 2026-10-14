@@ -27,6 +27,18 @@ enum PlaceNames {
         "To name the place a photo was taken, \(AppInfo.name) sends the photo's coordinates (its latitude and longitude, nothing else) to Apple's location service when you open Get Info, and for the photos showing when Place Taken is a list column or a gallery label. Names found are kept on your Mac, so a place is sent once. Nothing is sent until you turn this on, and you can turn it off at any time in Settings."
     }
 
+    /// Whether a lookup's error means Apple is busy or out of reach, so the spot is asked again later, rather than
+    /// something about the spot itself.
+    static func isTransient(_ error: Error) -> Bool {
+        if error is CancellationError || error is URLError { return true }
+        if let error = error as? MKError {
+            return [.loadingThrottled, .serverFailure, .unknown].contains(error.code)
+        }
+        if let error = error as? CLError { return error.code == .network }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain
+    }
+
     /// Asks Apple for the place's name: nil when the place has none (the open sea), and an error when it couldn't be
     /// asked (offline, or too many lookups), so that isn't remembered. MapKit's MKReverseGeocodingRequest from macOS 26
     /// (#115), CLGeocoder (deprecated in 26) before that. Both ask the same Apple service.
@@ -110,6 +122,8 @@ struct PlaceKey: Hashable, Sendable {
 final class PlaceNameCache: @unchecked Sendable {
     /// Posted (on the main queue) when a place's name is found, so what's showing can say it.
     static let didChange = Notification.Name("PlaceNameCacheDidChange")
+    /// In didChange's userInfo: the PlaceKey whose name was found.
+    static let keyInfo = "key"
 
     /// The app's, shared by Get Info and the list, in the data folder.
     static let shared = PlaceNameCache()
@@ -123,6 +137,9 @@ final class PlaceNameCache: @unchecked Sendable {
     private let fileURL: URL
     private let lock = NSLock()
     private var loaded: [PlaceKey: String]?
+    /// Writes the file, one write at a time, each with everything known then, so none overwrites a later one.
+    private let writer = DispatchQueue(label: "net.theideaplace.PhotoFinder.placeNames", qos: .utility)
+    private var saveScheduled = false
 
     init(fileURL: URL = PlaceNameCache.defaultURL) {
         self.fileURL = fileURL
@@ -142,23 +159,40 @@ final class PlaceNameCache: @unchecked Sendable {
         return entries[key]
     }
 
-    /// Keeps a spot's name (nil or empty for none) and writes the file. One at a time, a second or more apart, so
-    /// it's written each time rather than later.
+    /// Keeps a spot's name (nil or empty for none). The file is written a couple of seconds later, with whatever else
+    /// was found meanwhile, and when the app quits.
     func remember(_ name: String?, for key: PlaceKey) {
         let name = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         lock.lock()
         entries[key] = name
+        let schedule = !saveScheduled
+        saveScheduled = true
+        lock.unlock()
+        if schedule {
+            writer.asyncAfter(deadline: .now() + 2) { [self] in write() }
+        }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.didChange, object: self, userInfo: [Self.keyInfo: key])
+        }
+    }
+
+    /// Writes what's waiting now, as the app quits (and in tests).
+    func flush() {
+        writer.sync { write() }
+    }
+
+    /// On the writer's queue only.
+    private func write() {
+        lock.lock()
+        guard saveScheduled else { lock.unlock(); return }
+        saveScheduled = false
         let snapshot = Dictionary(entries.map { ($0.key.text, $0.value) }, uniquingKeysWith: { first, _ in first })
         lock.unlock()
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
-        if let data = try? encoder.encode(snapshot) {
-            try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: fileURL, options: .atomic)
-        }
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: Self.didChange, object: self)
-        }
+        guard let data = try? encoder.encode(snapshot) else { return }
+        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: fileURL, options: .atomic)
     }
 
     /// Get Info's lookup: the name already known, or asked for now and kept. Nil when there's none or it couldn't

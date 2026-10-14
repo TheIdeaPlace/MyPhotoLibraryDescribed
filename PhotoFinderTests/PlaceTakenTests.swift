@@ -13,7 +13,8 @@ final class PlaceTakenTests: XCTestCase {
     private let sea = (latitude: 10.0, longitude: -140.0)
 
     private func makeLibrary(lookUp: Bool, columns: [String] = ["name", "location"], gallery: [String]? = nil,
-                             viewMode: String = "list") async throws -> (TestLibrary, Recorder) {
+                             viewMode: String = "list", seattleName: String = "Pike Place Market, Seattle, WA, United States",
+                             sortColumn: String = "name") async throws -> (TestLibrary, Recorder) {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("PlaceTakenTests-\(UUID().uuidString)")
         let photos = base.appendingPathComponent("Photos", isDirectory: true)
         try FileManager.default.createDirectory(at: photos, withIntermediateDirectories: true)
@@ -24,7 +25,7 @@ final class PlaceTakenTests: XCTestCase {
         let suite = "PlaceTakenTests"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
-        defaults.set("name", forKey: ColumnOrder.sortColumnKey)
+        defaults.set(sortColumn, forKey: ColumnOrder.sortColumnKey)
         defaults.set(false, forKey: ColumnOrder.sortDescendingKey)
         defaults.set(lookUp, forKey: PlaceNames.key)
         defaults.set(columns, forKey: "columnOrder")
@@ -42,9 +43,12 @@ final class PlaceTakenTests: XCTestCase {
                                   geocodePlace: { latitude, longitude in
             let key = PlaceKey(latitude: latitude, longitude: longitude)!.text
             recorder.asked(key)
-            return key == "47.60970,-122.34220" ? "Pike Place Market, Seattle, WA, United States" : nil
+            return key == "47.60970,-122.34220" ? seattleName : nil
         })
         let model = library.model
+        // Written now, before the folder is removed (teardown runs last first), not into it again two seconds later.
+        let placeNames = model.placeNames
+        addTeardownBlock { placeNames.flush() }
         model.placeLookup.sleep = { recorder.waited($0) }
         model.addFolders([root])
         try await waitUntil("the folder in the sidebar") { model.itemsByID[FolderID.folder(root)] != nil }
@@ -121,6 +125,32 @@ final class PlaceTakenTests: XCTestCase {
         await model.placeLookup.whenIdle()
         XCTAssertEqual(recorder.keys, [], "the gallery's labels don't include Place Taken")
         model.galleryLabels = [.position, .location]
+        await model.placeLookup.whenIdle()
+        XCTAssertEqual(recorder.keys, ["47.60970,-122.34220"])
+    }
+
+    func testRowsDontMoveWhenANameArrivesOnlyWhenSorted() async throws {
+        // Sorted by Place Taken; the name found for Seattle sorts ahead of the sea's coordinates.
+        let (library, _) = try await makeLibrary(lookUp: true, seattleName: "01 Pike Street, Seattle", sortColumn: "location")
+        let model = library.model
+        XCTAssertEqual(model.rows.map(\.name), ["nowhere.jpg", "sea.jpg", "seattle.jpg"])
+        model.selection = [row(library, "seattle.jpg").id]
+        try await waitUntil("the name in the column") {
+            library.model.rows.first { $0.name == "seattle.jpg" }?.placeName == "01 Pike Street, Seattle"
+        }
+        XCTAssertEqual(model.rows.map(\.name), ["nowhere.jpg", "sea.jpg", "seattle.jpg"], "nothing moves under VoiceOver")
+
+        // Sorting again (the column's header, or Sort By) sorts by the name.
+        model.sortOrder = model.sortOrder
+        XCTAssertEqual(model.rows.map(\.name), ["nowhere.jpg", "seattle.jpg", "sea.jpg"])
+    }
+
+    func testPhotosPassedInTheGalleryArentLookedUp() async throws {
+        let (library, recorder) = try await makeLibrary(lookUp: true, gallery: ["position", "location"], viewMode: "gallery")
+        let model = library.model
+        model.selection = [row(library, "sea.jpg").id]
+        model.selection = [row(library, "nowhere.jpg").id]
+        model.selection = [row(library, "seattle.jpg").id]
         await model.placeLookup.whenIdle()
         XCTAssertEqual(recorder.keys, ["47.60970,-122.34220"])
     }
