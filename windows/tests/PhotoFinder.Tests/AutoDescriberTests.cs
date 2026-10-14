@@ -907,7 +907,7 @@ public sealed class AutoDescriberTests : IDisposable
     {
         var aheadFails = true;
         var (model, auto, _) = await StartAsync(describe: item => Task.FromResult($"A picture called {item.Name}."),
-            describeAhead: (item, kind, _) => aheadFails ? throw new DescriptionException("content_filter", "Windows declined to describe this photo.") : Task.FromResult(""));
+            describeAhead: (item, kind, _) => aheadFails ? throw new DescriptionException("content_filter", "Windows declined to describe this photo.") : Task.FromResult<Described>(""));
         using (model) using (auto)
         {
             var o = PhotoOrder(model);

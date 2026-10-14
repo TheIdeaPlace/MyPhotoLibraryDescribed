@@ -273,11 +273,11 @@ public partial class InfoWindow : Window
             AIStatus.Text = again ? "Redescribing…" : "Describing…";
             Announcer.Announce(again ? "Redescribing" : "Describing");
             var path = _item.Path;
-            var (text, took) = await DescriptionProvenance.TimedAsync(() => App.WindowsAI.DescribeAsync(async size =>
+            var (text, took) = await App.WindowsAI.DescribeTimedAsync(async size =>
             {
                 using var bitmap = await ImageDecoding.DecodeAsync(path, size);
                 return await ImageDecoding.ToJpegAsync(bitmap);
-            }, kind, _closing.Token));
+            }, kind, _closing.Token);
             AIStatus.Visibility = Visibility.Collapsed;
             DescriptionLabel.Visibility = Visibility.Visible;
             DescriptionBox.Visibility = Visibility.Visible;

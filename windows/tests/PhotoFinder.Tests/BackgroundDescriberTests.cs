@@ -795,7 +795,7 @@ public sealed class BackgroundDescriberTests : IDisposable
             () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1)) { Descriptions = store };
         await model.StartAsync();
         var release = new TaskCompletionSource<AIReadiness>();
-        using var background = new BackgroundDescriber(model, store, (item, _, _) => { _described.Add(item.Name); return Task.FromResult("x"); },
+        using var background = new BackgroundDescriber(model, store, (item, _, _) => { _described.Add(item.Name); return Task.FromResult<Described>("x"); },
             _ => Task.FromResult(new AIReadiness(true, "NotReady", null)), _ => { prepared++; return release.Task; });
         background.ResumeRetries = [TimeSpan.FromMilliseconds(10)];
         background.Resume();

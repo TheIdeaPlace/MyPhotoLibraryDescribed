@@ -172,9 +172,15 @@ public sealed class WindowsAI : IDisposable
     /// and a model reload, which costs more than letting it finish.</summary>
     /// <param name="retry">False sends it once: for a picture that's the same at every size (Check AI Description's
     /// sample).</param>
-    public Task<string> DescribeAsync(Func<uint, Task<byte[]>> jpegAtSize, string kind, CancellationToken cancel = default,
+    public async Task<string> DescribeAsync(Func<uint, Task<byte[]>> jpegAtSize, string kind, CancellationToken cancel = default,
         CancellationToken drop = default, bool retry = true) =>
-        CountedAsync(DescribeStats.Session, () => WithRetriesAsync(jpegAtSize, jpeg => DescribeOnceAsync(jpeg, kind, cancel, drop), retry),
+        (await DescribeTimedAsync(jpegAtSize, kind, cancel, drop, retry)).Text;
+
+    /// <summary><see cref="DescribeAsync"/>, with how long Windows took over the attempt that worked (not the wait for the
+    /// helper), as saved with the description (#199).</summary>
+    public Task<Described> DescribeTimedAsync(Func<uint, Task<byte[]>> jpegAtSize, string kind, CancellationToken cancel = default,
+        CancellationToken drop = default, bool retry = true) =>
+        CountedTimedAsync(DescribeStats.Session, () => WithRetriesAsync(jpegAtSize, jpeg => DescribeOnceAsync(jpeg, kind, cancel, drop), retry),
             cancel, drop);
 
     /// <summary>A photo was described, by anything: background describing waiting for Windows AI starts on it.</summary>
@@ -183,12 +189,17 @@ public sealed class WindowsAI : IDisposable
     /// <summary>One photo's outcome, counted once for Check System however many sizes were tried: how long the attempt
     /// that worked took (not the wait for the helper), or the last failure.</summary>
     internal static async Task<string> CountedAsync(DescribeStats stats, Func<Task<(string Text, TimeSpan Took)>> describe,
+        CancellationToken cancel, CancellationToken drop) =>
+        (await CountedTimedAsync(stats, describe, cancel, drop)).Text;
+
+    private static async Task<Described> CountedTimedAsync(DescribeStats stats, Func<Task<(string Text, TimeSpan Took)>> describe,
         CancellationToken cancel, CancellationToken drop)
     {
         string text;
+        TimeSpan took;
         try
         {
-            (text, var took) = await describe();
+            (text, took) = await describe();
             stats.Described(took);
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested || drop.IsCancellationRequested)
@@ -206,7 +217,7 @@ public sealed class WindowsAI : IDisposable
         // After the description is counted, and outside it: whoever's listening can't make it a failure.
         try { DescribedOne?.Invoke(); }
         catch (Exception ex) { Log.Error("describe", "A listener for finished descriptions failed", ex); }
-        return text;
+        return new(text, took);
     }
 
     /// <summary>Tries the first size, then smaller ones while the model reports an internal error.

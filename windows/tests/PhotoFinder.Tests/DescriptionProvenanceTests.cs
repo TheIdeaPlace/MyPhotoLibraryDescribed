@@ -194,15 +194,50 @@ public sealed class DescriptionProvenanceTests : IDisposable
         Assert.False(read.IsEdited);
     }
 
-    [Fact]
-    public void ADamagedFile_StartsOver()
+    private string[] SetAside() => Directory.GetFiles(_lib.PathOf("data"), "Descriptions.unreadable-*.json");
+
+    [Theory]
+    [InlineData("{\"version\": 2, \"descriptions\": ")]
+    [InlineData("[\"not\", \"an\", \"object\"]")]
+    public void AFileThatCantBeRead_IsMovedAside_NotWrittenOver(string damaged)
     {
         Directory.CreateDirectory(_lib.PathOf("data"));
-        File.WriteAllText(File_, "{\"version\": 2, \"descriptions\": ");
+        File.WriteAllText(File_, damaged);
         var store = new DescriptionStore(File_);
         Assert.Null(store.Get(Item, "accessible"));
+        Assert.Equal(damaged, File.ReadAllText(Assert.Single(SetAside())));
+        // Saving starts a new file; the old one stays where it was put.
         store.Put(Item, "accessible", "A cat.");
-        Assert.Equal("A cat.", store.Get(Item, "accessible"));
+        Assert.Equal("A cat.", Saved(store)["descriptions"]![KeyOf(Item, "accessible")]!["text"]!.GetValue<string>());
+        Assert.Equal(damaged, File.ReadAllText(Assert.Single(SetAside())));
+    }
+
+    [Fact]
+    public void ARecordThatCantBeRead_IsSkipped_TheOthersKept_AndTheFileKeptAside()
+    {
+        Directory.CreateDirectory(_lib.PathOf("data"));
+        var good = KeyOf(Item, "accessible");
+        var mixed = KeyOf(Item, "brief");
+        var bad = KeyOf(Item, "detailed");
+        var file = new JsonObject
+        {
+            ["version"] = 3,
+            ["descriptions"] = new JsonObject
+            {
+                [good] = new JsonObject { ["text"] = "A dog.", ["source"] = "windows-ai", ["durationMs"] = 3120 },
+                [mixed] = "A plain one.",
+                [bad] = new JsonObject { ["text"] = "Odd.", ["durationMs"] = 3.5 },
+                ["empty"] = new JsonObject { ["text"] = "" },
+                ["number"] = 12,
+            },
+        };
+        File.WriteAllText(File_, file.ToJsonString());
+        var store = new DescriptionStore(File_);
+        Assert.Equal("A dog.", store.Get(Item, "accessible"));
+        Assert.Equal("A plain one.", store.Get(Item, "brief"));
+        Assert.Null(store.Get(Item, "detailed"));
+        Assert.Equal(file.ToJsonString(), File.ReadAllText(Assert.Single(SetAside())));
+        Assert.True(File.Exists(File_));
     }
 
     [WpfFact]
@@ -216,7 +251,7 @@ public sealed class DescriptionProvenanceTests : IDisposable
         await model.DetailFillTask;
         var ready = new AIReadiness(true, "Ready", null);
         var auto = new AutoDescriber(model, store,
-            async (item, _, _) => { await Task.Delay(40); return $"A picture called {item.Name}."; },
+            async (item, _, _) => { await Task.Delay(10); return new Described($"A picture called {item.Name}.", TimeSpan.FromMilliseconds(1234.4)); },
             _ => Task.FromResult(ready), _ => Task.FromResult(ready), TimeSpan.FromMilliseconds(30));
         using (model) using (auto)
         {
@@ -225,7 +260,8 @@ public sealed class DescriptionProvenanceTests : IDisposable
             var record = store.Record(model.FocusedRow!.Item!, "accessible")!;
             Assert.Equal("windows-ai", record.Source);
             Assert.Equal("accessible", record.Prompt);
-            Assert.InRange(record.DurationMs!.Value, 30, 10_000);
+            // Windows' own time for the describing, not the wait around it.
+            Assert.Equal(1234, record.DurationMs);
 
             // Describe Photo on it again reads the saved one: the record isn't remade.
             _now = _now.AddDays(1);

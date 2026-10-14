@@ -27,7 +27,7 @@ public sealed class DescriptionStore
 
     public static string DefaultPath => Path.Combine(AppPaths.DataFolder, "Descriptions.json");
 
-    private Dictionary<string, DescriptionRecord> Entries => _loaded ??= Load(_filePath, EditedPath);
+    private Dictionary<string, DescriptionRecord> Entries => _loaded ??= Load();
 
     private static string Key(MediaItem item, string kind) =>
         $"{item.Path.ToUpperInvariant()}|{item.Size}|{item.Modified.ToUniversalTime().Ticks}|{kind}";
@@ -57,13 +57,14 @@ public sealed class DescriptionStore
     /// description read back from here) keeps the record as it was.</param>
     public void Put(MediaItem item, string kind, string text, bool edited = false, TimeSpan? took = null)
     {
+        // Made before the lock: what it reads about this PC may still be being read at startup.
+        var made = DescriptionProvenance.Made(text, kind, took);
         lock (_lock)
         {
             var key = Key(item, kind);
             Entries.TryGetValue(key, out var before);
-            if (edited) Entries[key] = DescriptionProvenance.Corrected(before, text);
-            else if (took is not null || before is null || before.Text != text || before.IsEdited)
-                Entries[key] = DescriptionProvenance.Made(text, kind, took);
+            if (edited) Entries[key] = DescriptionProvenance.Corrected(before, made);
+            else if (took is not null || before is null || before.Text != text || before.IsEdited) Entries[key] = made;
         }
         ScheduleSave();
         Saved?.Invoke(item, kind, text);
@@ -132,7 +133,13 @@ public sealed class DescriptionStore
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        // Descriptions in any language are written as they read, not escaped: the file is the app's own, never in a page.
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
+
+    /// <summary>The file couldn't be read and couldn't be moved aside either: it's never written over, so nothing in it is
+    /// lost, and descriptions made meanwhile are kept only until the app quits.</summary>
+    private bool _keepFile;
 
     private sealed record FileContents(int Version, Dictionary<string, DescriptionRecord> Descriptions);
 
@@ -142,6 +149,7 @@ public sealed class DescriptionStore
         {
             Dictionary<string, DescriptionRecord> snapshot;
             lock (_lock) snapshot = new Dictionary<string, DescriptionRecord>(Entries);
+            if (_keepFile) return;
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
@@ -157,32 +165,90 @@ public sealed class DescriptionStore
         }
     }
 
-    private static Dictionary<string, DescriptionRecord> Load(string path, string editedPath)
+    /// <summary>The saved descriptions. A record that can't be read is skipped, not the file; a file that can't be read
+    /// at all is moved aside (Descriptions.unreadable-<i>date</i>.json, as on the Mac), and either way the file as it was is
+    /// kept, so saving never loses what was in it. A file that can't be opened is left alone and never written.</summary>
+    private Dictionary<string, DescriptionRecord> Load()
+    {
+        string json;
+        try
+        {
+            if (!File.Exists(_filePath)) return [];
+            json = File.ReadAllText(_filePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Error("descriptions", "The saved descriptions couldn't be opened, so they're left as they are", ex);
+            _keepFile = true;
+            return [];
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) throw new JsonException("Not an object.");
+            var loaded = new Dictionary<string, DescriptionRecord>();
+            var skipped = 0;
+            var v2 = root.TryGetProperty("descriptions", out var records) && records.ValueKind == JsonValueKind.Object;
+            // The first format, from before 0.2.0, was {key: text}: its details aren't known, only which were corrections.
+            var edited = v2 ? null : LoadEdited(EditedPath);
+            foreach (var p in (v2 ? records : root).EnumerateObject())
+            {
+                var record = Read(p.Value);
+                if (record is null) { skipped++; continue; }
+                if (edited?.Contains(p.Name) == true) record = record with { Source = DescriptionProvenance.Person };
+                loaded[p.Name] = record;
+            }
+            if (skipped > 0)
+            {
+                Log.Write("descriptions", $"{skipped} saved description(s) couldn't be read and were skipped");
+                SetAside(copy: true);
+            }
+            return loaded;
+        }
+        catch (JsonException ex)
+        {
+            Log.Error("descriptions", "The saved descriptions couldn't be read", ex);
+            SetAside(copy: false);
+            return [];
+        }
+    }
+
+    /// <summary>One record, or a plain string (the first format's); null when it's neither, or has no text.</summary>
+    private static DescriptionRecord? Read(JsonElement value)
     {
         try
         {
-            if (!File.Exists(path)) return [];
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object) return [];
-            if (root.TryGetProperty("descriptions", out var records) && records.ValueKind == JsonValueKind.Object)
-                return records.Deserialize<Dictionary<string, DescriptionRecord>>(Json)?
-                    .Where(e => e.Value is { Text.Length: > 0 }).ToDictionary() ?? [];
-            // The first format, from before 0.2.0: its details aren't known, only which were corrections.
-            var edited = LoadEdited(editedPath);
-            return root.EnumerateObject()
-                .Where(p => p.Value.ValueKind == JsonValueKind.String)
-                .ToDictionary(p => p.Name, p => new DescriptionRecord
-                {
-                    Text = p.Value.GetString()!,
-                    Source = edited.Contains(p.Name) ? DescriptionProvenance.Person : null,
-                });
+            var record = value.ValueKind switch
+            {
+                JsonValueKind.String => new DescriptionRecord { Text = value.GetString()! },
+                JsonValueKind.Object => value.Deserialize<DescriptionRecord>(Json),
+                _ => null,
+            };
+            return record is { Text.Length: > 0 } ? record : null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
         {
-            // A damaged file starts over.
+            return null;
         }
-        return [];
+    }
+
+    /// <summary>Keeps the file as it was beside it, before anything is saved over it. If that fails, nothing is saved.</summary>
+    private void SetAside(bool copy)
+    {
+        var aside = Path.Combine(Path.GetDirectoryName(_filePath)!,
+            $"{Path.GetFileNameWithoutExtension(_filePath)}.unreadable-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+        try
+        {
+            if (copy) File.Copy(_filePath, aside, overwrite: true);
+            else File.Move(_filePath, aside, overwrite: true);
+            Log.Write("descriptions", $"The saved descriptions were kept as {Path.GetFileName(aside)}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Error("descriptions", "The saved descriptions couldn't be kept aside, so they're left as they are", ex);
+            _keepFile = true;
+        }
     }
 
     private static HashSet<string> LoadEdited(string path)

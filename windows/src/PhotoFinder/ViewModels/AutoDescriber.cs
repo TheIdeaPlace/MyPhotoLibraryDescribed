@@ -25,7 +25,7 @@ namespace PhotoFinder.ViewModels;
 /// </summary>
 public sealed class AutoDescriber : IDisposable
 {
-    public delegate Task<string> DescribeFunc(MediaItem item, string kind, CancellationToken cancel);
+    public delegate Task<Described> DescribeFunc(MediaItem item, string kind, CancellationToken cancel);
 
     private readonly LibraryModel _model;
     private readonly DescriptionStore _store;
@@ -248,7 +248,7 @@ public sealed class AutoDescriber : IDisposable
             TimeSpan? took = null;
             if (text is null)
             {
-                (text, var made) = await DescriptionProvenance.TimedAsync(() => _describe(item, kind, _closing.Token));
+                (text, var made) = await _describe(item, kind, _closing.Token);
                 took = made;
             }
             if (text.Length == 0)
@@ -399,7 +399,7 @@ public sealed class AutoDescriber : IDisposable
                         if (ahead is not null) text = ahead;
                         else if (_target == path && CanSpeak())
                         {
-                            (text, var made) = await DescriptionProvenance.TimedAsync(() => _describe(item, kind, _closing.Token));
+                            (text, var made) = await _describe(item, kind, _closing.Token);
                             took = made;
                         }
                         else text = "";
@@ -506,7 +506,7 @@ public sealed class AutoDescriber : IDisposable
                 _aheadNotReady = true;
                 return;
             }
-            var (text, took) = await DescriptionProvenance.TimedAsync(() => _describeAhead(item, kind, cancel.Token));
+            var (text, took) = await _describeAhead(item, kind, cancel.Token);
             // Saved, not spoken (the store puts it on its row); a correction or Redescribe meanwhile is newer.
             if (text.Length > 0 && !_againPaths.ContainsKey(item.Path)) _store.PutUnlessEdited(item, kind, text, took);
         }

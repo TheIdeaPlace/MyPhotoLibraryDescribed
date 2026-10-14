@@ -20,8 +20,9 @@ public sealed record DescriptionRecord
     /// <summary>On Windows, the Description Type asked for ("accessible", "brief"…); on the Mac, the prompt's text.</summary>
     public string? Prompt { get; init; }
 
-    /// <summary>The model that described it, as far as Windows says: the image description model and the version of
-    /// Windows' AI components it ships in.</summary>
+    /// <summary>The model that described it, as far as Windows says. Windows names no model and lists no package for it,
+    /// so this is "Windows AI image description" and the version of Windows' AI components (MicrosoftWindows.Client.CoreAI),
+    /// which follows Windows' own build.</summary>
     public string? Model { get; init; }
 
     /// <summary>The language the app was in when it was described ("en-US").</summary>
@@ -49,6 +50,13 @@ public sealed record DescriptionRecord
     public bool IsEdited => Source == DescriptionProvenance.Person;
 }
 
+/// <summary>A description Windows made, and how long it took over it (not the wait for the helper), when that's known.
+/// A plain string converts to one, so stand-ins in tests can return text.</summary>
+public readonly record struct Described(string Text, TimeSpan? Took)
+{
+    public static implicit operator Described(string text) => new(text, null);
+}
+
 /// <summary>What's recorded about this PC and app with each description. Each is read once; the model's details come
 /// from Windows' package list, which is slow, so <see cref="Warm"/> reads them at startup, off the window's thread.</summary>
 public static class DescriptionProvenance
@@ -57,6 +65,7 @@ public static class DescriptionProvenance
     public const string Person = "person";
 
     private static readonly Lazy<string?> _os = new(SystemDetails.WindowsEdition);
+    private static readonly Lazy<string> _app = new(() => Updates.AppVersion);
     private static readonly Lazy<string?> _model = new(ReadModel);
 
     /// <summary>Stand-ins for tests; null reads this PC.</summary>
@@ -65,21 +74,13 @@ public static class DescriptionProvenance
     internal static Func<DateTime>? ClockOverride { get; set; }
 
     public static string? Os => OsOverride ?? _os.Value;
-    public static string App => Updates.AppVersion;
+    public static string App => _app.Value;
     public static string? Model => ModelOverride ?? _model.Value;
     public static string Locale => CultureInfo.CurrentUICulture.Name;
     public static DateTime Now => ClockOverride?.Invoke() ?? DateTime.UtcNow;
 
     /// <summary>ISO 8601 UTC to the second, as the Mac writes it: "2026-10-14T18:30:05Z".</summary>
     public static string Stamp(DateTime utc) => utc.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
-
-    /// <summary>A description and about how long it took to make.</summary>
-    public static async Task<(string Text, TimeSpan Took)> TimedAsync(Func<Task<string>> describe)
-    {
-        var watch = System.Diagnostics.Stopwatch.StartNew();
-        var text = await describe();
-        return (text, watch.Elapsed);
-    }
 
     public static void Warm() => Task.Run(() => { _ = _os.Value; _ = _model.Value; });
 
@@ -98,23 +99,23 @@ public static class DescriptionProvenance
     };
 
     /// <summary>The person's correction of <paramref name="before"/> (or their own description, when there was none): how
-    /// it was described and the AI's first text are kept.</summary>
-    public static DescriptionRecord Corrected(DescriptionRecord? before, string text)
+    /// it was described and the AI's first text are kept. <paramref name="now"/> is a record <see cref="Made"/> for the new
+    /// text, for this PC's details and the time.</summary>
+    public static DescriptionRecord Corrected(DescriptionRecord? before, DescriptionRecord now)
     {
-        var now = Stamp(Now);
         if (before is null)
-            return new() { Text = text, Source = Person, Os = Os, App = App, Created = now, Edited = now };
+            return new() { Text = now.Text, Source = Person, Os = now.Os, App = now.App, Created = now.Created, Edited = now.Created };
         return before with
         {
-            Text = text,
+            Text = now.Text,
             Source = Person,
-            Edited = now,
+            Edited = now.Created,
             Original = before.IsEdited ? before.Original : before.Text,
         };
     }
 
-    /// <summary>"Windows AI image description, MicrosoftWindows.Client.CoreAI 1.2.3.4": Windows names no model, and the
-    /// image description model comes with its AI components, so their version is the model's.</summary>
+    /// <summary>"Windows AI image description, MicrosoftWindows.Client.CoreAI 1000.26100.9616.0": Windows names no model
+    /// and lists no package for the image description one, so its AI components' version is the nearest thing.</summary>
     private static string? ReadModel()
     {
         const string name = "Windows AI image description";
