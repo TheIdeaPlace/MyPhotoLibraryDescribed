@@ -1,6 +1,6 @@
 # My Photo Library Described User Guide
 
-My Photo Library Described is a screen-reader-friendly photo browser for the Mac and Windows. It shows your photos the way Finder or File Explorer shows files, in a list or a gallery, and describes each photo as you move to it, using the AI built into your computer.
+My Photo Library Described is a screen-reader-friendly photo library app for the Mac and Windows. It shows your photos the way Finder or File Explorer shows files, in a list or a gallery, and describes each photo as you move to it, using the AI built into your computer.
 
 The two apps work the same wherever the platform allows. Where they differ, this guide says so. Keys are given as Mac / Windows.
 
@@ -63,7 +63,7 @@ How photos are described: on the Mac, Settings has the prompt Apple Intelligence
 
 ## The Description panel
 
-In list view, the panel starts with a picture of the photo you're on, as Finder's and File Explorer's preview panes do, for anyone looking at the screen with you; screen readers skip it, since the description says what's in it. (The gallery already shows the photo large.) It never downloads a photo that's only in iCloud or OneDrive; those show their small thumbnail, or a placeholder when there isn't one.
+In list view, the panel starts with a picture of the photo you're on, as Finder's and File Explorer's preview panes do, for anyone looking at the screen with you; screen readers skip it, since the description says what's in it. (The gallery already shows the photo large.) It never downloads a photo that's only in the cloud (iCloud, OneDrive or another cloud folder); those show their small thumbnail, or a placeholder when there isn't one.
 
 **View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Redescribe, Use as Caption and Copy, and the photo's caption with Edit Caption. **Edit > Copy Description** (Shift-Command-C / Ctrl+Shift+C) copies the description of the photo you're on, or of each photo selected, as text, from anywhere in the window; Edit > Copy copies the photos themselves. **Go > Go to Description or Back to Photos** (Shift-Command-D / Ctrl+Shift+D) goes straight to the description, showing the panel if it's hidden, and pressed again goes back to the list or gallery. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow / Alt+Right Arrow) and Previous Photo (Command-Left / Alt+Left): the photo changes, its name and position are read (in the gallery, what View > Labels… chooses), and focus stays where it is, with the box showing the new photo's description.
 

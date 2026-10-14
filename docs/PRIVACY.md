@@ -6,7 +6,7 @@ This policy covers both My Photo Library Described apps: the Mac app and the Win
 
 ## Overview
 
-My Photo Library Described is a free, open-source, screen-reader-friendly photo browser. It describes your photos on your own computer. It has no accounts, no analytics and no ads, and it doesn't collect, store or send personal information to its developers.
+My Photo Library Described is a free, open-source, screen-reader-friendly photo library app. It describes your photos on your own computer. It has no accounts, no analytics and no ads, and it doesn't collect, store or send personal information to its developers.
 
 ## Your photos stay on your computer
 
