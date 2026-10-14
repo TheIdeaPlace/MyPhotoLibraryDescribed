@@ -110,7 +110,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             _settings.ViewMode = value;
             SaveSettings();
             OnPropertyChanged();
-            if (value == ViewMode.Gallery) EnsureGallerySelection();
+            if (value == ViewMode.Gallery) SelectFirstIfNone();
         }
     }
 
@@ -121,6 +121,8 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         set
         {
             _selectedRows = value;
+            // Moving to another photo; not the moment's empty selection while the list's rows are replaced.
+            if (_startedOn is not null && value.Count > 0 && !(value.Count == 1 && value[0].Id == _startedOn)) _startedOn = null;
             UpdateFocusedRow();
             OnPropertyChanged();
             OnPropertyChanged(nameof(FocusedRow));
@@ -401,7 +403,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         _rowsByPath = _allRows.Where(r => r.Item is not null).ToDictionary(r => r.Id, StringComparer.OrdinalIgnoreCase);
         FillDescriptions(_allRows);
         ApplyView(select, focus);
-        if (ViewMode == ViewMode.Gallery) EnsureGallerySelection();
+        if (ViewMode == ViewMode.Gallery) SelectFirstIfNone();
         // Read the new list's details first.
         if (_items.Any(NeedsDetails) && _fillTask.IsCompleted) StartDetailFill();
     }
@@ -430,6 +432,8 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         var keep = select.Where(ids.Contains).ToList();
         if (keep.Count == 0 && select.Count > 0 && _fallbackIndex >= 0 && Rows.Count > 0)
             keep = [Rows[Math.Min(_fallbackIndex, Rows.Count - 1)].Id];
+        // Still on the photo the app started on, and the list re-sorted as details arrived: the first photo still.
+        if (_startedOn is not null && keep.Count == 1 && keep[0] == _startedOn && Rows.Count > 0) keep = [_startedOn = Rows[0].Id];
         SelectionRequested?.Invoke(keep, focus);
         OnStatusChanged();
     }
@@ -1130,9 +1134,23 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     public (int Index, int Count)? GalleryPosition => FocusedRow is null ? null : (FocusedIndex, Rows.Count);
 
-    public void EnsureGallerySelection()
+    /// <summary>Selects the first photo when none is: the gallery always shows one.</summary>
+    public void SelectFirstIfNone()
     {
         if (FocusedRow is null && Rows.Count > 0) SelectionRequested?.Invoke([Rows[0].Id], false);
+    }
+
+    /// <summary>The photo the app started on, until you move: kept the first one while the list re-sorts as photos'
+    /// details arrive.</summary>
+    private string? _startedOn;
+
+    /// <summary>At launch: on the first photo, selected, so you can arrow straight away (Kelly, 14 Oct, as on the Mac).
+    /// It stays the first one while the list re-sorts as details arrive, until you move.</summary>
+    public void StartOnFirst()
+    {
+        if (FocusedRow is not null || Rows.Count == 0) return;
+        _startedOn = Rows[0].Id;
+        SelectionRequested?.Invoke([_startedOn], false);
     }
 
     public void MoveSelection(int delta)
