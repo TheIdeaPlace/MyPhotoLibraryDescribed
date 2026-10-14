@@ -159,7 +159,7 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 Your photos are never touched by removing the app, and descriptions saved into photos stay in them. The app's own files are left, so reinstalling picks up where you left off; to remove them too:
 
 - **Windows:** delete the folder `%LOCALAPPDATA%\My Photo Library Described` (type it into File Explorer's address bar). It holds the descriptions, settings, place names already looked up and the log. If it isn't there, Windows kept it inside the app's package, and uninstalling removed it.
-- **Mac:** quit the app, then delete the folder `~/Library/Application Support/My Photo Library Described` (descriptions and your corrections, place names already looked up, and the log; in Finder, Go > Go to Folder reaches it). Settings and the folders you added are in macOS's preferences; to remove them, run `defaults delete net.theideaplace.PhotoFinder` in Terminal. Deleting the preferences file itself doesn't work, as macOS keeps a copy and writes it back.
+- **Mac:** quit the app, then delete the folder `~/Library/Application Support/My Photo Library Described` (descriptions and your corrections, place names already looked up, and the log; in Finder, Go > Go to Folder reaches it). Settings and the folders you added are in macOS's preferences; to remove them, run `defaults delete net.theideaplace.MyPhotoLibraryDescribed` in Terminal. Deleting the preferences file itself doesn't work, as macOS keeps a copy and writes it back.
 
 ## Privacy
 

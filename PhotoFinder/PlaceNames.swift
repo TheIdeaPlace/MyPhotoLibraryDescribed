@@ -137,7 +137,7 @@ final class PlaceNameCache: @unchecked Sendable {
     private let lock = NSLock()
     private var loaded: [PlaceKey: String]?
     /// Writes the file, one write at a time, each with everything known then, so none overwrites a later one.
-    private let writer = DispatchQueue(label: "net.theideaplace.PhotoFinder.placeNames", qos: .utility)
+    private let writer = DispatchQueue(label: "net.theideaplace.MyPhotoLibraryDescribed.placeNames", qos: .utility)
     private var saveScheduled = false
 
     init(fileURL: URL = PlaceNameCache.defaultURL) {

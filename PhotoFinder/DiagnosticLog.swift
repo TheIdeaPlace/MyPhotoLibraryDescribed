@@ -11,7 +11,7 @@ enum DiagnosticLog {
     static let daysKept = 14
 
     private static let lock = NSLock()
-    private static let logger = Logger(subsystem: "net.theideaplace.PhotoFinder", category: "diagnostic")
+    private static let logger = Logger(subsystem: "net.theideaplace.MyPhotoLibraryDescribed", category: "diagnostic")
 
     static var folder: URL {
         AppInfo.dataFolder

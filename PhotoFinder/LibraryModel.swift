@@ -260,7 +260,7 @@ final class LibraryModel {
     var describeInBackground: Bool {
         didSet { defaults.set(describeInBackground, forKey: "describeInBackground") }
     }
-    nonisolated private static let log = Logger(subsystem: "net.theideaplace.PhotoFinder", category: "library")
+    nonisolated private static let log = Logger(subsystem: "net.theideaplace.MyPhotoLibraryDescribed", category: "library")
     private let imageManager = PHCachingImageManager()
     private let galleryImageSize = CGSize(width: 2400, height: 2400)
     private let galleryImageOptions: PHImageRequestOptions = {
