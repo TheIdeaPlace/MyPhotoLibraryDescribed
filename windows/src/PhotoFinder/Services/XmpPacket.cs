@@ -85,6 +85,36 @@ public static class XmpPacket
         return (Get(Dc + "description"), Get(Iptc + "AltTextAccessibility"), Get(Iptc + "ExtDescrAccessibility"));
     }
 
+    /// <summary>The properties a change writes: the caption, Title, accessibility fields, and both ratings.</summary>
+    internal static IEnumerable<XName> Written(MetadataChanges changes)
+    {
+        if (changes.Caption is not null) yield return Dc + "description";
+        if (changes.Title is not null) yield return Dc + "title";
+        if (changes.AltText is not null) yield return Iptc + "AltTextAccessibility";
+        if (changes.ExtendedDescription is not null) yield return Iptc + "ExtDescrAccessibility";
+        if (changes.Stars is not null)
+        {
+            yield return Xmp + "Rating";
+            yield return MicrosoftPhoto + "Rating";
+        }
+    }
+
+    /// <summary>Whether the packet holds <paramref name="name"/>, as an attribute or an element of any rdf:Description.</summary>
+    internal static bool Holds(XDocument document, XName name) =>
+        document.Descendants(Rdf + "Description").Any(d => d.Attribute(name) is not null || d.Element(name) is not null);
+
+    /// <summary>xmpNote:HasExtendedXMP: the GUID naming an Extended XMP packet, or null.</summary>
+    internal static string? ExtendedGuid(XDocument document)
+    {
+        XName name = XNamespace.Get("http://ns.adobe.com/xmp/note/") + "HasExtendedXMP";
+        foreach (var d in document.Descendants(Rdf + "Description"))
+        {
+            if (d.Attribute(name) is { } a) return a.Value.Trim();
+            if (d.Element(name) is { } e) return e.Value.Trim();
+        }
+        return null;
+    }
+
     public static void Edit(XDocument document, MetadataChanges changes)
     {
         var rdf = document.Descendants(Rdf + "RDF").First();

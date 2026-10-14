@@ -14,7 +14,10 @@ namespace PhotoFinder.Services;
 /// - A file with a Multi-Picture index (Ultra HDR, MPO, #90) has the index patched: it records the main picture's
 ///   size, and where the other pictures start, counted from the index itself. When the index can't be followed, or
 ///   doesn't point at the pictures before and after the change, <see cref="SecondPictureException"/>.
-/// - Extended XMP (spread over several segments) isn't edited.
+/// - Extended XMP (the rest of a large packet, in segments of its own, as Pixel photos have, #149) is kept byte for byte,
+///   as the Mac's #166 does: only the main packet changes, keeping xmpNote:HasExtendedXMP. It's checked first: every part
+///   names that GUID, the parts make one packet whose MD5 is the GUID, and none of the fields being written is in it
+///   (they'd be read from there instead).
 /// </summary>
 public static class JpegMetadata
 {
@@ -41,8 +44,6 @@ public static class JpegMetadata
     {
         var segments = Segments(jpeg);
         var xmpAt = segments.FindIndex(s => IsApp1With(jpeg, s, XmpSignature));
-        if (segments.Any(s => IsApp1With(jpeg, s, ExtendedSignature)))
-            throw new MetadataRefusedException("Its metadata is spread over several parts (Extended XMP), which isn't changed.");
         var mpf = segments.FindIndex(s => s.Marker == 0xE2 && Has(jpeg, s.Offset + 4, MpfSignature));
         // Only one index is patched, so a file with two (one would be left wrong) isn't grown.
         var twoIndexes = segments.Count(s => s.Marker == 0xE2 && Has(jpeg, s.Offset + 4, MpfSignature)) > 1;
@@ -60,6 +61,8 @@ public static class JpegMetadata
         {
             document = XmpPacket.New();
         }
+        var extension = segments.Where(s => IsApp1With(jpeg, s, ExtendedSignature)).ToList();
+        if (extension.Count > 0) CheckExtension(jpeg, extension, xmpAt >= 0 ? document : null, changes);
         XmpPacket.Edit(document, changes);
         var packet = XmpPacket.Serialize(document, oldPacketLength, MaxSegmentLength - 2 - XmpSignature.Length);
         var segment = new byte[4 + XmpSignature.Length + packet.Length];
@@ -103,6 +106,49 @@ public static class JpegMetadata
         var exif = Segments(result).FirstOrDefault(s => IsApp1With(result, s, ExifSignature));
         if (exif.Length > 0) XmpPacket.PatchExif(result, exif.Offset + 4 + ExifSignature.Length, exif.End, changes);
         return result;
+    }
+
+    // MARK: Extended XMP
+
+    private const string DontAddUp = "Its metadata is spread over several parts (Extended XMP) that don't add up.";
+
+    /// <summary>The Extended XMP parts, checked as XMP's specification describes them: each is the GUID (32 hex digits),
+    /// the whole extension's length and this part's offset in it (4 bytes each, big-endian), then its bytes. Together
+    /// they must cover the extension exactly, its MD5 must be the GUID, and the main packet must name it. Then none of the
+    /// fields being written may be in it.</summary>
+    private static void CheckExtension(byte[] jpeg, List<Segment> parts, XDocument? main, MetadataChanges changes)
+    {
+        var guid = main is null ? null : XmpPacket.ExtendedGuid(main);
+        if (guid is not { Length: 32 }) throw new MetadataRefusedException(DontAddUp);
+        long total = -1;
+        var pieces = new List<(long Offset, byte[] Bytes)>();
+        foreach (var s in parts)
+        {
+            var at = s.Offset + 4 + ExtendedSignature.Length;
+            if (at + 40 > s.End) throw new MetadataRefusedException(DontAddUp);
+            var name = Encoding.ASCII.GetString(jpeg, at, 32);
+            long length = (uint)((jpeg[at + 32] << 24) | (jpeg[at + 33] << 16) | (jpeg[at + 34] << 8) | jpeg[at + 35]);
+            long offset = (uint)((jpeg[at + 36] << 24) | (jpeg[at + 37] << 16) | (jpeg[at + 38] << 8) | jpeg[at + 39]);
+            if (!name.Equals(guid, StringComparison.OrdinalIgnoreCase) || (total >= 0 && total != length)) throw new MetadataRefusedException(DontAddUp);
+            total = length;
+            pieces.Add((offset, jpeg[(at + 40)..s.End]));
+        }
+        // The parts can only add up to what they hold: a larger length is refused before anything is allocated for it.
+        if (total != pieces.Sum(p => (long)p.Bytes.Length)) throw new MetadataRefusedException(DontAddUp);
+        var whole = new byte[total];
+        long next = 0;
+        foreach (var (offset, bytes) in pieces.OrderBy(p => p.Offset))
+        {
+            if (offset != next || offset + bytes.Length > total) throw new MetadataRefusedException(DontAddUp);
+            bytes.CopyTo(whole, offset);
+            next += bytes.Length;
+        }
+        if (next != total) throw new MetadataRefusedException(DontAddUp);
+        var md5 = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(whole));
+        if (!md5.Equals(guid, StringComparison.OrdinalIgnoreCase)) throw new MetadataRefusedException(DontAddUp);
+        var extended = XmpPacket.Parse(whole);
+        if (XmpPacket.Written(changes).Any(n => XmpPacket.Holds(extended, n)))
+            throw new MetadataRefusedException("Its metadata is spread over several parts (Extended XMP), and what would change is in another part.");
     }
 
     // MARK: Segments

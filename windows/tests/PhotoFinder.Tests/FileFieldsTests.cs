@@ -488,12 +488,93 @@ public sealed class FileFieldsTests : IDisposable
         Assert.Equal(plain[2..], changed[(s.Offset + s.Length)..]);
     }
 
+    private static readonly byte[] ExtensionSignature = "http://ns.adobe.com/xmp/extension/\0"u8.ToArray();
+
+    /// <summary>A JPEG with Extended XMP, as a Pixel writes it: the main packet naming the extension's GUID (the MD5 of the
+    /// extension packet), then the extension in <paramref name="parts"/> segments, each the GUID, the whole length, its
+    /// offset and its bytes. <paramref name="extensionBody"/> goes inside the extension's rdf:Description.</summary>
+    private byte[] WithExtendedXmp(string extensionBody, int parts = 2, Func<string, string>? guidFor = null)
+    {
+        var extension = System.Text.Encoding.UTF8.GetBytes(
+            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" " +
+            "xmlns:GDepth=\"http://ns.google.com/photos/1.0/depthmap/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">" +
+            extensionBody + "</rdf:Description></rdf:RDF></x:xmpmeta>");
+        var md5 = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(extension));
+        var guid = guidFor?.Invoke(md5) ?? md5;
+        var main = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" " +
+                   $"xmlns:xmpNote=\"http://ns.adobe.com/xmp/note/\" xmpNote:HasExtendedXMP=\"{guid}\"/></rdf:RDF></x:xmpmeta>";
+        var jpeg = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("pixel.jpg")));
+        var size = (extension.Length + parts - 1) / parts;
+        // Added in reverse, as WithSegment puts each first: the main packet ends up first, then the parts in order.
+        for (var i = parts - 1; i >= 0; i--)
+        {
+            var offset = i * size;
+            var piece = extension[offset..Math.Min(extension.Length, offset + size)];
+            byte[] head = [.. System.Text.Encoding.ASCII.GetBytes(guid), (byte)(extension.Length >> 24), (byte)(extension.Length >> 16), (byte)(extension.Length >> 8), (byte)extension.Length,
+                (byte)(offset >> 24), (byte)(offset >> 16), (byte)(offset >> 8), (byte)offset];
+            jpeg = WithSegment(jpeg, 0xE1, [.. ExtensionSignature, .. head, .. piece]);
+        }
+        return WithSegment(jpeg, 0xE1, [.. XmpSignature, .. System.Text.Encoding.UTF8.GetBytes(main)]);
+    }
+
+    private static List<byte[]> ExtensionParts(byte[] b) =>
+        Segments(b).Where(s => s.Marker == 0xE1 && b.AsSpan(s.Offset + 4).StartsWith(ExtensionSignature)).Select(s => b[s.Offset..(s.Offset + s.Length)]).ToList();
+
+    [Fact]
+    public async Task APixelPhotoWithExtendedXmp_IsCaptioned_KeepingTheExtensionByteForByte()
+    {
+        // #149, as the Mac's #166: a depth map (or gain map details) in the extension, untouched.
+        var jpeg = WithExtendedXmp("<GDepth:Data>" + new string('A', 3000) + "</GDepth:Data>");
+        var path = _lib.PathOf("pixel-captioned.jpg");
+        File.WriteAllBytes(path, jpeg);
+        Assert.Equal(1, (await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog on a beach.")).Succeeded);
+        var after = File.ReadAllBytes(path);
+        Assert.Equal(ExtensionParts(jpeg), ExtensionParts(after));
+        Assert.Equal("A dog on a beach.", (await XmpFields.ReadAsync(path)).Caption);
+        var main = Segments(after).Single(s => IsXmp(after, s));
+        Assert.Contains("HasExtendedXMP", System.Text.Encoding.UTF8.GetString(after, main.Offset, main.Length));
+        // A rating too.
+        Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 4)).Succeeded);
+        Assert.Equal(ExtensionParts(jpeg), ExtensionParts(File.ReadAllBytes(path)));
+    }
+
+    public static TheoryData<string> BadExtensions() => ["guid", "missing part", "caption inside", "rating inside", "no guid in main"];
+
+    [Theory]
+    [MemberData(nameof(BadExtensions))]
+    public void ExtendedXmpThatDoesntAddUp_OrHoldsWhatWouldChange_IsRefused(string what)
+    {
+        var jpeg = what switch
+        {
+            "guid" => WithExtendedXmp("<GDepth:Data>x</GDepth:Data>", guidFor: md5 => new string('0', 32)),
+            "caption inside" => WithExtendedXmp("<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">Old</rdf:li></rdf:Alt></dc:description>"),
+            "rating inside" => WithExtendedXmp("<xmp:Rating>3</xmp:Rating>"),
+            _ => WithExtendedXmp("<GDepth:Data>" + new string('A', 3000) + "</GDepth:Data>", parts: 3),
+        };
+        if (what == "missing part")
+        {
+            var part = Segments(jpeg).First(s => s.Marker == 0xE1 && jpeg.AsSpan(s.Offset + 4).StartsWith(ExtensionSignature));
+            jpeg = [.. jpeg[..part.Offset], .. jpeg[(part.Offset + part.Length)..]];
+        }
+        if (what == "no guid in main")
+        {
+            var main = Segments(jpeg).Single(s => IsXmp(jpeg, s));
+            jpeg = [.. jpeg[..main.Offset], .. jpeg[(main.Offset + main.Length)..]];
+        }
+        var changes = what == "rating inside" ? new MetadataChanges { Stars = 4 } : new MetadataChanges { Caption = "A dog." };
+        var refused = Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(jpeg, changes));
+        Assert.StartsWith("Its metadata is spread over several parts (Extended XMP)", refused.Message);
+        // What isn't in the extension can still change when the caption is inside it.
+        if (what == "caption inside") Assert.NotNull(JpegMetadata.Apply(jpeg, new MetadataChanges { Stars = 2 }));
+    }
+
     [Fact]
     public void XmpItCantRead_OrExtendedXmp_IsLeftAlone()
     {
         var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
         var broken = WithSegment(plain, 0xE1, [.. XmpSignature, .. "<x:xmpmeta not xml"u8.ToArray()]);
         Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(broken, new MetadataChanges { Caption = "A" }));
+        // An extension part too short to hold its own header, with no main packet naming it.
         var extended = WithSegment(plain, 0xE1, [.. "http://ns.adobe.com/xmp/extension/\0"u8.ToArray(), 1, 2, 3]);
         Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(extended, new MetadataChanges { Caption = "A" }));
         Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply("not a jpeg"u8.ToArray(), new MetadataChanges { Caption = "A" }));
@@ -526,7 +607,7 @@ public sealed class FileFieldsTests : IDisposable
         File.WriteAllBytes(path, WithSegment(WithoutRoom(File.ReadAllBytes(path)), 0xE1, [.. "http://ns.adobe.com/xmp/extension/\0"u8.ToArray(), 1, 2, 3]));
         var result = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
         Assert.Equal(0, result.Succeeded);
-        Assert.Equal("ext.jpg: Its metadata is spread over several parts (Extended XMP), which isn't changed. It was left as it is.", result.FailureSummary);
+        Assert.Equal("ext.jpg: Its metadata is spread over several parts (Extended XMP) that don't add up. It was left as it is.", result.FailureSummary);
     }
 
     [Fact]
