@@ -2474,7 +2474,7 @@ final class LibraryModel {
     private func offer(_ release: Updates.Release) {
         let alert = NSAlert()
         alert.messageText = "Version \(release.version) of \(AppInfo.name) is available"
-        alert.informativeText = "You have version \(AppInfo.shortVersion). The download page opens in your browser: open the disk image and drag \(AppInfo.name) to Applications, replacing the old one. Your descriptions and settings are kept."
+        alert.informativeText = "You have version \(AppInfo.shortVersion). The download page opens in your browser: open the disk image and move \(AppInfo.name) to your Applications folder, replacing the old one. Your descriptions and settings are kept."
         alert.addButton(withTitle: "Download")
         alert.addButton(withTitle: "Not Now")
         if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(release.page) }

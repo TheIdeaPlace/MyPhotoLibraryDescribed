@@ -2,7 +2,7 @@
 
 **Last Updated: October 13, 2026**
 
-This policy covers both My Photo Library Described apps: the Mac app and the Windows app. "My Photo Library Described" is a working name.
+This policy covers both My Photo Library Described apps: the Mac app and the Windows app.
 
 ## Overview
 
