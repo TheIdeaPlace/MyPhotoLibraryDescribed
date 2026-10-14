@@ -255,6 +255,14 @@ final class LibraryModel {
     @ObservationIgnored var isInFront: @MainActor () -> Bool = {
         NSApplication.shared.isActive && NSApplication.shared.keyWindow?.isSheet == false
     }
+    /// Whether a file in an added folder is on this Mac, not only in the cloud (iCloud Drive, OneDrive and the like,
+    /// #197). Files that aren't are left unread by the list and by describing as you arrow, and writing into them asks
+    /// first. Tests stand in for the cloud.
+    @ObservationIgnored var isOnThisMac: @Sendable (URL) -> Bool = FileAvailability.isOnThisMac
+    /// Reads what a photo file says about itself before a caption is written into it. Tests watch which are read.
+    @ObservationIgnored var readMetadata: @Sendable (URL) -> FileMetadata = FileMetadata.read
+    /// Asks the question before writing into files that are only in the cloud; true to go on. Tests answer it.
+    @ObservationIgnored var confirmDownload: @MainActor (_ action: String, _ question: String) -> Bool = LibraryModel.askToDownload
 
     /// Describe photos added to the Photos library behind the scenes, so their descriptions are ready in Get Info.
     var describeInBackground: Bool {
@@ -368,27 +376,33 @@ final class LibraryModel {
     /// File > Read-Only Mode: on at every launch; allowing changes lasts until the app quits (Kelly, 12 Oct).
     private(set) var readOnly = true
 
+    /// Asks before Read-Only Mode is turned off; true to allow changes. Tests answer it.
+    @ObservationIgnored var confirmAllowChanges: @MainActor () -> Bool = LibraryModel.askToAllowChanges
+
     /// Turns Read-Only Mode off, after asking every time, or back on.
     func setReadOnly(_ on: Bool) {
-        if !on {
-            let alert = NSAlert()
-            alert.messageText = "Let \(AppInfo.name) change your photos?"
-            alert.informativeText = "\(AppInfo.name) will be able to write captions, alt text and ratings into your photos, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to Read-Only Mode at any time."
-            alert.window.title = "Allow Changes to Photos"
-            // Keep Read-Only first, so it's the default: Return alone never allows changes.
-            alert.addButton(withTitle: "Keep Read-Only Mode")
-            alert.addButton(withTitle: "Allow Changes")
-            let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                guard event.keyCode == 53 else { return event }
-                NSApp.stopModal(withCode: .alertFirstButtonReturn)
-                return nil
-            }
-            defer { if let escape { NSEvent.removeMonitor(escape) } }
-            guard alert.runModal() == .alertSecondButtonReturn else { return }
-        }
+        if !on, !confirmAllowChanges() { return }
         readOnly = on
         PhotoChanges.allowed = !on
         announce(on ? "Read-Only Mode. Photos won't be changed" : "Editing Mode. Photos can be changed")
+    }
+
+    /// The question before changes are allowed, with Keep Read-Only Mode the default.
+    static func askToAllowChanges() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Let \(AppInfo.name) change your photos?"
+        alert.informativeText = "\(AppInfo.name) will be able to write captions, alt text and ratings into your photos, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to Read-Only Mode at any time."
+        alert.window.title = "Allow Changes to Photos"
+        // Keep Read-Only first, so it's the default: Return alone never allows changes.
+        alert.addButton(withTitle: "Keep Read-Only Mode")
+        alert.addButton(withTitle: "Allow Changes")
+        let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 53 else { return event }
+            NSApp.stopModal(withCode: .alertFirstButtonReturn)
+            return nil
+        }
+        defer { if let escape { NSEvent.removeMonitor(escape) } }
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     /// Whether a command may change photos; says why not while read-only.
@@ -1084,6 +1098,7 @@ final class LibraryModel {
         nameFillTask?.cancel()
         nameProgress = nil
         guard !files.isEmpty else { return }
+        let isOnThisMac = self.isOnThisMac
         nameFillTask = Task {
             var start = 0
             while start < files.count {
@@ -1091,7 +1106,10 @@ final class LibraryModel {
                 let batch = Array(files[start..<end])
                 let found = await Task.detached(priority: .userInitiated) { () -> [(MediaFile, FileMetadata)] in
                     var found: [(MediaFile, FileMetadata)] = []
-                    for file in batch {
+                    // A file only in the cloud (iCloud Drive, OneDrive and the like) isn't read: that would download
+                    // it (#197). Its row keeps what the file system says (name, size, dates), as Windows does for
+                    // OneDrive's online-only files, and it's read once it's on this Mac and the folder is shown again.
+                    for file in batch where isOnThisMac(file.url) {
                         found.append((file, file.isVideo ? await FileMetadata.readVideo(file.url) : FileMetadata.read(file.url)))
                     }
                     return found
@@ -1661,15 +1679,20 @@ final class LibraryModel {
             return
         }
         let ids = photos.map { FolderID.file($0.path) }
-        guard photos.count == 1 else {
-            captionTarget = CaptionTarget(assetIDs: ids, initialText: "", inFiles: true)
-            return
-        }
-        // The caption as the file has it now, not the list's copy: that's empty until the file's details are read,
-        // and saving an empty field would remove the real caption.
-        let url = photos[0].url
         Task {
-            let caption = await Task.detached(priority: .userInitiated) { FileMetadata.read(url).caption }.value
+            // Files only in the cloud (iCloud Drive, OneDrive and the like) are downloaded to read or change them:
+            // asked first (#197).
+            guard await mayDownload(photos, for: "Edit Caption") else { return }
+            guard photos.count == 1 else {
+                guard captionTarget == nil else { return }
+                captionTarget = CaptionTarget(assetIDs: ids, initialText: "", inFiles: true)
+                return
+            }
+            // The caption as the file has it now, not the list's copy: that's empty until the file's details are
+            // read, and saving an empty field would remove the real caption.
+            let url = photos[0].url
+            let read = self.readMetadata
+            let caption = await Task.detached(priority: .userInitiated) { read(url).caption }.value
             // Pressed twice: the sheet from the first press is already up, with whatever's been typed in it.
             guard captionTarget == nil else { return }
             captionTarget = CaptionTarget(assetIDs: ids, initialText: caption, inFiles: true)
@@ -1873,13 +1896,19 @@ final class LibraryModel {
         }
         let notDescribed = photos.count - described.count
         Task {
+            // Files only in the cloud (iCloud Drive, OneDrive and the like) are downloaded to read or change them:
+            // asked first (#197).
+            guard await mayDownload(described.map(\.0), for: "Use Description as Caption") else { return }
             // The captions as the files have them now, not the list's copy, which is empty until their details are
             // read. Files that can't hold a caption are skipped, so they aren't asked about.
-            let urls = described.map(\.0.url)
-            let existing = await Task.detached(priority: .userInitiated) { urls.map { FileMetadata.read($0) } }.value
+            // Only those that can hold the fields are read: reading a GIF or RAW file only in the cloud would download
+            // it, without the question above, for nothing.
+            let urls = described.map { Self.holdsFields($0.0) ? $0.0.url : nil }
+            let read = self.readMetadata
+            let existing = await Task.detached(priority: .userInitiated) { urls.map { $0.map(read) ?? FileMetadata() } }.value
             let replacing = zip(described, existing).flatMap { pair, metadata -> [(name: String, field: String, current: String)] in
                 let (file, text) = pair
-                guard FileMetadataWriter.canWrite(name: file.name) else { return [] }
+                guard Self.holdsFields(file) else { return [] }
                 return FileFields.replaced(caption: metadata.caption, altText: metadata.altText,
                                            extendedDescription: metadata.extendedDescription, with: text)
                     .map { (file.name, $0.field, $0.current) }
@@ -1893,6 +1922,43 @@ final class LibraryModel {
     }
 
     // MARK: - Writing into files (#31)
+
+    /// Whether a file's format can hold a caption and alt text. Those that can't are skipped when writing, never read.
+    static func holdsFields(_ file: MediaFile) -> Bool {
+        !file.isVideo && FileMetadataWriter.canWrite(name: file.name) && !MediaFiles.isRaw(file.name)
+    }
+
+    /// Before writing into files, asks when any of them is only in the cloud (iCloud Drive, or another cloud folder
+    /// such as OneDrive or Dropbox), since each would be downloaded to change it, as Windows asks about OneDrive's
+    /// online-only files (#197). Files whose format can't hold the fields aren't counted: they're skipped, not read.
+    /// True to go on.
+    private func mayDownload(_ files: [MediaFile], for action: String) async -> Bool {
+        let writable = files.filter(Self.holdsFields)
+        guard !writable.isEmpty else { return true }
+        let isOnThisMac = self.isOnThisMac
+        let urls = writable.map(\.url)
+        let away = await Task.detached(priority: .userInitiated) { urls.filter { !isOnThisMac($0) }.count }.value
+        guard let question = FileAvailability.writeQuestion(action: action, files: writable.count, onlyInCloud: away)
+        else { return true }
+        return confirmDownload(action, question)
+    }
+
+    /// The question before downloading files from the cloud to write into them. Cancel is the default, as on
+    /// Windows and in the Read-Only Mode question: Return alone never downloads, and Escape cancels too.
+    static func askToDownload(_ action: String, _ question: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = question
+        alert.window.title = action
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Continue")
+        let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 53 else { return event }
+            NSApp.stopModal(withCode: .alertFirstButtonReturn)
+            return nil
+        }
+        defer { if let escape { NSEvent.removeMonitor(escape) } }
+        return alert.runModal() == .alertSecondButtonReturn
+    }
 
     /// Writes into files in an added folder with the status bar showing `label`, then says what happened: `done` with
     /// how many were written, the files skipped because their format can't hold the fields, and the photos not yet
@@ -2030,10 +2096,15 @@ final class LibraryModel {
               FileMetadataWriter.canWrite(name: file.name) else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let url = file.url
+        let isOnThisMac = self.isOnThisMac
         Task {
+            // Only in the cloud: left as it is, since changing it would download it, and this doesn't ask (#197).
+            // Windows leaves OneDrive's online-only files the same way.
+            guard await Task.detached(priority: .utility, operation: { isOnThisMac(url) }).value else { return }
             // The caption and alt text as the file has them now, never the list's copy, which is empty until its
             // details are read.
-            let existing = await Task.detached(priority: .utility) { FileMetadata.read(url) }.value
+            let read = self.readMetadata
+            let existing = await Task.detached(priority: .utility) { read(url) }.value
             var changes = FileMetadataChanges()
             if policy.shouldWrite(trimmed, over: existing.caption) { changes.caption = trimmed }
             // Only empty alt text is filled; what another app wrote is left alone, as a caption is.
@@ -2702,6 +2773,12 @@ final class LibraryModel {
         } else if let file = filesByID[id] {
             key = file.descriptionKey
             let url = file.url
+            // Only in the cloud: describing as you arrow, and ahead, leave it, as they leave iCloud Photos' photos
+            // and Windows leaves OneDrive's online-only files (#197). Describe Photo and Redescribe download it.
+            let isOnThisMac = self.isOnThisMac
+            if !allowNetwork, await !Task.detached(priority: .userInitiated, operation: { isOnThisMac(url) }).value {
+                return nil
+            }
             data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url, options: .mappedIfSafe) }.value
         } else {
             return nil
@@ -2838,7 +2915,8 @@ final class LibraryModel {
     /// iCloud shows its small thumbnail instead.
     func previewImage(for id: String) async -> NSImage? {
         if let file = filesByID[id] {
-            guard await Task.detached(priority: .userInitiated, operation: { FileAvailability.isOnThisMac(file.url) }).value
+            let isOnThisMac = self.isOnThisMac
+            guard await Task.detached(priority: .userInitiated, operation: { isOnThisMac(file.url) }).value
             else { return nil }
             return await FileImages.image(file.url, maxPixels: 800)
         }
@@ -2859,7 +2937,13 @@ final class LibraryModel {
     }
 
     func thumbnail(for id: String) async -> NSImage? {
-        if let file = filesByID[id] { return await FileImages.thumbnail(file.url, size: 64) }
+        if let file = filesByID[id] {
+            // Only in the cloud: Quick Look might download the file to make its thumbnail, and that can't be ruled
+            // out for every cloud folder, so the row keeps its placeholder until the file is on this Mac (#197).
+            let isOnThisMac = self.isOnThisMac
+            guard await Task.detached(priority: .utility, operation: { isOnThisMac(file.url) }).value else { return nil }
+            return await FileImages.thumbnail(file.url, size: 64)
+        }
         guard let asset = assetsByID[id] else { return nil }
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat

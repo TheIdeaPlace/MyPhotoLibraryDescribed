@@ -339,12 +339,29 @@ final class BackgroundDescriber {
 
 #endif
 
-/// Whether a file's contents are on this Mac (#47's review): an iCloud Drive file that's only in iCloud would be
+/// Whether a file's contents are on this Mac (#47's review, #197): a file in iCloud Drive, or in another cloud folder
+/// (OneDrive, Dropbox, Google Drive and the like, which macOS reports the same way), that's only in the cloud would be
 /// downloaded by reading it.
 enum FileAvailability {
-    static func isOnThisMac(_ url: URL) -> Bool {
+    /// Asks the file system, not the file: only its attributes are looked at, so nothing is downloaded, and it's quick
+    /// enough to ask for every file in a folder (off the main actor). A copy that's here but older than the cloud's
+    /// counts as here: reading it reads that copy.
+    @Sendable static func isOnThisMac(_ url: URL) -> Bool {
         guard let values = try? url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]),
               values.isUbiquitousItem == true else { return true }
-        return values.ubiquitousItemDownloadingStatus == .current
+        return values.ubiquitousItemDownloadingStatus != .notDownloaded
+    }
+
+    /// The question before writing into files when some are only in the cloud, as Windows asks about OneDrive's
+    /// online-only files (#197): `action` is the command ("Edit Caption"), `files` how many it changes and
+    /// `onlyInCloud` how many of those would be downloaded. Nil when none would be, so nothing's asked.
+    static func writeQuestion(action: String, files: Int, onlyInCloud: Int) -> String? {
+        guard onlyInCloud > 0 else { return nil }
+        let changes = files == 1 ? "1 file" : "\(files.formatted()) files"
+        let which = files == 1 ? "It's only in the cloud, and will be downloaded to change it."
+            : onlyInCloud == files ? "All of them are only in the cloud, and each will be downloaded to change it."
+            : onlyInCloud == 1 ? "1 of them is only in the cloud, and will be downloaded to change it."
+            : "\(onlyInCloud.formatted()) of them are only in the cloud, and each will be downloaded to change it."
+        return "\(action) changes \(changes) on your Mac. \(which) Continue?"
     }
 }
