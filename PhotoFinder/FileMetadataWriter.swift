@@ -210,8 +210,8 @@ enum FileMetadataWriter {
             guard readsBack(temp, expected) else {
                 // Photoshop's IPTC, changed since its digest was written: readers take its old caption ahead of the
                 // new one. The IPTC isn't rewritten, so the file is left alone and says why (#111, Kelly 13 Oct).
-                if type as String != UTType.png.identifier, let segments = try? JPEGMetadata.segments(of: data).segments,
-                   JPEGMetadata.hasIPTC(segments) {
+                if type as String == UTType.jpeg.identifier, let segments = try? JPEGMetadata.segments(of: data).segments,
+                   olderCaptionStillRead(temp, expected, source: source, segments: segments) {
                     throw olderCaptionWins
                 }
                 throw FileMetadataWriteError.notWritten("The new metadata didn't read back.")
@@ -326,12 +326,29 @@ enum FileMetadataWriter {
     }
 
     /// Whether the new copy reads as intended, field by field (an empty field counts as none).
-    private static func readsBack(_ url: URL, _ values: [String: String?]) -> Bool {
-        guard let written = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(written) > 0 else { return false }
+    private static func readsBack(_ url: URL, _ values: [String: String?]) -> Bool { failing(url, values)?.isEmpty == true }
+
+    /// The fields that don't read back as `values` says, or nil when the file can't be read at all.
+    private static func failing(_ url: URL, _ values: [String: String?]) -> Set<String>? {
+        guard let written = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(written) > 0 else { return nil }
         let metadata = CGImageSourceCopyMetadataAtIndex(written, 0, nil)
-        return values.allSatisfy { path, value in
-            metadata.flatMap { FileMetadata.xmpString($0, path) }.flatMap { $0.isEmpty ? nil : $0 } == value
-        }
+        return Set(values.filter { path, value in readBack(metadata, path) != value }.keys)
+    }
+
+    private static func readBack(_ metadata: CGImageMetadata?, _ path: String) -> String? {
+        metadata.flatMap { FileMetadata.xmpString($0, path) }.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// Whether the new copy failed only because the old caption still wins: the caption (and perhaps the title kept
+    /// in step with it) is what didn't read back, and what reads instead is the caption the file already had, from a
+    /// Photoshop IPTC block (#111).
+    private static func olderCaptionStillRead(_ temp: URL, _ values: [String: String?], source: CGImageSource,
+                                              segments: [JPEGMetadata.Segment]) -> Bool {
+        guard JPEGMetadata.hasIPTC(segments), let failed = failing(temp, values), failed.contains(captionPath),
+              failed.isSubset(of: [captionPath, titlePath]),
+              let old = readBack(CGImageSourceCopyMetadataAtIndex(source, 0, nil), captionPath),
+              let written = CGImageSourceCreateWithURL(temp as CFURL, nil) else { return false }
+        return readBack(CGImageSourceCopyMetadataAtIndex(written, 0, nil), captionPath) == old
     }
 }
 
