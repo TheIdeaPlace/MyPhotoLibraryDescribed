@@ -516,9 +516,10 @@ extension XCTestCase {
         }
     }
 
-    /// Makes the test library, shows its folder, and waits until every file's details are read.
+    /// Makes the test library, shows its folder, and waits until every file's details are read. The files named in
+    /// `onlyInICloud` are treated as kept only in iCloud Drive (#197); nothing real is in iCloud.
     @MainActor
-    func makeLibrary(settings: [String: Any] = [:]) async throws -> TestLibrary {
+    func makeLibrary(settings: [String: Any] = [:], onlyInICloud: Set<String> = []) async throws -> TestLibrary {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("LibraryModelTests-\(UUID().uuidString)")
         let photos = base.appendingPathComponent("Photos", isDirectory: true)
         let subfolder = photos.appendingPathComponent("d", isDirectory: true)
@@ -546,12 +547,14 @@ extension XCTestCase {
         let library = TestLibrary(root: root, defaults: defaults,
                                   cacheURL: base.appendingPathComponent("Store").appendingPathComponent("Descriptions.json"))
         let model = library.model
+        model.isOnThisMac = { !onlyInICloud.contains($0.lastPathComponent) }
         model.addFolders([root])
         try await waitUntil("the folder in the sidebar") { model.itemsByID[FolderID.folder(root)] != nil }
         model.selectedSourceID = FolderID.folder(root)
         try await waitUntil("the folder's details") {
             !model.isLoading && model.rows.count == 4
-                && model.rows.filter { $0.name.hasSuffix(".jpg") }.allSatisfy { !$0.dimensions.isEmpty }
+                && model.rows.filter { $0.name.hasSuffix(".jpg") && !onlyInICloud.contains($0.name) }
+                    .allSatisfy { !$0.dimensions.isEmpty }
         }
         library.said.removeAll()
         return library

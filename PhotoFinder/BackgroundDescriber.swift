@@ -342,9 +342,24 @@ final class BackgroundDescriber {
 /// Whether a file's contents are on this Mac (#47's review): an iCloud Drive file that's only in iCloud would be
 /// downloaded by reading it.
 enum FileAvailability {
-    static func isOnThisMac(_ url: URL) -> Bool {
+    /// Asks the file system, not the file: only its attributes are looked at, so nothing is downloaded, and it's quick
+    /// enough to ask for every file in a folder (off the main actor).
+    @Sendable static func isOnThisMac(_ url: URL) -> Bool {
         guard let values = try? url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]),
               values.isUbiquitousItem == true else { return true }
         return values.ubiquitousItemDownloadingStatus == .current
+    }
+
+    /// The question before writing into files when some are only in iCloud Drive, as Windows asks about OneDrive's
+    /// online-only files (#197): `action` is the command ("Edit Caption"), `files` how many it changes and
+    /// `onlyInICloud` how many of those would be downloaded. Nil when none would be, so nothing's asked.
+    static func writeQuestion(action: String, files: Int, onlyInICloud: Int) -> String? {
+        guard onlyInICloud > 0 else { return nil }
+        let changes = files == 1 ? "1 file" : "\(files.formatted()) files"
+        let which = files == 1 ? "It's only in iCloud Drive, and will be downloaded to change it."
+            : onlyInICloud == files ? "All of them are only in iCloud Drive, and each will be downloaded to change it."
+            : onlyInICloud == 1 ? "1 of them is only in iCloud Drive, and will be downloaded to change it."
+            : "\(onlyInICloud.formatted()) of them are only in iCloud Drive, and each will be downloaded to change it."
+        return "\(action) changes \(changes) on your Mac. \(which) Continue?"
     }
 }
