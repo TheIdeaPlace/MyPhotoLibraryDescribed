@@ -17,8 +17,8 @@ APPNAME=$(basename "$APP")
 # Where the icons' centres sit, in points from the window's top left; make-dmg-background.swift is given the same
 # points, and draws its arrow and card around them.
 APP_X=160 APPS_X=480 ICON_Y=200
-# The window: 640 × 400 points for the picture, plus the title bar, which Finder's bounds include (32 points on macOS
-# 26 and later, measured; 28 before, which leaves a sliver below the picture on those).
+# The window: 640 × 400 points of picture, plus the title bar, which Finder's bounds include (32 points on macOS 26 and
+# later, measured; 28 before). The picture is drawn 410 tall, so the shorter title bar shows more hills, not a gap.
 LEFT=200 TOP=120 WIDTH=640 HEIGHT=$(( 400 + 32 ))
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/mpld-dmg.XXXXXX")

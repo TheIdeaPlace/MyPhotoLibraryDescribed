@@ -68,7 +68,7 @@ func draw(scale: Double) -> Data {
   // A card behind the two icons, lifting them off the sky, with the names on its steel-blue lower band. The icons are
   // 128 points, so they end 64 below iconY; Finder puts their names just under that.
   let card = CGRect(x: 48, y: iconY - 90, width: width - 96, height: 200)
-  let bandTop = iconY + 66
+  let bandTop = iconY + 58
   let cardPath = CGPath(roundedRect: card, cornerWidth: 22, cornerHeight: 22, transform: nil)
   ctx.saveGState()
   ctx.setShadow(offset: CGSize(width: 0, height: 4), blur: 18, color: rgb(16, 35, 63, 0.14))
