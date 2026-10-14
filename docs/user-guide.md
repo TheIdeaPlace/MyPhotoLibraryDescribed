@@ -36,10 +36,10 @@ Both apps are on the [releases page](https://github.com/TheIdeaPlace/MyPhotoLibr
 
 ## What you need
 
-- **Mac:** macOS 27 or later on Apple silicon, with Apple Intelligence turned on, for descriptions. My Photo Library Described browses your Photos library, so it asks for access to Photos the first time. Without that access, folders you add with File > Add Folder to Library still work, and the sidebar's "Photos library: no access" row opens Privacy Settings. Changing the captions and ratings of photos in your Photos library also needs macOS 27.
-- **Windows:** Windows 11 on a Copilot+ PC, for descriptions. My Photo Library Described browses your Pictures library.
+- **Mac:** macOS 27 or later on Apple silicon, with Apple Intelligence turned on. My Photo Library Described browses your Photos library, so it asks for access to Photos the first time. Without that access, folders you add with File > Add Folder to Library still work, and the sidebar's "Photos library: no access" row opens Privacy Settings.
+- **Windows:** Windows 11 version 24H2 or later on a Copilot+ PC. My Photo Library Described browses your Pictures library.
 
-Without the AI, My Photo Library Described still browses, searches, sorts and shows your photos; it just doesn't describe them. **Help > Check System** says what your computer has and what to do about anything missing.
+If the AI isn't available, My Photo Library Described still browses, searches, sorts and shows your photos; it just doesn't describe them. **Help > Check System** says what your computer has and what to do about anything missing.
 
 ## Layout
 

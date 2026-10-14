@@ -15,18 +15,10 @@ The [user guide](docs/user-guide.md) covers installing, using and removing the a
 
 ## What you need
 
-### Mac
+- **Mac:** macOS 27 or later on Apple silicon, with Apple Intelligence turned on.
+- **Windows:** Windows 11 version 24H2 or later on a Copilot+ PC.
 
-- macOS 15 or later to open the app and browse your photos. It has been tested on macOS 26 and 27.
-- To describe photos: macOS 27 or later on Apple silicon, with Apple Intelligence turned on.
-- Changing captions and ratings of photos in your Photos library also needs macOS 27. Files in folders you add get captions on any version.
-
-### Windows
-
-- Windows 10 version 2004 or later, or Windows 11, to install the app and browse your photos. It has been tested on Windows 11.
-- To describe photos: Windows 11 version 24H2 or later on a Copilot+ PC, with Windows AI.
-
-Without the AI, the app still browses, searches, sorts and shows your photos; it just doesn't describe them. Help > Check System says what your computer has and what to do about anything missing.
+If the AI isn't available, the app still browses, searches, sorts and shows your photos; it just doesn't describe them. Help > Check System says what your computer has and what to do about anything missing.
 
 ## What it does
 
@@ -50,6 +42,10 @@ Photos are described on your computer and never uploaded to describe them, and t
 Choose Help > Report a Bug… in either app. It files a GitHub issue for you, with a preview of exactly what's sent, and you don't need a GitHub account. Everything in a report is public. You can also [open an issue on GitHub](https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/issues) yourself.
 
 Features planned for a later version and known issues are listed as [issues labelled v-next](https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/issues?q=is%3Aissue+is%3Aopen+label%3Av-next).
+
+## Licence
+
+My Photo Library Described is free and open source, under the [MIT License](LICENSE).
 
 ## For developers
 
