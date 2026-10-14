@@ -25,6 +25,10 @@ public static class AppCommands
     public static readonly RoutedUICommand GoToStatusBar = Make("Go to Status Ba_r", nameof(GoToStatusBar),
         new KeyGesture(Key.F9, ModifierKeys.Control | ModifierKeys.Shift));
 
+    /// <summary>Edit > Copy Description (#175, as the Mac's #176): the selected photos' descriptions, as text.</summary>
+    public static readonly RoutedUICommand CopyDescription = Make("Copy Descriptio_n", nameof(CopyDescription),
+        new KeyGesture(Key.C, ModifierKeys.Control | ModifierKeys.Shift));
+
     public static readonly RoutedUICommand Find = Make("_Find", nameof(Find), new KeyGesture(Key.F, ModifierKeys.Control), new KeyGesture(Key.F3));
 
     public static readonly RoutedUICommand AsList = Make("as _List", nameof(AsList), new KeyGesture(Key.D2, ModifierKeys.Control));

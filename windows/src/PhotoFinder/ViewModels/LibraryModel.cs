@@ -531,6 +531,43 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         Announcer.Announce(files.Count == 1 ? $"Copied {files[0].Name}" : $"Copied {files.Count} items");
     }
 
+    /// <summary>Edit > Copy Description (#175, as the Mac's #176): the photos' saved descriptions, as text. One photo's
+    /// is copied as it is; several each come under the photo's name, a blank line apart. Videos and folders are left out.
+    /// Says what was copied, and what wasn't described yet.</summary>
+    public void CopyDescriptions(IReadOnlyList<FileRow>? rows = null)
+    {
+        var (text, said) = DescriptionsToCopy(Chosen(rows), SavedDescription);
+        if (text is not null)
+        {
+            try
+            {
+                System.Windows.Clipboard.SetText(text.Replace("\r\n", "\n").Replace("\n", "\r\n"));
+            }
+            catch (System.Runtime.InteropServices.ExternalException)
+            {
+                Announcer.Announce("The clipboard is busy. Try again.");
+                return;
+            }
+        }
+        Announcer.Announce(said);
+    }
+
+    /// <summary>What Copy Description copies (null for nothing) and says, for <paramref name="rows"/>.</summary>
+    internal static (string? Text, string Said) DescriptionsToCopy(IReadOnlyList<FileRow> rows, Func<FileRow, string?, string?> saved)
+    {
+        if (rows.Count == 0) return (null, "Select a photo to copy its description");
+        var photos = rows.Where(r => r.Item is { IsVideo: false }).ToList();
+        if (photos.Count == 0) return (null, "Videos and folders aren't described");
+        var described = photos.Select(r => (Row: r, Text: saved(r, null))).Where(p => !string.IsNullOrWhiteSpace(p.Text)).ToList();
+        if (described.Count == 0)
+            return (null, photos.Count == 1 ? $"{photos[0].Name} hasn't been described yet" : "None of these photos has been described yet");
+        var text = described.Count == 1 ? described[0].Text!.Trim() : string.Join("\n\n", described.Select(p => $"{p.Row.Name}\n{p.Text!.Trim()}"));
+        var missing = photos.Count - described.Count;
+        var said = (described.Count == 1 ? "Copied the description" : $"Copied {described.Count:N0} descriptions")
+                   + missing switch { 0 => "", 1 => ". 1 photo hasn't been described yet", _ => $". {missing:N0} photos haven't been described yet" };
+        return (text, said);
+    }
+
     public async Task ExportAsync(IReadOnlyList<FileRow> rows, string folder)
     {
         var files = Files(rows);

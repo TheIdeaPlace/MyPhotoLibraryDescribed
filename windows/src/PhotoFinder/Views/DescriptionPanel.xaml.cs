@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -287,20 +286,8 @@ public partial class DescriptionPanel : UserControl
     {
         SaveIfChanged();
         if (_model is null || _row is null) return;
-        if (_model.SavedDescription(_row) is not { } text)
-        {
-            Announcer.Announce($"{_row.Name} hasn't been described yet.");
-            return;
-        }
-        try
-        {
-            Clipboard.SetText(text);
-            Announcer.Announce("Description copied");
-        }
-        catch (ExternalException)
-        {
-            Announcer.Announce("The clipboard is busy. Try again.");
-        }
+        // The same as Edit > Copy Description, with the same words (#175).
+        _model.CopyDescriptions([_row]);
     }
 
     private void EditCaption_Click(object sender, RoutedEventArgs e)
