@@ -532,16 +532,20 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>Edit > Copy Description (#175, as the Mac's #176): the photos' saved descriptions, as text. One photo's
-    /// is copied as it is; several each come under the photo's name, a blank line apart. Videos and folders are left out.
-    /// Says what was copied, and what wasn't described yet.</summary>
-    public void CopyDescriptions(IReadOnlyList<FileRow>? rows = null)
+    /// is copied as it is; several each come under the photo's name, a blank line apart, in the list's order. In the
+    /// gallery, the photo you're on. Videos and folders are left out. A correction in the Description panel that isn't
+    /// saved yet (<paramref name="draft"/>) is what's copied for its photo, without saving it, as on the Mac. Says what was
+    /// copied, and what wasn't described yet.</summary>
+    public void CopyDescriptions(IReadOnlyList<FileRow>? rows = null, (FileRow Row, string Text)? draft = null)
     {
-        var (text, said) = DescriptionsToCopy(Chosen(rows), SavedDescription);
+        var chosen = rows?.ToList()
+                     ?? (ViewMode == ViewMode.Gallery ? (FocusedRow is { } on ? [on] : []) : InListOrder(SelectedRows, Rows));
+        var (text, said) = DescriptionsToCopy(chosen, WithDraft(SavedDescription, draft));
         if (text is not null)
         {
             try
             {
-                System.Windows.Clipboard.SetText(text.Replace("\r\n", "\n").Replace("\n", "\r\n"));
+                System.Windows.Clipboard.SetText(ClipboardText(text));
             }
             catch (System.Runtime.InteropServices.ExternalException)
             {
@@ -552,7 +556,23 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         Announcer.Announce(said);
     }
 
-    /// <summary>What Copy Description copies (null for nothing) and says, for <paramref name="rows"/>.</summary>
+    /// <summary>The saved descriptions, but the panel's unsaved correction for its photo (unless it's been emptied).</summary>
+    internal static Func<FileRow, string?, string?> WithDraft(Func<FileRow, string?, string?> saved, (FileRow Row, string Text)? draft) =>
+        (row, kind) => draft is { } d && d.Row == row && !string.IsNullOrWhiteSpace(d.Text) ? d.Text : saved(row, kind);
+
+    /// <summary>The rows chosen, in the order the list shows them: a selection keeps the order rows were picked in.</summary>
+    internal static List<FileRow> InListOrder(IEnumerable<FileRow> chosen, IReadOnlyList<FileRow> rows)
+    {
+        var set = chosen.ToHashSet();
+        return rows.Where(set.Contains).ToList();
+    }
+
+    /// <summary>Text as Windows apps paste it: every line ending a CRLF.</summary>
+    internal static string ClipboardText(string text) => text.Replace("\r\n", "\n").Replace("\n", "\r\n");
+
+    /// <summary>What Copy Description copies (null for nothing) and says, for <paramref name="rows"/>, in their order.
+    /// With more than one photo chosen, each description comes under its photo's name, even when only one is
+    /// described, so the paste says whose it is.</summary>
     internal static (string? Text, string Said) DescriptionsToCopy(IReadOnlyList<FileRow> rows, Func<FileRow, string?, string?> saved)
     {
         if (rows.Count == 0) return (null, "Select a photo to copy its description");
@@ -561,7 +581,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         var described = photos.Select(r => (Row: r, Text: saved(r, null))).Where(p => !string.IsNullOrWhiteSpace(p.Text)).ToList();
         if (described.Count == 0)
             return (null, photos.Count == 1 ? $"{photos[0].Name} hasn't been described yet" : "None of these photos has been described yet");
-        var text = described.Count == 1 ? described[0].Text!.Trim() : string.Join("\n\n", described.Select(p => $"{p.Row.Name}\n{p.Text!.Trim()}"));
+        var text = photos.Count == 1 ? described[0].Text! : string.Join("\n\n", described.Select(p => $"{p.Row.Name}\n{p.Text}"));
         var missing = photos.Count - described.Count;
         var said = (described.Count == 1 ? "Copied the description" : $"Copied {described.Count:N0} descriptions")
                    + missing switch { 0 => "", 1 => ". 1 photo hasn't been described yet", _ => $". {missing:N0} photos haven't been described yet" };

@@ -165,12 +165,8 @@ public partial class MainWindow : Window
         Bind(AppCommands.PreviousPhoto, () => _model.StepPhoto(-1, announce: !FileList.IsKeyboardFocusWithin));
         Bind(AppCommands.ShowInExplorer, () => _model.ShowInExplorer(), () => _model.SelectedRows.Any(r => r.Item is not null || r.Container?.FolderPath is not null));
         Bind(AppCommands.Export, ExportSelection, HasFiles);
-        // Always enabled: when there's nothing to copy, it says why.
-        Bind(AppCommands.CopyDescription, () =>
-        {
-            DescriptionPanel.SaveIfChanged();
-            _model.CopyDescriptions();
-        });
+        // Always enabled: when there's nothing to copy, it says why. A correction not saved yet is copied as typed.
+        Bind(AppCommands.CopyDescription, () => _model.CopyDescriptions(draft: DescriptionPanel.Draft));
         Bind(AppCommands.AddFolder, AddFolder);
         Bind(AppCommands.RemoveFolder, RemoveFolder, () => _model.CurrentRoot is not null);
         Bind(AppCommands.Refresh, () => _model.Fire(_model.RescanAsync()), () => !_model.IsLoading);
