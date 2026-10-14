@@ -33,7 +33,7 @@ My Photo Library Described connects to the internet only for these things:
 
 ## What's kept on your computer
 
-- Saved descriptions, and which ones you edited.
+- Saved descriptions, and which ones you edited. On the Mac, each is kept with where it came from: Apple Intelligence or you, the prompt it was asked with, the model and the language, the versions of macOS and My Photo Library Described, when it was described (and corrected), how long it took, and, when you corrected it, Apple Intelligence's words before. This stays on your computer with the description.
 - Which photos couldn't be described in the background, so they aren't tried again.
 - Your settings (the description prompt or type, the columns shown, and the switches in the menus and Settings).
 - The folders you added to the library.
