@@ -135,8 +135,8 @@ enum JPEGMetadata {
             // Each property is in one or the other: one written into the main XMP that's also in the extension would
             // leave readers to choose between them.
             guard let packet = PNGMetadata.parseXMP(extended.packet) else { throw ExtendedXMP.refused }
-            for path in values.keys where CGImageMetadataCopyTagWithPath(packet, nil, path as CFString) != nil {
-                throw ExtendedXMP.heldInExtension
+            for path in values.keys.sorted() where CGImageMetadataCopyTagWithPath(packet, nil, path as CFString) != nil {
+                throw ExtendedXMP.heldInExtension(path)
             }
         }
         let xmpIndices = segments.indices.filter { isXMP(segments[$0]) }
@@ -274,9 +274,18 @@ enum JPEGMetadata {
     struct ExtendedXMP: Equatable {
         static let refused = Failure.malformed(
             "Its metadata is spread over several parts (Extended XMP) that don't add up, so it isn't changed.")
-        /// The parts add up, but what would change is in the extension, not the main XMP.
-        static let heldInExtension = Failure.malformed(
-            "Its metadata is spread over several parts (Extended XMP), and what would change is in another part, so it isn't changed.")
+        /// The parts add up, but a field being written is in the extension, not the main XMP. Named, as Windows does,
+        /// so it's clear what can't be changed: "…and its caption is kept in another part."
+        static func heldInExtension(_ path: String) -> Failure {
+            let field = switch path {
+            case FileMetadataWriter.captionPath: "caption"
+            case FileMetadataWriter.titlePath: "title"
+            case FileMetadataWriter.altTextPath: "alt text"
+            case FileMetadataWriter.extendedDescriptionPath: "extended description"
+            default: "metadata"
+            }
+            return .malformed("Its metadata is spread over several parts (Extended XMP), and its \(field) is kept in another part.")
+        }
         let guid: String
         let packet: [UInt8]
 
