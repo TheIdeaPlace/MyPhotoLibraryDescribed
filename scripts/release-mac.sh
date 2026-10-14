@@ -28,6 +28,12 @@ VERSION=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9.]*\)"\{0,1\}/\1/p' pro
 NAME=$(sed -n 's/^ *CFBundleDisplayName: *//p' project.yml | head -1)
 TAG="v$VERSION"
 OUT=build/release
+# Everything made on the way (the archive, the export, the zip sent to Apple, the disk image's staging folder) goes
+# in a working folder that's removed at the end, so build/release holds only the disk image.
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/mpld-release.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
+# zsh skips the EXIT trap when a signal ends the script, so Control-C or closing the window exits through it.
+trap 'exit 130' INT TERM HUP
 FILE="${NAME// /-}-$VERSION-mac.dmg"
 [ -n "$VERSION" ] && [ -n "$NAME" ] || { echo "Couldn't read the version or name from project.yml"; exit 1; }
 [ -f "$KIT/asc-api-key.p8" ] || { echo "No App Store Connect key at $KIT/asc-api-key.p8"; exit 1; }
@@ -62,9 +68,9 @@ echo "Building $NAME $VERSION"
 rm -rf "$OUT" && mkdir -p "$OUT"
 xcodegen generate --quiet
 xcodebuild -project PhotoFinder.xcodeproj -scheme PhotoFinder -configuration Release \
-  -destination 'generic/platform=macOS' -archivePath "$OUT/app.xcarchive" -allowProvisioningUpdates \
+  -destination 'generic/platform=macOS' -archivePath "$WORK/app.xcarchive" -allowProvisioningUpdates \
   APPKIT_RELAY_KEY="$RELAY_KEY" archive -quiet
-cat > "$OUT/export.plist" <<PLIST
+cat > "$WORK/export.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -73,22 +79,22 @@ cat > "$OUT/export.plist" <<PLIST
   <key>signingStyle</key><string>automatic</string>
 </dict></plist>
 PLIST
-xcodebuild -exportArchive -archivePath "$OUT/app.xcarchive" -exportPath "$OUT/export" \
-  -exportOptionsPlist "$OUT/export.plist" -allowProvisioningUpdates -quiet
-APP="$OUT/export/$NAME.app"
+xcodebuild -exportArchive -archivePath "$WORK/app.xcarchive" -exportPath "$WORK/export" \
+  -exportOptionsPlist "$WORK/export.plist" -allowProvisioningUpdates -quiet
+APP="$WORK/export/$NAME.app"
 codesign --verify --strict --deep --verbose=2 "$APP"
 
 notarize() {
   xcrun notarytool submit "$1" --key "$KIT/asc-api-key.p8" --key-id "$KEY_ID" --issuer "$ISSUER" --wait --timeout 30m
 }
 echo "Notarizing the app"
-ditto -c -k --keepParent "$APP" "$OUT/app.zip"
-notarize "$OUT/app.zip"
+ditto -c -k --keepParent "$APP" "$WORK/app.zip"
+notarize "$WORK/app.zip"
 xcrun stapler staple "$APP"
 
 echo "Making the disk image"
-mkdir -p "$OUT/dmg" && cp -R "$APP" "$OUT/dmg/" && ln -s /Applications "$OUT/dmg/Applications"
-hdiutil create -volname "$NAME $VERSION" -srcfolder "$OUT/dmg" -fs HFS+ -format UDZO -ov "$OUT/$FILE" -quiet
+mkdir -p "$WORK/dmg" && cp -R "$APP" "$WORK/dmg/" && ln -s /Applications "$WORK/dmg/Applications"
+hdiutil create -volname "$NAME $VERSION" -srcfolder "$WORK/dmg" -fs HFS+ -format UDZO -ov "$OUT/$FILE" -quiet
 codesign --sign "$IDENTITY" --timestamp "$OUT/$FILE"
 notarize "$OUT/$FILE"
 xcrun stapler staple "$OUT/$FILE"
