@@ -9,11 +9,14 @@
 # Apple events from whatever runs it (System Settings > Privacy & Security > Automation: Terminal > Finder; macOS asks
 # the first time). If Finder can't be asked, this stops rather than make a disk image that opens as a plain window.
 set -euo pipefail
-cd "$(dirname "$0")/.."
 APP=${1:?the app}; OUTFILE=${2:?the disk image to make}; VOL=${3:?the volume name}
+# Made absolute before moving to the repository's folder, so paths given relative to anywhere still work.
+APP=${APP:a}; OUTFILE=${OUTFILE:a}
+cd "$(dirname "$0")/.."
 APPNAME=$(basename "$APP")
-# Where the icons sit, in points from the window's top left. make-dmg-background.swift draws its arrow and card to match.
-APP_X=160 APPS_X=480 ICON_Y=205
+# Where the icons' centres sit, in points from the window's top left; make-dmg-background.swift is given the same
+# points, and draws its arrow and card around them.
+APP_X=160 APPS_X=480 ICON_Y=200
 # The window: 640 × 400 points for the picture, plus the title bar, which Finder's bounds include (32 points on macOS
 # 26 and later, measured; 28 before, which leaves a sliver below the picture on those).
 LEFT=200 TOP=120 WIDTH=640 HEIGHT=$(( 400 + 32 ))
@@ -33,7 +36,7 @@ STAGE="$WORK/stage"
 mkdir -p "$STAGE/.background"
 ditto "$APP" "$STAGE/$APPNAME"
 ln -s /Applications "$STAGE/Applications"
-swift scripts/make-dmg-background.swift "$WORK/bg" "${APPNAME%.app}"
+swift scripts/make-dmg-background.swift "$WORK/bg" "${APPNAME%.app}" $APP_X $APPS_X $ICON_Y
 tiffutil -cathidpicheck "$WORK/bg/background.png" "$WORK/bg/background@2x.png" -out "$STAGE/.background/background.tiff" 2>/dev/null
 mkdir "$WORK/Volume.iconset"
 cp PhotoFinder/Assets.xcassets/AppIcon.appiconset/icon_*.png "$WORK/Volume.iconset/"
@@ -44,16 +47,16 @@ iconutil -c icns "$WORK/Volume.iconset" -o "$WORK/VolumeIcon.icns"
 for m in /Volumes/"$VOL" /Volumes/"$VOL "[0-9]*(N); do
   [ -d "$m" ] || continue
   echo "Ejecting $m, left mounted from before"
-  hdiutil detach "$m" -force -quiet
+  hdiutil detach "$m" -force -quiet || { echo "Couldn't eject $m. Eject it in Finder, then run this again."; exit 1; }
 done
 
-# Read-write first, with room for Finder's .DS_Store, then mounted where Finder can see it.
-SIZE=$(( $(du -sm "$STAGE" | cut -f1) + 20 ))
+# Read-write first, with room to spare for the file system and Finder's .DS_Store, then mounted where Finder can see it.
+SIZE=$(( $(du -sm "$STAGE" | cut -f1) * 12 / 10 + 20 ))
 hdiutil create -srcfolder "$STAGE" -volname "$VOL" -fs HFS+ -format UDRW -size "${SIZE}m" "$WORK/rw.dmg" -quiet
 hdiutil attach "$WORK/rw.dmg" -readwrite -noverify -noautoopen -mountpoint "/Volumes/$VOL" -quiet
 MNT="/Volumes/$VOL"
 
-if ! osascript - "$VOL" "$APPNAME" $APP_X $APPS_X $ICON_Y $LEFT $TOP $WIDTH $HEIGHT <<'APPLESCRIPT'
+if ! FINDER_ERR=$(osascript - "$VOL" "$APPNAME" $APP_X $APPS_X $ICON_Y $LEFT $TOP $WIDTH $HEIGHT 2>&1 <<'APPLESCRIPT'
 on run argv
   set {vol, appName, appX, appsX, iconY, l, t, w, h} to argv
   tell application "Finder"
@@ -88,10 +91,12 @@ on run argv
   end tell
 end run
 APPLESCRIPT
-then
+); then
   echo "Finder couldn't lay out the disk image's window, so no disk image was made: one that opens as a plain window"
-  echo "isn't fit to ship. Allow the app running this to control Finder (System Settings > Privacy & Security >"
-  echo "Automation), then run it again."
+  echo "isn't fit to ship. Finder said: $FINDER_ERR"
+  if [[ "$FINDER_ERR" == *-1743* || "$FINDER_ERR" == *"Not authorized"* ]]; then
+    echo "That means this isn't allowed to control Finder: allow it in System Settings > Privacy & Security > Automation."
+  fi
   exit 1
 fi
 
