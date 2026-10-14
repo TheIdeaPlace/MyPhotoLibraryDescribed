@@ -237,7 +237,15 @@ final class LibraryModelTests: XCTestCase {
         library.remember("A blue boat", for: "c.jpg")
         model.copyDescription([library.id("a.jpg"), library.id("c.jpg"), library.id("b.mov")])
         XCTAssertEqual(board.string(forType: .string), "a.jpg\nA red door\n\nc.jpg\nA blue boat")
-        XCTAssertEqual(library.said.last?.text, "Copied 2 descriptions. 1 photo hasn't been described yet")
+        XCTAssertEqual(library.said.last?.text, "Copied 2 descriptions", "the video is left out")
+
+        model.copyDescription([library.id("b.mov")])
+        XCTAssertEqual(library.said.last?.text, "Videos and folders aren't described")
+
+        // A correction in the Description panel not yet saved is what's copied.
+        model.panelDraft = (library.id("a.jpg"), "A red front door")
+        model.copyDescription([library.id("a.jpg")])
+        XCTAssertEqual(board.string(forType: .string), "A red front door")
     }
 
     // MARK: - Next Photo and Previous Photo
