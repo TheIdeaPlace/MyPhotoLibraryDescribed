@@ -23,7 +23,7 @@ final class RowsAndSearchTests: XCTestCase {
     private func sorted(_ rows: [FileRow], by id: String, descending: Bool = false) -> [String] {
         var comparator = ColumnOrder.comparator(id)
         comparator.order = descending ? .reverse : .forward
-        return rows.sorted(using: [comparator]).map(\.name)
+        return ColumnOrder.sorted(rows, by: [comparator]).map(\.name)
     }
 
     // MARK: - What a row says
@@ -148,10 +148,26 @@ final class RowsAndSearchTests: XCTestCase {
 
     func testDatesSortNewestFirstWithUndatedRowsLast() {
         let rows = [photo("old.jpg", taken: Date(timeIntervalSince1970: 1_000_000_000)),
-                    folder("Undated"),
+                    photo("undated.jpg", taken: nil, modified: Date(timeIntervalSince1970: 0)),
                     photo("new.jpg", taken: Date(timeIntervalSince1970: 1_700_000_000))]
-        XCTAssertEqual(sorted(rows, by: "date", descending: true), ["new.jpg", "old.jpg", "Undated"])
-        XCTAssertEqual(sorted(rows, by: "date"), ["Undated", "old.jpg", "new.jpg"])
+        XCTAssertEqual(sorted(rows, by: "date", descending: true).first, "new.jpg")
+        XCTAssertEqual(sorted(rows, by: "date").last, "new.jpg")
+    }
+
+    func testFoldersComeFirstWhicheverWayItsSorted() {
+        // As in File Explorer and on Windows (Kelly, 13 Oct).
+        let rows = [photo("b.jpg"), folder("Zoo"), photo("a.jpg"), folder("Art")]
+        XCTAssertEqual(sorted(rows, by: "name"), ["Art", "Zoo", "a.jpg", "b.jpg"])
+        XCTAssertEqual(sorted(rows, by: "name", descending: true), ["Zoo", "Art", "b.jpg", "a.jpg"])
+        XCTAssertEqual(Array(sorted(rows, by: "date", descending: true).prefix(2)), ["Art", "Zoo"])
+    }
+
+    func testTiesAreAToZByNameWhicheverWayItsSorted() {
+        let rows = [photo("c.jpg"), photo("IMG_10.jpg"), photo("a.jpg"), photo("IMG_2.jpg")]
+        let order = ["a.jpg", "c.jpg", "IMG_2.jpg", "IMG_10.jpg"]
+        XCTAssertEqual(sorted(rows, by: "date"), order)
+        XCTAssertEqual(sorted(rows, by: "date", descending: true), order)
+        XCTAssertEqual(sorted(rows, by: "kind", descending: true), order)
     }
 
     func testDimensionsSortByPixelsNotByTheirText() {

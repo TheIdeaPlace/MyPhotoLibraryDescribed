@@ -218,25 +218,25 @@ final class LibraryModelTests: XCTestCase {
     func testNextAndPreviousPhotoSkipFoldersAndVideos() async throws {
         let library = try await makeLibrary()
         let model = library.model
-        XCTAssertEqual(model.visibleRows.map(\.name), ["a.jpg", "b.mov", "c.jpg", "d"])
+        XCTAssertEqual(model.visibleRows.map(\.name), ["d", "a.jpg", "b.mov", "c.jpg"], "folders first, as on Windows")
 
         model.stepPhoto(by: 1)
         XCTAssertEqual(model.selection, [library.id("a.jpg")], "with nothing selected, the first photo")
         let scrolls = model.scrollRequest.serial
         model.stepPhoto(by: 1)
         XCTAssertEqual(model.selection, [library.id("c.jpg")], "past the video")
-        XCTAssertEqual(library.said.last?.text, "c.jpg, 3 of 4")
+        XCTAssertEqual(library.said.last?.text, "c.jpg, 4 of 4")
         XCTAssertEqual(model.scrollRequest.id, library.id("c.jpg"))
         XCTAssertEqual(model.scrollRequest.serial, scrolls + 1)
 
         model.stepPhoto(by: 1)
-        XCTAssertEqual(model.selection, [library.id("c.jpg")], "not onto the folder")
+        XCTAssertEqual(model.selection, [library.id("c.jpg")], "the last photo")
         XCTAssertEqual(library.said.last?.text, "No next photo")
 
         model.stepPhoto(by: -1)
         XCTAssertEqual(model.selection, [library.id("a.jpg")])
         model.stepPhoto(by: -1)
-        XCTAssertEqual(model.selection, [library.id("a.jpg")])
+        XCTAssertEqual(model.selection, [library.id("a.jpg")], "not onto the folder")
         XCTAssertEqual(library.said.last?.text, "No previous photo")
     }
 
@@ -245,7 +245,7 @@ final class LibraryModelTests: XCTestCase {
         let library = try await makeLibrary()
         let model = library.model
         model.stepPhoto(by: -1)
-        XCTAssertEqual(model.selection, [library.id("c.jpg")], "the last photo, not the folder after it")
+        XCTAssertEqual(model.selection, [library.id("c.jpg")], "the last photo")
     }
 
     // MARK: - Sort By
@@ -261,7 +261,7 @@ final class LibraryModelTests: XCTestCase {
 
         model.sortBy("name")
         XCTAssertEqual(library.said.last?.text, "Sorted by Name, ascending")
-        XCTAssertEqual(model.rows.map(\.name), ["a.jpg", "b.mov", "c.jpg", "d"])
+        XCTAssertEqual(model.rows.map(\.name), ["d", "a.jpg", "b.mov", "c.jpg"])
 
         model.sortBy("name")
         XCTAssertEqual(library.said.last?.text, "Sorted by Name, descending")
