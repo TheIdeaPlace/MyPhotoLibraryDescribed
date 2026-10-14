@@ -154,5 +154,10 @@ jobs:
           TITLE: ${{ needs.version.outputs.name }} ${{ needs.version.outputs.version }}
         run: |
           gh release view $env:TAG 2>$null | Out-Null
-          if ($LASTEXITCODE -ne 0) { gh release create $env:TAG --draft --verify-tag --title $env:TITLE --generate-notes }
+          # The notes Kelly edits (docs/release-notes/<tag>.md), or GitHub's list of changes when there are none.
+          $notes = "docs/release-notes/$env:TAG.md"
+          if ($LASTEXITCODE -ne 0) {
+            if (Test-Path $notes) { gh release create $env:TAG --draft --verify-tag --title $env:TITLE --notes-file $notes }
+            else { gh release create $env:TAG --draft --verify-tag --title $env:TITLE --generate-notes }
+          }
           gh release upload $env:TAG (Get-ChildItem "$env:RUNNER_TEMP\release" -File).FullName --clobber
