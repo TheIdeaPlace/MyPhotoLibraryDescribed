@@ -4,7 +4,7 @@ import Foundation
 /// Help > Check for Updates (#22, #33): releases are GitHub releases tagged `v<version>`, one tag for both apps (Kelly,
 /// 13 Oct), with the Mac's signed, notarized disk image; the Mac's earlier ones were tagged `mac-v<version>`. The app looks for a newer one quietly once a day and, if there is one, the menu item
 /// says so ("Update to 0.2.0…"), without taking focus or interrupting, as the app kit asks. Choosing it opens the
-/// release to download. No updater framework: a person drags the new app into Applications, as with most Mac apps.
+/// release to download. No updater framework: a person moves the new app into Applications, as with most Mac apps.
 enum Updates {
     static let tagPrefix = "v"
     /// The Mac's own tags before both apps shared one (0.1.x), still read so nothing is missed.

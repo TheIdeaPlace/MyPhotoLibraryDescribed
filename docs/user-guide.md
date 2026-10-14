@@ -154,7 +154,7 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 ## Removing the app
 
 - **Windows:** open Settings > Apps > Installed apps, find My Photo Library Described, choose More options, then Uninstall. Or find it in the Start menu, open its context menu (Shift+F10 or the Applications key) and choose Uninstall. It isn't in Control Panel's Programs and Features (appwiz.cpl): apps installed with App Installer, as packages, are listed only in Settings. Uninstalling removes the app and its AI helper together.
-- **Mac:** quit it and drag My Photo Library Described from Applications to the Trash.
+- **Mac:** quit it and move My Photo Library Described from Applications to the Trash.
 
 Your photos are never touched by removing the app, and descriptions saved into photos stay in them. The app's own files are left, so reinstalling picks up where you left off; to remove them too:
 
