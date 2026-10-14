@@ -97,7 +97,7 @@ func draw(scale: Double) -> Data {
   }
   text(name, NSFont.systemFont(ofSize: 27, weight: .bold), navy, top: card.minY - 82, kern: -0.3)
   text("Describe your photos on your Mac.", NSFont.systemFont(ofSize: 14, weight: .regular), slate, top: card.minY - 44)
-  text("Drag \(name) to Applications to install.", NSFont.systemFont(ofSize: 14, weight: .semibold), navy,
+  text("Move \(name) to Applications to install.", NSFont.systemFont(ofSize: 14, weight: .semibold), navy,
        top: card.maxY + 12)
 
   NSGraphicsContext.current = nil

@@ -99,7 +99,7 @@ notarize "$WORK/app.zip"
 xcrun stapler staple "$APP"
 
 echo "Making the disk image"
-# Laid out by Finder, so it opens as a designed window: drag the app to Applications (scripts/make-dmg.sh).
+# Laid out by Finder, so it opens as a designed window: move the app to Applications (scripts/make-dmg.sh).
 scripts/make-dmg.sh "$APP" "$OUT/$FILE" "$NAME $VERSION"
 codesign --sign "$IDENTITY" --timestamp "$OUT/$FILE"
 notarize "$OUT/$FILE"
