@@ -207,7 +207,15 @@ enum FileMetadataWriter {
             guard (try? Data(contentsOf: temp)) == rewritten else {
                 throw FileMetadataWriteError.notWritten("A new copy couldn't be made in its folder.")
             }
-            guard readsBack(temp, expected) else { throw FileMetadataWriteError.notWritten("The new metadata didn't read back.") }
+            guard readsBack(temp, expected) else {
+                // Photoshop's IPTC, changed since its digest was written: readers take its old caption ahead of the
+                // new one. The IPTC isn't rewritten, so the file is left alone and says why (#111, Kelly 13 Oct).
+                if type as String != UTType.png.identifier, let segments = try? JPEGMetadata.segments(of: data).segments,
+                   JPEGMetadata.hasIPTC(segments) {
+                    throw olderCaptionWins
+                }
+                throw FileMetadataWriteError.notWritten("The new metadata didn't read back.")
+            }
         } else {
             // Merged into what's there first, which leaves everything else exactly as it was. A HEIC file whose caption
             // is only in its EXIF (TIFF) description keeps reading the old one that way, so then the file's whole XMP
@@ -257,6 +265,10 @@ enum FileMetadataWriter {
         a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_size == b.st_size
             && a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec && a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec
     }
+
+    /// An older caption, in IPTC that Photoshop or a similar app changed, would still be read ahead of a new one.
+    static let olderCaptionWins = FileMetadataWriteError.notWritten(
+        "An older caption saved in it by Photoshop or a similar app would still be read instead of the new one, so it was left as it is.")
 
     /// Windows' words for the same refusal.
     static let changedWhileSaving = FileMetadataWriteError.notWritten(
