@@ -41,6 +41,8 @@ public partial class App : Application
         // Every launch starts read-only (#83): nothing may change a photo until the person allows it.
         PhotoChanges.Allowed = !settings.ReadOnly;
         var descriptions = new DescriptionStore(DescriptionStore.DefaultPath);
+        // What's saved with each description (#199): Windows' package list is slow, so it's read now, off this thread.
+        DescriptionProvenance.Warm();
         var model = new LibraryModel(settings, Settings.DefaultPath, new MetadataCache(MetadataCache.DefaultPath),
             LibraryRoots.PicturesLibraryAsync) { Descriptions = descriptions };
         var autoDescriber = new AutoDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync,
@@ -55,13 +57,13 @@ public partial class App : Application
         MainWindow.Show();
     }
 
-    private static Task<string> DescribeAsync(Models.MediaItem item, string kind, CancellationToken cancel) =>
-        WindowsAI.DescribeAsync(JpegOf(item, default), kind, cancel);
+    private static Task<Described> DescribeAsync(Models.MediaItem item, string kind, CancellationToken cancel) =>
+        WindowsAI.DescribeTimedAsync(JpegOf(item, default), kind, cancel);
 
     /// <summary>Describes a photo ahead (#64): <paramref name="drop"/> gives it up while it's being decoded or waiting its
     /// turn, but not once Windows has it.</summary>
-    private static Task<string> DescribeAheadAsync(Models.MediaItem item, string kind, CancellationToken drop) =>
-        WindowsAI.DescribeAsync(JpegOf(item, drop), kind, drop: drop);
+    private static Task<Described> DescribeAheadAsync(Models.MediaItem item, string kind, CancellationToken drop) =>
+        WindowsAI.DescribeTimedAsync(JpegOf(item, drop), kind, drop: drop);
 
     /// <summary>The photo as a JPEG at a given size, for Windows AI; <paramref name="drop"/> stops it before and after decoding.</summary>
     private static Func<uint, Task<byte[]>> JpegOf(Models.MediaItem item, CancellationToken drop) => async size =>

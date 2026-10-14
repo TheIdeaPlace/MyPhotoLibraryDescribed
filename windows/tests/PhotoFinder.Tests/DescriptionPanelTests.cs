@@ -47,8 +47,8 @@ public sealed class DescriptionPanelTests : IDisposable
         Assert.Equal("My correction.", store.Get(a, "accessible"));
         store.Save();
 
-        // After a restart, from the separate file beside Descriptions.json.
-        Assert.True(File.Exists(_lib.PathOf(@"data\EditedDescriptions.json")));
+        // After a restart, from its record (#199): the separate file the first format had is gone.
+        Assert.False(File.Exists(_lib.PathOf(@"data\EditedDescriptions.json")));
         var again = new DescriptionStore(file);
         Assert.True(again.IsEdited(a, "accessible"));
         // Describe Again, agreed to: Windows' description replaces it and the mark goes.

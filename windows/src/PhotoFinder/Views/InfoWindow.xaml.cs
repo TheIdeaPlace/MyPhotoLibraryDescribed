@@ -273,7 +273,7 @@ public partial class InfoWindow : Window
             AIStatus.Text = again ? "Redescribing…" : "Describing…";
             Announcer.Announce(again ? "Redescribing" : "Describing");
             var path = _item.Path;
-            var text = await App.WindowsAI.DescribeAsync(async size =>
+            var (text, took) = await App.WindowsAI.DescribeTimedAsync(async size =>
             {
                 using var bitmap = await ImageDecoding.DecodeAsync(path, size);
                 return await ImageDecoding.ToJpegAsync(bitmap);
@@ -287,7 +287,7 @@ public partial class InfoWindow : Window
             if (text.Length > 0)
             {
                 UseAsCaptionButton.Visibility = _useAsCaption is null ? Visibility.Collapsed : Visibility.Visible;
-                _store?.Put(_item, kind, text);
+                _store?.Put(_item, kind, text, took: took);
                 _row.Description = text;
                 UpdateDescribeButtonLater();
             }

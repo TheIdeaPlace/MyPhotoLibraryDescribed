@@ -512,8 +512,8 @@ public sealed class BackgroundDescriber : IDisposable
                 _current = path;
                 try
                 {
-                    var text = await _describe(item, kind, _closing.Token);
-                    if (text.Length > 0) _store.PutUnlessEdited(item, kind, text);
+                    var (text, took) = await _describe(item, kind, _closing.Token);
+                    if (text.Length > 0) _store.PutUnlessEdited(item, kind, text, took);
                     failedInARow = 0;
                     // Describing works, so the failures before this one were the photos' own: kept for later starts.
                     if (_pending.Count > 0)
