@@ -1,8 +1,8 @@
 import XCTest
 @testable import Photo_Finder
 
-/// The description store on disk (#21): Descriptions.json in the format Windows' DescriptionStore shares, the edited
-/// marks beside it, and keeping a description when the app writes into its file. Each test has a temporary folder of
+/// The description store on disk (#21, #199): Descriptions.json, reading the older flat format Windows' DescriptionStore
+/// still writes, and keeping a description when the app writes into its file. Each test has a temporary folder of
 /// its own; the real Application Support folder is never touched.
 final class DescriptionStoreTests: XCTestCase {
     /// A new folder for one test's store, removed afterwards. A description saved with `remember` is written again a
@@ -33,8 +33,8 @@ final class DescriptionStoreTests: XCTestCase {
         XCTAssertFalse(cache.isEdited(forKey: "photo"))
     }
 
-    func testAFileWindowsWroteIsRead() throws {
-        // Windows' DescriptionStore writes a plain JSON object of key to description, with no edited marks inside it.
+    func testAFlatFileFromBeforeProvenanceIsRead() throws {
+        // Before #199 (and Windows' DescriptionStore until it matches): a plain JSON object of key to description.
         let folder = makeFolder()
         try write(#"{"file:/USERS/K/PICTURES/A.JPG|10|637134336000000000":"A cat.","photo-2":"A dog."}"#,
                   to: descriptionsURL(in: folder))
@@ -76,7 +76,7 @@ final class DescriptionStoreTests: XCTestCase {
 
     // MARK: - Saving
 
-    func testSavingMakesTheFolderAndWritesTheEditedMarksBesideTheDescriptions() throws {
+    func testSavingMakesTheFolderAndMarksTheCorrectionsInTheirRecords() throws {
         let folder = makeFolder().appendingPathComponent("Not There Yet", isDirectory: true)
         let cache = DescriptionCache(fileURL: descriptionsURL(in: folder))
         cache.remember("Zebra corrected", forKey: "z", edited: true)
@@ -85,8 +85,11 @@ final class DescriptionStoreTests: XCTestCase {
         cache.save()
         XCTAssertEqual(try savedDescriptions(in: folder),
                        ["z": "Zebra corrected", "a": "Apple corrected", "m": "Made by Apple Intelligence"])
-        let marks = try JSONDecoder().decode([String].self, from: Data(contentsOf: editedURL(in: folder)))
-        XCTAssertEqual(marks, ["a", "z"], "sorted, so the file is the same each time; only the corrections")
+        let records = try savedRecords(in: folder)
+        XCTAssertEqual(records["a"]?.source, "person")
+        XCTAssertEqual(records["z"]?.source, "person")
+        XCTAssertNotEqual(records["m"]?.source, "person")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: editedURL(in: folder).path), "no separate file of marks")
     }
 
     func testAClearedMarkStaysClearedAfterARestart() throws {
@@ -96,8 +99,6 @@ final class DescriptionStoreTests: XCTestCase {
         cache.save()
         cache.remember("Redescribed", forKey: "photo")
         cache.save()
-        let marks = try JSONDecoder().decode([String].self, from: Data(contentsOf: editedURL(in: folder)))
-        XCTAssertEqual(marks, [])
         XCTAssertFalse(DescriptionCache(fileURL: descriptionsURL(in: folder)).isEdited(forKey: "photo"))
     }
 
@@ -196,7 +197,11 @@ final class DescriptionStoreTests: XCTestCase {
     // MARK: - Helpers
 
     private func savedDescriptions(in folder: URL) throws -> [String: String] {
-        try JSONDecoder().decode([String: String].self, from: Data(contentsOf: descriptionsURL(in: folder)))
+        try savedRecords(in: folder).mapValues { $0.text }
+    }
+
+    private func savedRecords(in folder: URL) throws -> [String: DescriptionRecord] {
+        try ProvenanceFile.records(at: descriptionsURL(in: folder))
     }
 }
 

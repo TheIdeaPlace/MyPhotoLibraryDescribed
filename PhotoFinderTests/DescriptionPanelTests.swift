@@ -26,13 +26,17 @@ final class DescriptionPanelTests: XCTestCase {
         XCTAssertFalse(cache.isEdited(forKey: "photo"))
     }
 
-    func testTheSavedFileKeepsItsFormatForWindows() throws {
+    func testTheSavedFileHoldsTheCorrectionInItsRecord() throws {
         let url = folder().appendingPathComponent("Descriptions.json")
         let cache = DescriptionCache(fileURL: url)
         cache.remember("Mine", forKey: "photo", edited: true)
         cache.save()
-        let saved = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
-        XCTAssertEqual(saved, ["photo": "Mine"])
+        let saved = try ProvenanceFile.records(at: url)
+        XCTAssertEqual(saved.keys.sorted(), ["photo"])
+        XCTAssertEqual(saved["photo"]?.text, "Mine")
+        XCTAssertEqual(saved["photo"]?.source, "person")
+        XCTAssertNotNil(saved["photo"]?.edited)
+        XCTAssertNil(saved["photo"]?.original, "nothing was there to correct")
     }
 
     func testDescribeAgainReplacesOnlyTheCorrectionAgreedTo() {

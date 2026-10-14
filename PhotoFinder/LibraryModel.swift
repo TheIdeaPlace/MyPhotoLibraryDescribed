@@ -2652,7 +2652,7 @@ final class LibraryModel {
             }
             let start = ContinuousClock.now
             do {
-                let text = try await PhotoDescriber.describe(data)
+                let text = try await PhotoDescriber.describe(data, prompt: DescriptionPrompt.current)
                 guard !Task.isCancelled else { return nil }
                 guard let text else {
                     return result(nil, took: PhotoDescriber.seconds(since: start), code: "decode_failed",
@@ -2786,17 +2786,22 @@ final class LibraryModel {
         // Dropped while loading (describing ahead, and you landed elsewhere): stop before the model is asked.
         guard !Task.isCancelled else { return nil }
         guard let data else { return "This photo couldn't be loaded" }
+        // The prompt is read once, so the one asked is the one saved with the description (#199).
+        let prompt = DescriptionPrompt.current(in: defaults)
+        let start = ContinuousClock.now
         do {
-            guard let text = try await photoDescribing.describe(data), !text.isEmpty else {
+            guard let text = try await photoDescribing.describe(data, prompt), !text.isEmpty else {
                 return "Apple Intelligence returned an empty description"
             }
+            let took = start.duration(to: .now)
+            let seconds = Double(took.components.seconds) + Double(took.components.attoseconds) / 1e18
             // A newer Describe Photo replaced this one: its description is the one to keep.
             guard !Task.isCancelled, keep() else { return nil }
             // Corrected in the Description panel while this was being described: the person's words win.
             guard DescriptionCache.mayReplace(edited: descriptions.isEdited(forKey: key),
                                               saved: descriptions.description(forKey: key), agreed: replacingEdit)
             else { return nil }
-            descriptions.remember(text, forKey: key)
+            descriptions.remember(text, forKey: key, provenance: .appleIntelligence(prompt: prompt, seconds: seconds))
             return text
         } catch {
             return photoDescribing.failureMessage(error)
@@ -3024,7 +3029,8 @@ final class LibraryObserver: NSObject, PHPhotoLibraryChangeObserver, @unchecked 
 /// stand-in in tests (#48), so describing can be tested without Apple Intelligence or the macOS 27 SDK.
 struct PhotoDescribing {
     var unavailableReason: @MainActor () -> String?
-    var describe: @MainActor (Data) async throws -> String?
+    /// The description of a photo's data, asked with the prompt given (the one saved with it, #199).
+    var describe: @MainActor (Data, String) async throws -> String?
     var failureMessage: @MainActor (Error) -> String
 
     /// Apple's on-device model, on macOS 27 or later; nil before.
@@ -3032,7 +3038,7 @@ struct PhotoDescribing {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
             return PhotoDescribing(unavailableReason: { ImageConversation.unavailableReason },
-                                   describe: { try await PhotoDescriber.describe($0) },
+                                   describe: { try await PhotoDescriber.describe($0, prompt: $1) },
                                    failureMessage: { ImageConversation.message(for: $0) })
         }
 #endif
