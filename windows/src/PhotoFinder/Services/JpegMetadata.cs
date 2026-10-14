@@ -143,7 +143,53 @@ public static class JpegMetadata
         var list = new List<byte>();
         foreach (var s in segments.Where(s => s.Marker == 0xED && Has(jpeg, s.Offset + 4, PhotoshopSignature)))
             list.AddRange(jpeg.AsSpan((s.Offset + 4 + PhotoshopSignature.Length)..s.End));
-        var b = list.ToArray();
+        return StaleIptcCaption(list.ToArray());
+    }
+
+    /// <summary>
+    /// The caption other apps read from this JPEG when it's Photoshop's IPTC caption rather than the XMP's (#181): its
+    /// digest is stale, as above. Reads only the segment headers and Photoshop's segments, not the picture, so it's cheap
+    /// for a library scan. Null when the XMP's caption is the one read, or the file can't be followed.
+    /// </summary>
+    public static string? IptcCaptionReadFirst(Stream file)
+    {
+        try
+        {
+            var photoshop = new List<byte>();
+            var header = new byte[4];
+            file.Position = 0;
+            if (file.Read(header, 0, 2) != 2 || header[0] != 0xFF || header[1] != 0xD8) return null;
+            long at = 2;
+            while (at + 4 <= file.Length)
+            {
+                file.Position = at;
+                file.ReadExactly(header);
+                if (header[0] != 0xFF) return null;
+                var marker = header[1];
+                if (marker == 0xFF) { at++; continue; }
+                if (marker is 0xDA or 0xD9) break;
+                if (marker is 0x01 or (>= 0xD0 and <= 0xD7)) { at += 2; continue; }
+                var length = (header[2] << 8) | header[3];
+                if (length < 2 || at + 2 + length > file.Length) return null;
+                if (marker == 0xED && length - 2 > PhotoshopSignature.Length)
+                {
+                    var body = new byte[length - 2];
+                    file.ReadExactly(body);
+                    if (body.AsSpan().StartsWith(PhotoshopSignature)) photoshop.AddRange(body.AsSpan(PhotoshopSignature.Length));
+                }
+                at += 2 + length;
+            }
+            return photoshop.Count == 0 ? null : StaleIptcCaption(photoshop.ToArray())?.FirstOrDefault();
+        }
+        catch (Exception ex) when (ex is IOException or EndOfStreamException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The caption's readings (UTF-8, Latin-1) from Photoshop's joined resource list, when its digest is stale.</summary>
+    private static string[]? StaleIptcCaption(byte[] b)
+    {
         byte[]? iptc = null, digest = null;
         var p = 0;
         while (p + 12 <= b.Length && ResourceSignatures.Any(sig => b.AsSpan(p, 4).SequenceEqual(sig)))

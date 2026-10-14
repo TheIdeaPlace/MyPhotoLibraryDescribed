@@ -96,6 +96,13 @@ public static class XmpFields
             return null;
         }
         var found = await Get(Caption);
+        // A JPEG whose Photoshop IPTC caption other apps read instead of the XMP's (a stale digest, #181): that's its
+        // caption, so Get Info and the list show what everyone else sees, and replacing it is asked about.
+        if (IsJpeg(path))
+        {
+            await using var head = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 12);
+            if (JpegMetadata.IptcCaptionReadFirst(head) is { } iptc) found = iptc.Trim();
+        }
         return new Fields(found ?? "", await Get(Alt) ?? "", await Get(Extended) ?? "", found is not null);
     }
 

@@ -658,6 +658,24 @@ public sealed class FileFieldsTests : IDisposable
     }
 
     [Fact]
+    public async Task TheIptcCaptionOtherAppsRead_IsTheCaptionShown_WhenItWins()
+    {
+        // #181: Get Info and the list show the caption everyone else sees.
+        var stale = _lib.PathOf("stale-shown.jpg");
+        File.WriteAllBytes(stale, WithPhotoshopIptc("An old caption", "stale"));
+        Assert.Equal(new XmpFields.Fields("An old caption", "", "", HasCaption: true), await XmpFields.ReadAsync(stale));
+        Assert.Equal("An old caption", (await MetadataReader.ReadAsync(stale)).Caption);
+        // In step: the XMP's (none here) is read, as other apps do.
+        var right = _lib.PathOf("right-shown.jpg");
+        File.WriteAllBytes(right, WithPhotoshopIptc("An old caption", "right"));
+        Assert.False((await XmpFields.ReadAsync(right)).HasCaption);
+        // Split across two segments too.
+        var split = _lib.PathOf("split-shown.jpg");
+        File.WriteAllBytes(split, WithPhotoshopIptc("An old caption", "stale", split: true));
+        Assert.Equal("An old caption", (await XmpFields.ReadAsync(split)).Caption);
+    }
+
+    [Fact]
     public async Task AnOlderIptcCaptionReadersWouldShowInstead_IsntHidden_AndSaysSo()
     {
         // #169, as the Mac: the IPTC was changed after its digest was written, so readers show its caption, not the XMP's.
