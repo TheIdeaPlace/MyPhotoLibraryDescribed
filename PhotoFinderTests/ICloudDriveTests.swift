@@ -1,9 +1,11 @@
+import os
 import XCTest
 @testable import Photo_Finder
 
-/// Files in an added folder kept only in iCloud Drive (#197): the list doesn't read them, describing as you arrow and
-/// ahead leaves them, and writing into them asks first, as Windows does for OneDrive's online-only files. iCloud is
-/// stood in for: the files are temporary ones on this Mac that the model is told are only in iCloud Drive.
+/// Files in an added folder kept only in the cloud, in iCloud Drive or another cloud folder (#197): the list doesn't
+/// read them, describing as you arrow and ahead leaves them, and writing into them asks first, as Windows does for
+/// OneDrive's online-only files. The cloud is stood in for: the files are temporary ones on this Mac that the model
+/// is told are only in the cloud.
 final class ICloudDriveTests: XCTestCase {
     override func tearDown() {
         PhotoChanges.allowed = false
@@ -38,15 +40,15 @@ final class ICloudDriveTests: XCTestCase {
     // MARK: - The question
 
     func testTheQuestionBeforeWritingSaysHowManyWouldBeDownloaded() {
-        XCTAssertNil(FileAvailability.writeQuestion(action: "Edit Caption", files: 3, onlyInICloud: 0), "nothing to ask")
-        XCTAssertEqual(FileAvailability.writeQuestion(action: "Edit Caption", files: 1, onlyInICloud: 1),
-                       "Edit Caption changes 1 file on your Mac. It's only in iCloud Drive, and will be downloaded to change it. Continue?")
-        XCTAssertEqual(FileAvailability.writeQuestion(action: "Use Description as Caption", files: 3, onlyInICloud: 2),
-                       "Use Description as Caption changes 3 files on your Mac. 2 of them are only in iCloud Drive, and each will be downloaded to change it. Continue?")
-        XCTAssertEqual(FileAvailability.writeQuestion(action: "Edit Caption", files: 3, onlyInICloud: 1),
-                       "Edit Caption changes 3 files on your Mac. 1 of them is only in iCloud Drive, and will be downloaded to change it. Continue?")
-        XCTAssertEqual(FileAvailability.writeQuestion(action: "Edit Caption", files: 2, onlyInICloud: 2),
-                       "Edit Caption changes 2 files on your Mac. All of them are only in iCloud Drive, and each will be downloaded to change it. Continue?")
+        XCTAssertNil(FileAvailability.writeQuestion(action: "Edit Caption", files: 3, onlyInCloud: 0), "nothing to ask")
+        XCTAssertEqual(FileAvailability.writeQuestion(action: "Edit Caption", files: 1, onlyInCloud: 1),
+                       "Edit Caption changes 1 file on your Mac. It's only in the cloud, and will be downloaded to change it. Continue?")
+        XCTAssertEqual(FileAvailability.writeQuestion(action: "Use Description as Caption", files: 3, onlyInCloud: 2),
+                       "Use Description as Caption changes 3 files on your Mac. 2 of them are only in the cloud, and each will be downloaded to change it. Continue?")
+        XCTAssertEqual(FileAvailability.writeQuestion(action: "Edit Caption", files: 3, onlyInCloud: 1),
+                       "Edit Caption changes 3 files on your Mac. 1 of them is only in the cloud, and will be downloaded to change it. Continue?")
+        XCTAssertEqual(FileAvailability.writeQuestion(action: "Edit Caption", files: 2, onlyInCloud: 2),
+                       "Edit Caption changes 2 files on your Mac. All of them are only in the cloud, and each will be downloaded to change it. Continue?")
     }
 
     func testAFileOutsideICloudDriveIsOnThisMac() throws {
@@ -60,7 +62,7 @@ final class ICloudDriveTests: XCTestCase {
 
     @MainActor
     func testTheListShowsWhatTheFileSystemSaysWithoutReadingAFileOnlyInICloudDrive() async throws {
-        let library = try await makeLibrary(onlyInICloud: ["c.jpg"])
+        let library = try await makeLibrary(onlyInCloud: ["c.jpg"])
         let model = library.model
         let a = try XCTUnwrap(model.rows.first { $0.name == "a.jpg" })
         let c = try XCTUnwrap(model.rows.first { $0.name == "c.jpg" })
@@ -76,7 +78,7 @@ final class ICloudDriveTests: XCTestCase {
 
     @MainActor
     func testDescribingAsYouArrowAndAheadLeaveAFileOnlyInICloudDrive() async throws {
-        let library = try await makeLibrary(onlyInICloud: ["c.jpg"])
+        let library = try await makeLibrary(onlyInCloud: ["c.jpg"])
         let model = library.model
         model.isInFront = { true }
         library.describer.reply = "A grey cat"
@@ -100,7 +102,7 @@ final class ICloudDriveTests: XCTestCase {
 
     @MainActor
     func testDescribePhotoStillDescribesAFileOnlyInICloudDriveWhenAsked() async throws {
-        let library = try await makeLibrary(onlyInICloud: ["c.jpg"])
+        let library = try await makeLibrary(onlyInCloud: ["c.jpg"])
         let model = library.model
         library.describer.reply = "A grey cat"
         model.selection = [library.id("c.jpg")]
@@ -113,13 +115,13 @@ final class ICloudDriveTests: XCTestCase {
 
     @MainActor
     func testEditCaptionAsksBeforeDownloadingAFileOnlyInICloudDrive() async throws {
-        let library = try await makeLibrary(onlyInICloud: ["c.jpg"])
+        let library = try await makeLibrary(onlyInCloud: ["c.jpg"])
         let model = library.model
         let questions = allowChanges(library)
         model.selection = [library.id("a.jpg"), library.id("c.jpg")]
         model.editCaption()
         try await waitUntil("the question") { !questions.asked.isEmpty }
-        XCTAssertEqual(questions.asked, ["Edit Caption changes 2 files on your Mac. 1 of them is only in iCloud Drive, and will be downloaded to change it. Continue?"])
+        XCTAssertEqual(questions.asked, ["Edit Caption changes 2 files on your Mac. 1 of them is only in the cloud, and will be downloaded to change it. Continue?"])
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertNil(model.captionTarget, "cancelled: no caption sheet")
 
@@ -138,7 +140,7 @@ final class ICloudDriveTests: XCTestCase {
 
     @MainActor
     func testUseDescriptionAsCaptionAsksBeforeDownloadingAndCancelLeavesTheFiles() async throws {
-        let library = try await makeLibrary(onlyInICloud: ["c.jpg"])
+        let library = try await makeLibrary(onlyInCloud: ["c.jpg"])
         let model = library.model
         library.remember("A red door", for: "a.jpg")
         library.remember("A grey cat", for: "c.jpg")
@@ -146,7 +148,7 @@ final class ICloudDriveTests: XCTestCase {
         model.selection = [library.id("a.jpg"), library.id("c.jpg")]
         model.useDescriptionAsCaption()
         try await waitUntil("the question") { !questions.asked.isEmpty }
-        XCTAssertEqual(questions.asked, ["Use Description as Caption changes 2 files on your Mac. 1 of them is only in iCloud Drive, and will be downloaded to change it. Continue?"])
+        XCTAssertEqual(questions.asked, ["Use Description as Caption changes 2 files on your Mac. 1 of them is only in the cloud, and will be downloaded to change it. Continue?"])
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(caption(library, "a.jpg"), "", "cancelled: nothing written")
         XCTAssertEqual(caption(library, "c.jpg"), "")
@@ -159,8 +161,34 @@ final class ICloudDriveTests: XCTestCase {
     }
 
     @MainActor
+    func testUseDescriptionAsCaptionNeverReadsAFileThatCantHoldACaption() async throws {
+        let library = try await makeLibrary(onlyInCloud: ["f.gif"], withGIF: true)
+        let model = library.model
+        library.remember("A red door", for: "a.jpg")
+        library.remember("A spinning logo", for: "f.gif")
+        let questions = allowChanges(library)
+        let reads = OSAllocatedUnfairLock(initialState: [String]())
+        model.readMetadata = { url in
+            reads.withLock { $0.append(url.lastPathComponent) }
+            return FileMetadata.read(url)
+        }
+        model.selection = [library.id("a.jpg"), library.id("f.gif")]
+        model.useDescriptionAsCaption()
+        try await waitUntil("a.jpg's caption") { self.caption(library, "a.jpg") == "A red door" }
+        XCTAssertTrue(questions.asked.isEmpty, "the GIF only in the cloud is skipped, so nothing's downloaded or asked")
+        XCTAssertEqual(reads.withLock { $0 }, ["a.jpg"], "the GIF isn't read")
+    }
+
+    @MainActor
+    func testTheListsThumbnailLeavesAFileOnlyInTheCloud() async throws {
+        let library = try await makeLibrary(onlyInCloud: ["c.jpg"])
+        let thumbnail = await library.model.thumbnail(for: library.id("c.jpg"))
+        XCTAssertNil(thumbnail, "the placeholder: Quick Look isn't asked, so it can't download it")
+    }
+
+    @MainActor
     func testSaveDescriptionsInPhotosLeavesAFileOnlyInICloudDrive() async throws {
-        let library = try await makeLibrary(settings: [CaptionPolicy.key: true], onlyInICloud: ["c.jpg"])
+        let library = try await makeLibrary(settings: [CaptionPolicy.key: true], onlyInCloud: ["c.jpg"])
         let model = library.model
         let questions = allowChanges(library)
         library.describer.reply = "A grey cat"
@@ -173,7 +201,7 @@ final class ICloudDriveTests: XCTestCase {
         model.selection = [library.id("a.jpg")]
         model.describeFocusedPhoto()
         try await waitUntil("a.jpg's caption") { self.caption(library, "a.jpg") == "A red door" }
-        XCTAssertEqual(caption(library, "c.jpg"), "", "only in iCloud Drive: left as it is, without asking")
+        XCTAssertEqual(caption(library, "c.jpg"), "", "only in the cloud: left as it is, without asking")
         XCTAssertTrue(questions.asked.isEmpty)
     }
 }

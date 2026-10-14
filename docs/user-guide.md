@@ -85,7 +85,7 @@ On the Mac, a photo in your Photos library gets a Photos caption, which syncs wi
 
 **File > Add Folder to Library…** adds a folder of photos to the sidebar, under Folders, and its photos are described like the rest. **Remove Folder from Library** (or Delete on it in the sidebar) removes it after asking. The folder and its photos stay on your computer.
 
-A file that's only in the cloud (in iCloud Drive on the Mac, online-only in OneDrive on Windows) isn't downloaded just because its folder is showing: the list shows its name, size and dates, and the rest of its details once it's on your computer. Describing as you arrow and in the background skip it, and so does Save Descriptions in Photos. Edit Caption and Use Description as Caption ask before downloading it to change it. On the Mac, Describe Photo downloads it and describes it; on Windows, open it once to download it, then describe it.
+A file that's only in the cloud (on the Mac, in iCloud Drive or a OneDrive, Dropbox or Google Drive folder; on Windows, online-only in OneDrive) isn't downloaded just because its folder is showing: the list shows its name, size and dates, and the rest of its details once it's on your computer. Describing as you arrow and in the background skip it, and so does Save Descriptions in Photos. Edit Caption and Use Description as Caption ask before downloading it to change it. On the Mac, Describe Photo downloads it and describes it; on Windows, open it once to download it, then describe it.
 
 ## Columns, labels and sorting
 

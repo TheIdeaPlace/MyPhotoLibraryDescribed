@@ -517,9 +517,11 @@ extension XCTestCase {
     }
 
     /// Makes the test library, shows its folder, and waits until every file's details are read. The files named in
-    /// `onlyInICloud` are treated as kept only in iCloud Drive (#197); nothing real is in iCloud.
+    /// `onlyInCloud` are treated as kept only in the cloud (#197); nothing real is in the cloud. `withGIF` adds f.gif,
+    /// a photo whose format can't hold a caption.
     @MainActor
-    func makeLibrary(settings: [String: Any] = [:], onlyInICloud: Set<String> = []) async throws -> TestLibrary {
+    func makeLibrary(settings: [String: Any] = [:], onlyInCloud: Set<String> = [],
+                     withGIF: Bool = false) async throws -> TestLibrary {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("LibraryModelTests-\(UUID().uuidString)")
         let photos = base.appendingPathComponent("Photos", isDirectory: true)
         let subfolder = photos.appendingPathComponent("d", isDirectory: true)
@@ -529,6 +531,7 @@ extension XCTestCase {
             try writeJPEG(to: url)
         }
         try Data("not really a movie".utf8).write(to: photos.appendingPathComponent("b.mov"))
+        if withGIF { try writeJPEG(to: photos.appendingPathComponent("f.gif"), type: .gif) }
 
         // One fixed suite, cleared first and after: a new name each time left an empty file in ~/Library/Preferences
         // per test (#143's review).
@@ -547,24 +550,24 @@ extension XCTestCase {
         let library = TestLibrary(root: root, defaults: defaults,
                                   cacheURL: base.appendingPathComponent("Store").appendingPathComponent("Descriptions.json"))
         let model = library.model
-        model.isOnThisMac = { !onlyInICloud.contains($0.lastPathComponent) }
+        model.isOnThisMac = { !onlyInCloud.contains($0.lastPathComponent) }
         model.addFolders([root])
         try await waitUntil("the folder in the sidebar") { model.itemsByID[FolderID.folder(root)] != nil }
         model.selectedSourceID = FolderID.folder(root)
         try await waitUntil("the folder's details") {
-            !model.isLoading && model.rows.count == 4
-                && model.rows.filter { $0.name.hasSuffix(".jpg") && !onlyInICloud.contains($0.name) }
+            !model.isLoading && model.rows.count == (withGIF ? 5 : 4)
+                && model.rows.filter { $0.name.hasSuffix(".jpg") && !onlyInCloud.contains($0.name) }
                     .allSatisfy { !$0.dimensions.isEmpty }
         }
         library.said.removeAll()
         return library
     }
 
-    private func writeJPEG(to url: URL) throws {
+    private func writeJPEG(to url: URL, type: UTType = .jpeg) throws {
         let context = try XCTUnwrap(CGContext(data: nil, width: 8, height: 6, bitsPerComponent: 8, bytesPerRow: 0,
                                               space: CGColorSpaceCreateDeviceRGB(),
                                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-        let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, type.identifier as CFString, 1, nil))
         CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), nil)
         XCTAssertTrue(CGImageDestinationFinalize(destination))
     }
