@@ -165,5 +165,10 @@ jobs:
               Write-Host "::warning::No docs/release-notes/$env:TAG.md, so the draft gets GitHub's list of changes."
               gh release create $env:TAG --draft --verify-tag --title $env:TITLE --generate-notes
             }
+            if ($LASTEXITCODE -ne 0) { throw "Couldn't make the draft release $env:TAG." }
+          } elseif (Test-Path $notes) {
+            # A draft already there (the tag pushed again): its notes become the reviewed ones too.
+            gh release edit $env:TAG --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { throw "Couldn't update the notes of the draft $env:TAG." }
           }
           gh release upload $env:TAG (Get-ChildItem "$env:RUNNER_TEMP\release" -File).FullName --clobber
