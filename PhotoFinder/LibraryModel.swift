@@ -61,9 +61,14 @@ final class LibraryModel {
     }
 
     private(set) var rows: [FileRow] = [] {
-        didSet { if !fillingDescriptions, showsDescriptionColumn { fillDescriptions() } }
+        didSet {
+            guard !fillingRows else { return }
+            if showsDescriptionColumn { fillDescriptions() }
+            fillPlaceNames()
+        }
     }
-    @ObservationIgnored private var fillingDescriptions = false
+    /// Set while descriptions or place names are copied into the rows, which changes them again.
+    @ObservationIgnored private var fillingRows = false
     /// View > Show Description: the Description panel beside the list or gallery (#50). On unless turned off.
     var showDescriptionPanel: Bool {
         didSet { defaults.set(showDescriptionPanel, forKey: "showDescriptionPanel") }
@@ -134,6 +139,7 @@ final class LibraryModel {
         didSet {
             defaults.set(viewMode.rawValue, forKey: "viewMode")
             if viewMode == .gallery { ensureGallerySelection() }
+            if viewMode != oldValue { placeNamesShownChanged() }
         }
     }
     /// The columns shown, in the order they're shown and read. Always includes Name.
@@ -141,11 +147,15 @@ final class LibraryModel {
         didSet {
             defaults.set(columnOrder, forKey: "columnOrder")
             if showsDescriptionColumn, !oldValue.contains("description") { fillDescriptions() }
+            if columnOrder.contains("location") != oldValue.contains("location") { placeNamesShownChanged() }
         }
     }
     /// What the gallery says, in order, when you move to a photo (View > Labels > Gallery, #38). Position by default.
     var galleryLabels: [GalleryItem] = GalleryLabels.defaultOrder {
-        didSet { defaults.set(galleryLabels.map(\.rawValue), forKey: GalleryLabels.defaultsKey) }
+        didSet {
+            defaults.set(galleryLabels.map(\.rawValue), forKey: GalleryLabels.defaultsKey)
+            if galleryLabels.contains(.location) != oldValue.contains(.location) { placeNamesShownChanged() }
+        }
     }
     var labelsSheetShown = false {
         didSet { if !labelsSheetShown, oldValue { autoDescriber.refocused(currentID: autoDescribeCandidate) } }
@@ -223,6 +233,13 @@ final class LibraryModel {
     @ObservationIgnored private var terminationObserver: NSObjectProtocol?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
     @ObservationIgnored private var descriptionObserver: NSObjectProtocol?
+    @ObservationIgnored private var placeNameObserver: NSObjectProtocol?
+    /// Place names already found (#172): the app's data folder, or a test's.
+    let placeNames: PlaceNameCache
+    /// Looks up names for the photos showing while Place Taken is (#172); a stand-in asks in tests.
+    @ObservationIgnored let placeLookup: PlaceNameLookup
+    /// Whether some row has a place name in it, so turning names off clears them without looking at every row each time.
+    @ObservationIgnored private var rowsHavePlaceNames = false
     /// Changes whenever a description is saved, so views showing one (the gallery) update.
     private(set) var descriptionRevision = 0
     /// Photo > Describe Photos Automatically; on unless turned off.
@@ -255,9 +272,14 @@ final class LibraryModel {
     ///   - descriptions: the saved descriptions; tests pass one in a temporary folder.
     ///   - defaults: where settings are remembered; tests pass a suite of their own.
     ///   - photoDescribing: Apple Intelligence where it can be used; tests pass a stand-in.
+    ///   - placeNames: the place names found; tests pass one in a temporary folder.
+    ///   - geocodePlace: asks Apple for a place's name; tests pass a stand-in.
     init(descriptions: DescriptionCache = DescriptionCache(), defaults: UserDefaults = .standard,
-         photoDescribing: PhotoDescribing? = .appleIntelligence) {
+         photoDescribing: PhotoDescribing? = .appleIntelligence, placeNames: PlaceNameCache = .shared,
+         geocodePlace: @escaping PlaceGeocoder = PlaceNames.geocode) {
         self.descriptions = descriptions
+        self.placeNames = placeNames
+        placeLookup = PlaceNameLookup(cache: placeNames, geocode: geocodePlace)
         self.defaults = defaults
         self.photoDescribing = photoDescribing
         showDescriptionPanel = defaults.object(forKey: "showDescriptionPanel") as? Bool ?? true
@@ -304,6 +326,12 @@ final class LibraryModel {
                 if let key, let text { self?.captionFromNewDescription(text, key: key) }
             }
         }
+        // A place's name found: the list and gallery show it, without a word, wherever focus is.
+        placeNameObserver = NotificationCenter.default.addObserver(
+            forName: PlaceNameCache.didChange, object: placeNames, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.fillPlaceNames() }
+        }
+        placeLookup.isAllowed = { [weak self] in self?.placeNamesShowing ?? false }
     }
 
     /// The saved description of a photo, for showing it. Updates when one is saved.
@@ -405,6 +433,7 @@ final class LibraryModel {
         }
         lastPhoto = index.map { (id!, $0) }
         autoDescriber.moved(to: id, step: step)
+        wantCurrentPlaceName()
     }
 
     /// The photo to describe ahead of `id`, going `step` (1 or -1): the very next row, if it's a photo with no
@@ -871,6 +900,7 @@ final class LibraryModel {
     private func loadSelectedSource(keepSelection: Bool) {
         loadGeneration += 1
         let generation = loadGeneration
+        if !keepSelection { placeLookup.clear() }
         nameFillTask?.cancel()
         nameProgress = nil
         let previousSelection = keepSelection ? selection : []
@@ -1683,6 +1713,7 @@ final class LibraryModel {
         }
         lookUpPlaceNames = on
         defaults.set(on, forKey: PlaceNames.key)
+        placeNamesShownChanged()
         announce(on ? "Get Info looks up place names" : "Place names aren't looked up")
     }
 
@@ -2228,11 +2259,78 @@ final class LibraryModel {
 
     /// Copies saved descriptions into the rows for the Description column, and re-sorts if that's the sort.
     private func fillDescriptions() {
-        fillingDescriptions = true
-        defer { fillingDescriptions = false }
+        fillingRows = true
+        defer { fillingRows = false }
         var filled = rows.map { row in row.withDescription(descriptionKey(for: row.id).flatMap(descriptions.description(forKey:)) ?? "") }
         if sortColumnID == "description" { filled = ColumnOrder.sorted(filled, by: sortOrder) }
         if filled.map(\.descriptionText) != rows.map(\.descriptionText) { rows = filled }
+    }
+
+    // MARK: - Place Taken names (#172)
+
+    /// Whether rows show place names: Look Up Place Names is on, and Place Taken is a list column, a gallery label or
+    /// the list's sort, so the sort and what's read agree with what's shown.
+    private var showsPlaceNames: Bool {
+        lookUpPlaceNames
+            && (columnOrder.contains("location") || galleryLabels.contains(.location) || sortColumnID == "location")
+    }
+
+    /// Whether names are looked up for the photos showing: Look Up Place Names is on, and Place Taken is a column in
+    /// the list or a label in the gallery, whichever is showing.
+    var placeNamesShowing: Bool {
+        lookUpPlaceNames && (viewMode == .list ? columnOrder.contains("location") : galleryLabels.contains(.location))
+    }
+
+    /// Copies known place names into the rows, or clears them when they aren't shown, and re-sorts if Place Taken is
+    /// the sort.
+    private func fillPlaceNames() {
+        let shows = showsPlaceNames
+        guard shows || rowsHavePlaceNames else { return }
+        let known = shows ? placeNames.snapshot() : [:]
+        if known.isEmpty, !rowsHavePlaceNames { return }
+        var filled = rows
+        var changed = false
+        for index in filled.indices {
+            let name = filled[index].placeKey.flatMap { known[$0] } ?? ""
+            if filled[index].placeName != name {
+                filled[index] = filled[index].withPlaceName(name)
+                changed = true
+            }
+        }
+        rowsHavePlaceNames = shows
+        guard changed else { return }
+        if sortColumnID == "location" { filled = ColumnOrder.sorted(filled, by: sortOrder) }
+        fillingRows = true
+        defer { fillingRows = false }
+        rows = filled
+    }
+
+    /// Place Taken was shown or hidden, or Look Up Place Names or the view changed: names are filled or cleared, and
+    /// what was waiting to be looked up starts again with the photo you're on.
+    private func placeNamesShownChanged() {
+        placeLookup.clear()
+        fillPlaceNames()
+        wantCurrentPlaceName()
+    }
+
+    /// The photo you're on goes ahead of the rest.
+    private func wantCurrentPlaceName() {
+        guard placeNamesShowing, selection.count == 1, let id = selection.first,
+              let row = rows.first(where: { $0.id == id }) else { return }
+        placeLookup.want(row.placeKey, first: true)
+    }
+
+    /// A row's Place Taken cell came into view, or Look Up Place Names was turned on while it was: its name is looked
+    /// up in turn.
+    func placeCellAppeared(_ row: FileRow) {
+        guard placeNamesShowing else { return }
+        placeLookup.want(row.placeKey)
+    }
+
+    /// A row's Place Taken cell scrolled away: its name isn't wanted now, unless it's the photo you're on.
+    func placeCellDisappeared(_ row: FileRow) {
+        guard !selection.contains(row.id) else { return }
+        placeLookup.unwant(row.placeKey)
     }
 
     // MARK: - Help

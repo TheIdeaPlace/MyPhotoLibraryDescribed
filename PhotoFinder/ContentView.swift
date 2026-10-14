@@ -261,6 +261,12 @@ struct FileListView: View {
     @ViewBuilder private func cell(_ column: String, _ row: FileRow) -> some View {
         if column == ColumnOrder.name {
             NameCell(row: row, model: model)
+        } else if column == "location" {
+            // Place Taken looks up the names of the places showing (#172), as their cells come into view, and when
+            // Look Up Place Names is turned on with them in view.
+            Text(row.text(for: column))
+                .task(id: model.placeNamesShowing ? row.placeKey : nil) { model.placeCellAppeared(row) }
+                .onDisappear { model.placeCellDisappeared(row) }
         } else {
             Text(row.text(for: column))
         }

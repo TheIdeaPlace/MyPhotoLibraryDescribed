@@ -257,26 +257,13 @@ enum PhotoMetadata {
         return (fields, data)
     }
 
-    /// The place's name, only when Look Up Place Names is on: finding it sends the coordinates to Apple (#105).
-    /// MapKit's MKReverseGeocodingRequest from macOS 26 (#115), CLGeocoder (deprecated in 26) before that. Both ask
-    /// the same Apple service.
+    /// The place's name, only when Look Up Place Names is on: finding it sends the coordinates to Apple (#105). A name
+    /// already found (here, or for the list's Place Taken column) is said without asking again, and one found now is
+    /// kept (#172).
     private static func placeName(for location: CLLocation) async -> String? {
-        guard PlaceNames.isOn(in: .standard) else { return nil }
-        if #available(macOS 26, *) {
-            guard let request = MKReverseGeocodingRequest(location: location),
-                  let item = try? await request.mapItems.first else { return nil }
-            // Not MKAddress's fullAddress (a multi-line street address with the postcode) or its shortAddress
-            // (street and city, no state or country): neither is the place, city, state, country that Get Info has
-            // always read, and Windows reads too. The item's name is the landmark or street address, as the
-            // placemark's name was, and cityWithContext(.full) is "Cupertino, CA, United States": city, state
-            // and country, with the country always there, as CLGeocoder gave it.
-            let address = item.addressRepresentations
-            let context: [String?] = address?.cityWithContext(.full)?.components(separatedBy: ", ")
-                ?? [address?.cityName, address?.regionName]
-            return PlaceNames.joined([item.name] + context)
-        }
-        guard let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }
-        return PlaceNames.joined([placemark.name, placemark.locality, placemark.administrativeArea, placemark.country])
+        guard PlaceNames.isOn(in: .standard),
+              let key = PlaceKey(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude) else { return nil }
+        return await PlaceNameCache.shared.lookUp(key, using: PlaceNames.geocode)
     }
 
     private static func exifFields(_ data: Data) -> [InfoField] {
