@@ -159,6 +159,7 @@ public static class MetadataWriter
     {
         SecondPictureException => $"{item.Name} holds a second picture, such as an HDR map, laid out in a way that can't be updated safely, so it was left as it is.",
         InvalidDataException => $"{item.Name} isn't the kind of file its name says, so it was left as it is.",
+        OlderCaptionException => $"{item.Name}: {ex.Message}, so it was left as it is.",
         MetadataRefusedException => $"{item.Name}: {ex.Message} It was left as it is.",
         UnauthorizedAccessException => $"{item.Name} is read-only or in use.",
         FileNotFoundException => $"{item.Name} is no longer there.",
