@@ -630,6 +630,49 @@ public sealed class FileFieldsTests : IDisposable
         if (what == "caption inside") Assert.NotNull(JpegMetadata.Apply(jpeg, new MetadataChanges { Stars = 2 }));
     }
 
+    /// <summary>A JPEG with Photoshop's IPTC (APP13): a caption (2:120) and, unless <paramref name="digest"/> is "none",
+    /// the IPTC digest, right ("right") or stale ("stale", as when an older app changed the IPTC afterwards).</summary>
+    private byte[] WithPhotoshopIptc(string caption, string digest)
+    {
+        var text = System.Text.Encoding.UTF8.GetBytes(caption);
+        byte[] iptc = [0x1C, 2, 0, 0, 2, 0, 4, 0x1C, 2, 120, (byte)(text.Length >> 8), (byte)text.Length, .. text];
+        static byte[] Resource(int id, byte[] data) =>
+            [.. "8BIM"u8.ToArray(), (byte)(id >> 8), (byte)id, 0, 0, (byte)(data.Length >> 24), (byte)(data.Length >> 16), (byte)(data.Length >> 8), (byte)data.Length, .. data, .. data.Length % 2 == 1 ? new byte[] { 0 } : []];
+        var md5 = System.Security.Cryptography.MD5.HashData(digest == "stale" ? [.. iptc, 0] : iptc);
+        byte[] payload = [.. "Photoshop 3.0\0"u8.ToArray(), .. Resource(0x0404, iptc), .. digest == "none" ? [] : Resource(0x0425, md5)];
+        return WithSegment(WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("iptc.jpg"))), 0xED, payload);
+    }
+
+    [Fact]
+    public async Task AnOlderIptcCaptionReadersWouldShowInstead_IsntHidden_AndSaysSo()
+    {
+        // #169, as the Mac: the IPTC was changed after its digest was written, so readers show its caption, not the XMP's.
+        var path = _lib.PathOf("stale.jpg");
+        File.WriteAllBytes(path, WithPhotoshopIptc("An old caption", "stale"));
+        var before = File.ReadAllBytes(path);
+        var refused = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog on a beach.");
+        Assert.Equal(0, refused.Succeeded);
+        Assert.Equal("stale.jpg: An older caption saved in it by Photoshop or a similar app would still be read instead of the new one, so it was left as it is.",
+            refused.FailureSummary);
+        Assert.Equal(before, File.ReadAllBytes(path));
+        // A rating isn't the caption, so it can still change.
+        Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 3)).Succeeded);
+    }
+
+    [Theory]
+    [InlineData("right", "A dog on a beach.")]
+    [InlineData("none", "A dog on a beach.")]
+    [InlineData("stale", "An old caption")]
+    public void AnIptcCaptionInStep_OrTheSame_DoesntStopTheChange(string digest, string caption)
+    {
+        var jpeg = WithPhotoshopIptc("An old caption", digest);
+        var changed = JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = caption });
+        // Photoshop's segment is copied as it was.
+        var iptc = Segments(jpeg).Single(s => s.Marker == 0xED);
+        var after = Segments(changed).Single(s => s.Marker == 0xED);
+        Assert.Equal(jpeg[iptc.Offset..(iptc.Offset + iptc.Length)], changed[after.Offset..(after.Offset + after.Length)]);
+    }
+
     [Fact]
     public void XmpItCantRead_OrExtendedXmp_IsLeftAlone()
     {
