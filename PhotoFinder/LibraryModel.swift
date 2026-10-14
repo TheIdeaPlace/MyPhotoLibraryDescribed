@@ -596,7 +596,11 @@ final class LibraryModel {
         // Once per launch. The window's task can run again while macOS's question is still showing (the window's
         // content made again), and asking a second time stacked a second Photos question that never went away
         // (Kelly, 14 Oct).
-        guard !started, authState == .unknown else { return }
+        guard !started else {
+            DiagnosticLog.write("start", "Window started again; Photos was already asked")
+            return
+        }
+        guard authState == .unknown else { return }
         started = true
         DiagnosticLog.started(appleIntelligence: describeUnavailableReason ?? "available")
         if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined {
