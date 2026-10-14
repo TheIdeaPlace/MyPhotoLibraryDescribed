@@ -631,16 +631,30 @@ public sealed class FileFieldsTests : IDisposable
     }
 
     /// <summary>A JPEG with Photoshop's IPTC (APP13): a caption (2:120) and, unless <paramref name="digest"/> is "none",
-    /// the IPTC digest, right ("right") or stale ("stale", as when an older app changed the IPTC afterwards).</summary>
-    private byte[] WithPhotoshopIptc(string caption, string digest)
+    /// the IPTC digest: right ("right"), stale ("stale", as when an older app changed the IPTC afterwards) or 15 bytes
+    /// ("short"). The IPTC resource can have a name, a junk resource with a huge size can come first, and the resources can
+    /// be split across two APP13 segments, each starting with Photoshop's header, as Photoshop writes a long list.</summary>
+    private byte[] WithPhotoshopIptc(string caption, string digest, string name = "", bool hugeFirst = false, bool split = false)
     {
         var text = System.Text.Encoding.UTF8.GetBytes(caption);
         byte[] iptc = [0x1C, 2, 0, 0, 2, 0, 4, 0x1C, 2, 120, (byte)(text.Length >> 8), (byte)text.Length, .. text];
-        static byte[] Resource(int id, byte[] data) =>
-            [.. "8BIM"u8.ToArray(), (byte)(id >> 8), (byte)id, 0, 0, (byte)(data.Length >> 24), (byte)(data.Length >> 16), (byte)(data.Length >> 8), (byte)data.Length, .. data, .. data.Length % 2 == 1 ? new byte[] { 0 } : []];
+        static byte[] Resource(int id, byte[] data, string name = "", uint? size = null)
+        {
+            var n = System.Text.Encoding.ASCII.GetBytes(name);
+            byte[] pascal = [(byte)n.Length, .. n, .. n.Length % 2 == 0 ? new byte[] { 0 } : []];
+            var length = size ?? (uint)data.Length;
+            return [.. "8BIM"u8.ToArray(), (byte)(id >> 8), (byte)id, .. pascal, (byte)(length >> 24), (byte)(length >> 16), (byte)(length >> 8), (byte)length,
+                .. data, .. data.Length % 2 == 1 ? new byte[] { 0 } : []];
+        }
         var md5 = System.Security.Cryptography.MD5.HashData(digest == "stale" ? [.. iptc, 0] : iptc);
-        byte[] payload = [.. "Photoshop 3.0\0"u8.ToArray(), .. Resource(0x0404, iptc), .. digest == "none" ? [] : Resource(0x0425, md5)];
-        return WithSegment(WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("iptc.jpg"))), 0xED, payload);
+        byte[] resources = [.. hugeFirst ? Resource(0x0400, [1, 2], size: 0x7FFFFFF0) : [], .. Resource(0x0404, iptc, name),
+            .. digest switch { "none" => [], "short" => Resource(0x0425, md5[..15]), _ => Resource(0x0425, md5) }];
+        var photoshop = "Photoshop 3.0\0"u8.ToArray();
+        var jpeg = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("iptc.jpg")));
+        if (!split) return WithSegment(jpeg, 0xED, [.. photoshop, .. resources]);
+        // Split inside the IPTC resource; WithSegment puts each first, so the second half goes in first.
+        var half = resources.Length / 2;
+        return WithSegment(WithSegment(jpeg, 0xED, [.. photoshop, .. resources[half..]]), 0xED, [.. photoshop, .. resources[..half]]);
     }
 
     [Fact]
@@ -660,17 +674,48 @@ public sealed class FileFieldsTests : IDisposable
     }
 
     [Theory]
-    [InlineData("right", "A dog on a beach.")]
-    [InlineData("none", "A dog on a beach.")]
-    [InlineData("stale", "An old caption")]
-    public void AnIptcCaptionInStep_OrTheSame_DoesntStopTheChange(string digest, string caption)
+    [InlineData("odd length", true)]
+    [InlineData("named", true)]
+    [InlineData("split", true)]
+    [InlineData("short digest", true)]
+    [InlineData("cleared", true)]
+    [InlineData("right", false)]
+    [InlineData("none", false)]
+    [InlineData("same caption", false)]
+    [InlineData("same with CR", false)]
+    [InlineData("huge size first", false)]
+    public void AnOlderIptcCaption_IsFound_HoweverItsWritten(string what, bool refused)
     {
-        var jpeg = WithPhotoshopIptc("An old caption", digest);
+        var jpeg = what switch
+        {
+            "odd length" => WithPhotoshopIptc("An old caption!", "stale"),
+            "named" => WithPhotoshopIptc("An old caption", "stale", name: "IPTC"),
+            "split" => WithPhotoshopIptc("An old caption", "stale", split: true),
+            "short digest" => WithPhotoshopIptc("An old caption", "short"),
+            "same with CR" => WithPhotoshopIptc("Line one\rLine two", "stale"),
+            "huge size first" => WithPhotoshopIptc("An old caption", "stale", hugeFirst: true),
+            "right" => WithPhotoshopIptc("An old caption", "right"),
+            "none" => WithPhotoshopIptc("An old caption", "none"),
+            _ => WithPhotoshopIptc("An old caption", "stale"),
+        };
+        var caption = what switch
+        {
+            "same caption" => "An old caption",
+            "same with CR" => "Line one\nLine two",
+            "cleared" => "",
+            _ => "A dog on a beach.",
+        };
+        if (refused)
+        {
+            Assert.Throws<OlderCaptionException>(() => JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = caption }));
+            return;
+        }
         var changed = JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = caption });
-        // Photoshop's segment is copied as it was.
-        var iptc = Segments(jpeg).Single(s => s.Marker == 0xED);
-        var after = Segments(changed).Single(s => s.Marker == 0xED);
-        Assert.Equal(jpeg[iptc.Offset..(iptc.Offset + iptc.Length)], changed[after.Offset..(after.Offset + after.Length)]);
+        // Photoshop's segments are copied as they were, and the XMP has the new caption.
+        Assert.Equal(Segments(jpeg).Where(x => x.Marker == 0xED).Select(x => jpeg[x.Offset..(x.Offset + x.Length)]),
+            Segments(changed).Where(x => x.Marker == 0xED).Select(x => changed[x.Offset..(x.Offset + x.Length)]));
+        var xmp = Segments(changed).Single(x => IsXmp(changed, x));
+        Assert.Contains($">{caption}<", System.Text.Encoding.UTF8.GetString(changed, xmp.Offset, xmp.Length));
     }
 
     [Fact]
