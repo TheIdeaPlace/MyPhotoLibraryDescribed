@@ -282,7 +282,8 @@ final class LibraryModelTests: XCTestCase {
         XCTAssertEqual(library.defaults.string(forKey: ColumnOrder.sortColumnKey), "name")
         XCTAssertEqual(library.defaults.object(forKey: ColumnOrder.sortDescendingKey) as? Bool, true)
 
-        let again = LibraryModel(descriptions: library.model.descriptions, defaults: library.defaults, photoDescribing: nil)
+        let again = LibraryModel(descriptions: library.model.descriptions, defaults: library.defaults, photoDescribing: nil,
+                                 placeNames: library.model.placeNames)
         XCTAssertEqual(again.sortColumnID, "name")
         XCTAssertEqual(again.sortOrder.first?.order, .reverse)
     }
@@ -440,11 +441,14 @@ final class TestLibrary {
     let describer = StandInDescriber()
     var said: [(text: String, queued: Bool)] = []
 
-    init(root: String, defaults: UserDefaults, cacheURL: URL) {
+    /// `geocodePlace` stands in for Apple's place names (#172); without one, asking fails the test.
+    init(root: String, defaults: UserDefaults, cacheURL: URL, geocodePlace: PlaceGeocoder? = nil) {
         self.root = root
         self.defaults = defaults
+        let placeNames = PlaceNameCache(fileURL: cacheURL.deletingLastPathComponent().appendingPathComponent("PlaceNames.json"))
         model = LibraryModel(descriptions: DescriptionCache(fileURL: cacheURL), defaults: defaults,
-                             photoDescribing: describer.describing)
+                             photoDescribing: describer.describing, placeNames: placeNames,
+                             geocodePlace: geocodePlace ?? { _, _ in XCTFail("Apple was asked for a place name"); return nil })
         // Tests run without the window in front; those about describing automatically say it is.
         model.isInFront = { false }
         model.announcer = { [weak self] text, queued in self?.said.append((text, queued)) }
