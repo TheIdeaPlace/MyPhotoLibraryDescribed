@@ -136,21 +136,18 @@ final class DescriptionProvenanceTests: XCTestCase {
         XCTAssertEqual(cache.record(forKey: "new"), before)
     }
 
-    // MARK: - Files from before #199
+    // MARK: - Earlier formats
 
-    func testAFlatFileIsReadWithItsDetailsUnknownAndSavedInTheNewForm() throws {
+    func testAFileInTheFormatFromBeforeProvenanceIsntRead() throws {
+        // Nothing was released before #199, so the old flat format is kept aside like any file that can't be read.
         let url = makeURL()
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data(#"{"a":"A cat.","b":"Mine."}"#.utf8).write(to: url)
-        try Data(#"["b"]"#.utf8).write(to: url.deletingLastPathComponent().appendingPathComponent("EditedDescriptions.json"))
+        try Data(#"{"a":"A cat."}"#.utf8).write(to: url)
         let cache = DescriptionCache(fileURL: url)
-        XCTAssertEqual(cache.record(forKey: "a"), DescriptionRecord(text: "A cat."))
-        XCTAssertEqual(cache.record(forKey: "b")?.source, "person", "a correction from before stays one")
-        XCTAssertTrue(cache.isEdited(forKey: "b"))
-        cache.save()
-        let saved = try ProvenanceFile.records(at: url)
-        XCTAssertEqual(saved["a"], DescriptionRecord(text: "A cat."))
-        XCTAssertEqual(saved["b"]?.source, "person")
+        XCTAssertEqual(cache.count, 0)
+        let aside = try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path)
+            .filter { $0.hasPrefix("Descriptions.unreadable-") }
+        XCTAssertEqual(aside.count, 1)
     }
 
     func testANewerVersionsRecordFieldsDontStopTheFileBeingRead() throws {

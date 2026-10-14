@@ -17,7 +17,6 @@ final class DescriptionStoreTests: XCTestCase {
     }
 
     private func descriptionsURL(in folder: URL) -> URL { folder.appendingPathComponent("Descriptions.json") }
-    private func editedURL(in folder: URL) -> URL { folder.appendingPathComponent("EditedDescriptions.json") }
 
     private func write(_ text: String, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -31,18 +30,6 @@ final class DescriptionStoreTests: XCTestCase {
         XCTAssertEqual(cache.count, 0)
         XCTAssertNil(cache.description(forKey: "photo"))
         XCTAssertFalse(cache.isEdited(forKey: "photo"))
-    }
-
-    func testAFlatFileFromBeforeProvenanceIsRead() throws {
-        // Before #199 (and Windows' DescriptionStore until it matches): a plain JSON object of key to description.
-        let folder = makeFolder()
-        try write(#"{"file:/USERS/K/PICTURES/A.JPG|10|637134336000000000":"A cat.","photo-2":"A dog."}"#,
-                  to: descriptionsURL(in: folder))
-        let cache = DescriptionCache(fileURL: descriptionsURL(in: folder))
-        XCTAssertEqual(cache.count, 2)
-        XCTAssertEqual(cache.description(forKey: "file:/USERS/K/PICTURES/A.JPG|10|637134336000000000"), "A cat.")
-        XCTAssertEqual(cache.description(forKey: "photo-2"), "A dog.")
-        XCTAssertFalse(cache.isEdited(forKey: "photo-2"), "no EditedDescriptions.json: nothing is marked edited")
     }
 
     func testADamagedFileStartsEmptyAndIsReplacedOnTheNextSave() throws {
@@ -82,17 +69,6 @@ final class DescriptionStoreTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["Descriptions.json"])
     }
 
-    func testTheOldEditedFileGoesAtTheFirstSave() throws {
-        let folder = makeFolder()
-        try write(#"{"photo":"Mine"}"#, to: descriptionsURL(in: folder))
-        try write(#"["photo"]"#, to: editedURL(in: folder))
-        let cache = DescriptionCache(fileURL: descriptionsURL(in: folder))
-        cache.save()
-        XCTAssertFalse(FileManager.default.fileExists(atPath: editedURL(in: folder).path))
-        XCTAssertTrue(DescriptionCache(fileURL: descriptionsURL(in: folder)).isEdited(forKey: "photo"),
-                      "the mark is in the record now")
-    }
-
     func testAWriteOnItsWayNeverPutsBackAnOlderDescription() async throws {
         let folder = makeFolder()
         let cache = DescriptionCache(fileURL: descriptionsURL(in: folder))
@@ -103,25 +79,6 @@ final class DescriptionStoreTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(2600))
         cache.save()  // after the scheduled write
         XCTAssertEqual(try savedDescriptions(in: folder), ["photo": "Two"])
-    }
-
-    func testADamagedEditedFileLosesTheMarksButNotTheDescriptions() throws {
-        let folder = makeFolder()
-        try write(#"{"photo":"Mine"}"#, to: descriptionsURL(in: folder))
-        try write("[not json", to: editedURL(in: folder))
-        let cache = DescriptionCache(fileURL: descriptionsURL(in: folder))
-        XCTAssertEqual(cache.description(forKey: "photo"), "Mine")
-        XCTAssertFalse(cache.isEdited(forKey: "photo"))
-    }
-
-    func testAMarkWithoutItsDescriptionDoesntMakeOneUp() throws {
-        let folder = makeFolder()
-        try write(#"{"photo":"Mine"}"#, to: descriptionsURL(in: folder))
-        try write(#"["photo","gone"]"#, to: editedURL(in: folder))
-        let cache = DescriptionCache(fileURL: descriptionsURL(in: folder))
-        XCTAssertTrue(cache.isEdited(forKey: "photo"))
-        XCTAssertNil(cache.description(forKey: "gone"))
-        XCTAssertEqual(cache.count, 1)
     }
 
     // MARK: - Saving
@@ -139,7 +96,7 @@ final class DescriptionStoreTests: XCTestCase {
         XCTAssertEqual(records["a"]?.source, "person")
         XCTAssertEqual(records["z"]?.source, "person")
         XCTAssertNotEqual(records["m"]?.source, "person")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: editedURL(in: folder).path), "no separate file of marks")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("EditedDescriptions.json").path), "no separate file of marks")
     }
 
     func testAClearedMarkStaysClearedAfterARestart() throws {

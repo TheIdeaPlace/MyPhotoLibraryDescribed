@@ -253,7 +253,9 @@ final class LibraryModel {
     /// Whether the window is in front with no sheet over it, so a photo you're on is still being looked at. Tests
     /// can say it is, since they run without the window in front.
     @ObservationIgnored var isInFront: @MainActor () -> Bool = {
+        // An alert (the update note or the crash question at launch) counts as something over the window.
         NSApplication.shared.isActive && NSApplication.shared.keyWindow?.isSheet == false
+            && NSApplication.shared.modalWindow == nil
     }
     /// Whether a file in an added folder is on this Mac, not only in the cloud (iCloud Drive, OneDrive and the like,
     /// #197). Files that aren't are left unread by the list and by describing as you arrow, and writing into them asks
@@ -604,7 +606,15 @@ final class LibraryModel {
     @ObservationIgnored private var started = false
 
     /// Without Photos access, the first added folder is shown once its scan is in, rather than the no-access row.
-    @ObservationIgnored private var showFirstFolderWhenScanned = false
+    private var showFirstFolderWhenScanned = false
+
+    /// The added folder the app moved to by itself at launch without Photos access, so that move isn't taken for you
+    /// choosing a place.
+    @ObservationIgnored private(set) var launchFolderID: String?
+
+    /// Whether the place the window opens on has settled: access asked, its first place loaded (or, without Photos
+    /// access, the first added folder shown), so focus can go to its first item (Kelly, 14 Oct).
+    var launchPlaceSettled: Bool { authState != .unknown && !isLoading && !showFirstFolderWhenScanned }
 
     func start() async {
         // Once per launch. The window's task can run again while macOS's question is still showing (the window's
@@ -1179,7 +1189,11 @@ final class LibraryModel {
                 if !newPhotos.isEmpty { describeFilesLater(newPhotos, first: true, announce: text) }
                 if !backlog.isEmpty { describeFilesLater(backlog, first: false, announce: nil) }
             }
-            guard !fresh.isEmpty else { return }
+            guard !fresh.isEmpty else {
+                // Every folder removed: the no-access row it is. (Scans replaced by a newer one leave it to that one.)
+                if results.allSatisfy({ !$0.0.isCancelled }) { showFirstFolderWhenScanned = false }
+                return
+            }
             // In the order they were added; folders removed meanwhile drop out.
             let old = Dictionary(folderNodes.map { ($0.path.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
             folderNodes = folderRoots.compactMap { fresh[$0.lowercased()] ?? old[$0.lowercased()] }
@@ -1190,6 +1204,7 @@ final class LibraryModel {
                 showFirstFolderWhenScanned = false
                 if selectedSourceID == SidebarID.photosNoAccess,
                    let root = folderRoots.first(where: { itemsByID[FolderID.folder($0)] != nil }) {
+                    launchFolderID = FolderID.folder(root)
                     selectedSourceID = FolderID.folder(root)
                     return
                 }
@@ -2513,6 +2528,8 @@ final class LibraryModel {
         }
         defer { if let escape { NSEvent.removeMonitor(escape) } }
         if alert.runModal() == .alertSecondButtonReturn { NSWorkspace.shared.open(AppInfo.releaseNotesURL(current)) }
+        // The photo you're on, unspoken while the note was up, is described now.
+        autoDescriber.refocused(currentID: autoDescribeCandidate)
     }
 
     /// Help > Check for Updates…: says whether there's a newer version, and opens its download page if you want it.
@@ -2735,7 +2752,10 @@ final class LibraryModel {
         alert.addButton(withTitle: "Report…")
         // Escape answers Not Now, as it would Cancel.
         alert.addButton(withTitle: "Not Now").keyEquivalent = "\u{1b}"
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            autoDescriber.refocused(currentID: autoDescribeCandidate)
+            return
+        }
         prepareBugReport(attachments: CrashCheck.attachments(since: since), title: "Quit unexpectedly")
         bugReportWindowRequest += 1
     }
@@ -2828,6 +2848,12 @@ final class LibraryModel {
         let rows = visibleRows
         guard let index = rows.firstIndex(where: { selection.contains($0.id) }) else { return nil }
         return (index, rows.count)
+    }
+
+    /// When the window opens: the first item selected, so focus lands on it and arrowing starts there.
+    func selectFirstItemIfNone() {
+        guard selection.isEmpty, let first = visibleRows.first else { return }
+        selection = [first.id]
     }
 
     func ensureGallerySelection() {

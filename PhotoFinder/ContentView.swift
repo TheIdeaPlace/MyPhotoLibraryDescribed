@@ -23,6 +23,36 @@ struct BrowserView: View {
     @FocusState private var pane: Pane?
     /// Where F6 is taking you in the status bar, while its sections become focusable.
     @State private var pendingStatusFocus: Pane?
+    /// Whether focus has been put on the photos since the window opened (or given up on).
+    @State private var startedOnPhotos = false
+    /// The place showing, and how many pane moves there had been, when the window appeared: if you've moved since
+    /// (F6, or another place chosen in the sidebar) while the first place was loading, focus isn't pulled away from
+    /// where you went. Focus itself isn't compared: SwiftUI puts it in the sidebar on its own.
+    @State private var placeAtAppear: String?
+    @State private var paneMovesAtAppear = 0
+
+    /// When the window opens, focus goes to the list or gallery, on its first item, once the place it opens on has
+    /// settled, so arrowing works at once without tabbing (Kelly, 14 Oct; Windows does the same).
+    private func startOnPhotos() {
+        guard !startedOnPhotos, model.launchPlaceSettled else { return }
+        startedOnPhotos = true
+        // Without Photos access the window opens on the no-access row and moves to the first added folder itself:
+        // that isn't you moving, but choosing another place meanwhile is.
+        let movedPlace = placeAtAppear != nil && model.selectedSourceID != placeAtAppear
+            && model.selectedSourceID != model.launchFolderID
+        guard !searchFocused, !movedPlace, model.paneRequest.serial == paneMovesAtAppear else { return }
+        model.selectFirstItemIfNone()
+        pane = .content
+        // The list may only just be appearing, and SwiftUI otherwise starts in the sidebar: tried again a moment
+        // later, checked after waiting, until it takes.
+        Task { @MainActor in
+            for _ in 0..<5 {
+                try? await Task.sleep(for: .milliseconds(80))
+                guard pane != .content, !searchFocused, model.paneRequest.serial == paneMovesAtAppear else { return }
+                pane = .content
+            }
+        }
+    }
 
     /// Moves focus into the status bar once its sections can take it: a few tries, a moment apart, stopping as soon
     /// as focus is there or another move (F6 again, a click) replaced this one.
@@ -74,6 +104,12 @@ struct BrowserView: View {
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search names, kinds and dates")
         .searchFocused($searchFocused)
         .onChange(of: model.searchFocusRequest) { searchFocused = true }
+        .onAppear {
+            placeAtAppear = model.selectedSourceID
+            paneMovesAtAppear = model.paneRequest.serial
+            startOnPhotos()
+        }
+        .onChange(of: model.launchPlaceSettled) { startOnPhotos() }
         // Go > Next Pane (F6) and Previous Pane (Shift-F6): sidebar, list or gallery, Description, Search, status bar,
         // and round.
         .onChange(of: model.paneRequest) {
