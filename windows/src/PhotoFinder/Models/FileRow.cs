@@ -59,6 +59,14 @@ public sealed class FileRow : INotifyPropertyChanged
     private string _coordinates = "";
     private string? _placeName;
 
+    /// <summary>A name already found for a spot, when names are wanted (#172), so a row whose details arrive later shows
+    /// it at once; null when they aren't. Set by the window.</summary>
+    public static Func<double, double, string?>? KnownPlaceName { get; set; }
+
+    /// <summary>Raised when a row's coordinates arrive with its details, after it was first shown, so the window can look
+    /// it up if it's on screen.</summary>
+    public static event Action<FileRow>? CoordinatesArrived;
+
     /// <summary>Where the photo was taken, or null.</summary>
     public (double Latitude, double Longitude)? Coordinates =>
         Item?.Metadata is { Latitude: { } lat, Longitude: { } lon } ? (lat, lon) : null;
@@ -203,10 +211,15 @@ public sealed class FileRow : INotifyPropertyChanged
         IsFavorite = item.IsFavorite;
         Rating = m.Rating;
         RatingText = StarsText(m.Rating);
+        var had = _coordinates;
         _coordinates = m.Latitude is { } lat && m.Longitude is { } lon
             ? string.Format(CultureInfo.CurrentCulture, "{0:0.0000}, {1:0.0000}", lat, lon) : "";
-        // A name found earlier stays while the photo is where it was.
-        if (_coordinates.Length == 0) _placeName = null;
+        // A name found earlier stays while the photo is where it was; new coordinates take a name already known for them.
+        if (_coordinates != had)
+        {
+            _placeName = m.Latitude is { } la && m.Longitude is { } lo ? KnownPlaceName?.Invoke(la, lo) : null;
+            if (had.Length == 0 && _coordinates.Length > 0 && _placeName is null) CoordinatesArrived?.Invoke(this);
+        }
         LocationText = _placeName ?? _coordinates;
         FileType = MediaTypes.FileTypeDescription(item.Path);
         Size = item.Size;

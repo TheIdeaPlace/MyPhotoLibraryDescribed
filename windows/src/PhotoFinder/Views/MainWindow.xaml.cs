@@ -84,7 +84,15 @@ public partial class MainWindow : Window
         // Place Taken's names (#172): the rows showing, the current photo first.
         _places = new PlaceLookups(Services.PlaceNames.Shared, PlacesWanted, () => _model.Rows, () => _model.FocusedRow);
         FileList.AddHandler(System.Windows.Controls.ScrollViewer.ScrollChangedEvent, new System.Windows.Controls.ScrollChangedEventHandler((_, _) => ScanShowingRowsSoon()));
-        Closed += (_, _) => _places.Dispose();
+        // A row whose coordinates arrive with its details, after it's shown: looked up if it's on screen.
+        Action<FileRow> arrived = _ => ScanShowingRowsSoon();
+        FileRow.CoordinatesArrived += arrived;
+        Closed += (_, _) =>
+        {
+            FileRow.CoordinatesArrived -= arrived;
+            FileRow.KnownPlaceName = null;
+            _places.Dispose();
+        };
         model.SelectionRequested += Model_SelectionRequested;
         model.ErrorRaised += message => ShowError(message);
         model.ColumnsChanged += BuildColumns;
@@ -292,6 +300,12 @@ public partial class MainWindow : Window
         };
         // The arrow is for sighted people; screen readers hear the title and the sort as words.
         AutomationProperties.SetName(header, column.Title);
+        // Place names come from OpenStreetMap, whose licence asks for this credit where they're shown (#172).
+        if (column.Id == "location")
+        {
+            header.ToolTip = $"Place names {Services.PlaceNames.Credit}";
+            AutomationProperties.SetHelpText(header, $"Place names {Services.PlaceNames.Credit}");
+        }
         if (sorted) AutomationProperties.SetItemStatus(header, _model.SortDescending ? "sorted descending" : "sorted ascending");
         header.Click += (_, _) => _model.SortBy(column.Id);
         return header;
@@ -539,12 +553,14 @@ public partial class MainWindow : Window
     /// taken away), and the rows showing looked up.</summary>
     internal void RefreshPlaces()
     {
+        FileRow.KnownPlaceName = PlacesWanted() ? Services.PlaceNames.Shared.TryCached : null;
         _places.ShowKnown();
         ScanShowingRowsSoon();
         if (_model.FocusedRow is { } row) _places.Current(row);
     }
 
-    /// <summary>The list's rows on screen (the panel's realized rows), once scrolling settles.</summary>
+    /// <summary>The list's rows on screen, top to bottom, once scrolling settles: only those whose bounds meet the visible
+    /// part of the list, not the rows the panel keeps ready above and below.</summary>
     private void ScanShowingRowsSoon()
     {
         if (_scanQueued || !PlacesWanted() || _model.ViewMode != ViewMode.List) return;
@@ -552,10 +568,24 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(() =>
         {
             _scanQueued = false;
-            if (FindItemsHost(FileList) is not { } panel) return;
+            if (FindItemsHost(FileList) is not { } panel || FindAncestor<System.Windows.Controls.ScrollViewer>(panel) is not { } viewer) return;
+            var view = new Rect(0, 0, viewer.ViewportWidth > 0 ? viewer.ActualWidth : 0, viewer.ActualHeight);
+            var showing = new List<(double Top, FileRow Row)>();
             foreach (var child in panel.Children.OfType<System.Windows.Controls.ListViewItem>())
-                if (child.DataContext is FileRow row) _places.Showing(row);
+            {
+                if (child.DataContext is not FileRow row || !child.IsVisible) continue;
+                var bounds = child.TransformToAncestor(viewer).TransformBounds(new Rect(child.RenderSize));
+                if (bounds.IntersectsWith(view) && bounds.Height > 0) showing.Add((bounds.Top, row));
+            }
+            _places.Showing(showing.OrderBy(s => s.Top).Select(s => s.Row));
         }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+    }
+
+    private static T? FindAncestor<T>(DependencyObject from) where T : DependencyObject
+    {
+        for (var at = System.Windows.Media.VisualTreeHelper.GetParent(from); at is not null; at = System.Windows.Media.VisualTreeHelper.GetParent(at))
+            if (at is T found) return found;
+        return null;
     }
 
     private static System.Windows.Controls.Panel? FindItemsHost(DependencyObject parent)
