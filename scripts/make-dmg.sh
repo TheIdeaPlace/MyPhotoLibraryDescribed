@@ -25,6 +25,8 @@ cleanup() {
   rm -rf "$WORK"
 }
 trap cleanup EXIT
+# zsh skips the EXIT trap when a signal ends the script, so Control-C or closing the window exits through it.
+trap 'exit 130' INT TERM HUP
 
 # The folder that becomes the disk: the app, a link to Applications, the background, and the volume's icon.
 STAGE="$WORK/stage"
