@@ -41,6 +41,8 @@ public partial class App : Application
         // Every launch starts read-only (#83): nothing may change a photo until the person allows it.
         PhotoChanges.Allowed = !settings.ReadOnly;
         var descriptions = new DescriptionStore(DescriptionStore.DefaultPath);
+        // What's saved with each description (#199): Windows' package list is slow, so it's read now, off this thread.
+        DescriptionProvenance.Warm();
         var model = new LibraryModel(settings, Settings.DefaultPath, new MetadataCache(MetadataCache.DefaultPath),
             LibraryRoots.PicturesLibraryAsync) { Descriptions = descriptions };
         var autoDescriber = new AutoDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync,

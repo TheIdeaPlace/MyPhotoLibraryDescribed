@@ -244,13 +244,19 @@ public sealed class AutoDescriber : IDisposable
             // Automatic describing is already asking about this photo: wait for that rather than asking twice. Describe
             // Again still asks afresh afterwards; the automatic result isn't saved (see _againPaths).
             while (_describingPath == item.Path || IsAhead(item.Path)) await Task.Delay(50, _closing.Token);
-            var text = (again ? null : _store.Get(item, kind)) ?? await _describe(item, kind, _closing.Token);
+            var text = again ? null : _store.Get(item, kind);
+            TimeSpan? took = null;
+            if (text is null)
+            {
+                (text, var made) = await DescriptionProvenance.TimedAsync(() => _describe(item, kind, _closing.Token));
+                took = made;
+            }
             if (text.Length == 0)
             {
                 if (stillOn()) Announcer.Announce("Windows returned an empty description.");
                 return;
             }
-            var kept = replacing is null ? _store.PutUnlessEdited(item, kind, text) : _store.PutIfUnchanged(item, kind, replacing, text);
+            var kept = replacing is null ? _store.PutUnlessEdited(item, kind, text, took) : _store.PutIfUnchanged(item, kind, replacing, text, took);
             if (!kept) return;  // corrected in the Description panel meanwhile: kept
             row.Description = text;
             if (!stillOn()) return;
@@ -383,13 +389,20 @@ public sealed class AutoDescriber : IDisposable
                     DescribingChanged?.Invoke();
                     string text;
                     string? ahead;
+                    TimeSpan? took = null;
                     try
                     {
                         // Described ahead, or being: wait for that rather than ask again. If it was dropped before Windows
                         // was asked, or failed, it's described here after all, if you're still on it.
                         // The store again too: work ahead may have finished while readiness was being checked.
                         ahead = await DescribedAheadAsync(item, kind) ?? _store.Get(item, kind);
-                        text = ahead ?? (_target == path && CanSpeak() ? await _describe(item, kind, _closing.Token) : "");
+                        if (ahead is not null) text = ahead;
+                        else if (_target == path && CanSpeak())
+                        {
+                            (text, var made) = await DescriptionProvenance.TimedAsync(() => _describe(item, kind, _closing.Token));
+                            took = made;
+                        }
+                        else text = "";
                     }
                     finally
                     {
@@ -407,7 +420,7 @@ public sealed class AutoDescriber : IDisposable
                     else if (text.Length > 0)
                     {
                         // A correction made in the Description panel while it was being described is kept.
-                        if (_store.PutUnlessEdited(item, kind, text) && Speak(path, text)) LookAhead(path);
+                        if (_store.PutUnlessEdited(item, kind, text, took) && Speak(path, text)) LookAhead(path);
                     }
                     else if (_target == path && CanSpeak())
                     {
@@ -493,9 +506,9 @@ public sealed class AutoDescriber : IDisposable
                 _aheadNotReady = true;
                 return;
             }
-            var text = await _describeAhead(item, kind, cancel.Token);
+            var (text, took) = await DescriptionProvenance.TimedAsync(() => _describeAhead(item, kind, cancel.Token));
             // Saved, not spoken (the store puts it on its row); a correction or Redescribe meanwhile is newer.
-            if (text.Length > 0 && !_againPaths.ContainsKey(item.Path)) _store.PutUnlessEdited(item, kind, text);
+            if (text.Length > 0 && !_againPaths.ContainsKey(item.Path)) _store.PutUnlessEdited(item, kind, text, took);
         }
         catch (Exception)
         {
