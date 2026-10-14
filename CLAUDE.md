@@ -51,7 +51,7 @@ Windows AI only works from the packaged helper on a Copilot+ PC, so tests use fa
 One tag releases both apps (Kelly, 13 Oct). Both carry one version: `windows/VERSION` and `MARKETING_VERSION` in `project.yml` must match.
 
 1. Raise both versions in a PR and merge it. The first public release is 0.2.0.
-2. Push the tag `v<version>` on a commit on main. `.github/workflows/release.yml` checks the versions match the tag, then builds the Windows installer, signs it with Azure Artifact Signing and attaches it to a **draft** GitHub release: `MyPhotoLibraryDescribed.appinstaller`, the bundle and the Windows App Runtime packages, at the top level. Windows installs and updates from `releases/latest/download/`.
+2. Push the tag `v<version>` on a commit on main. `.github/workflows/release.yml` checks the versions match the tag, then builds the Windows installer, signs it with Azure Artifact Signing and attaches it to a **draft** GitHub release: `MyPhotoLibraryDescribed.appinstaller`, the bundle and the Windows App Runtime packages, at the top level. The draft's notes are `docs/release-notes/v<version>.md`, so edit that file, not the draft. Windows installs and updates from `releases/latest/download/`.
 3. On Kelly's Mac (Xcode 27, which GitHub's runners don't have), check out the tag and run `scripts/release-mac.sh --publish`. It builds, signs, notarizes and staples the DMG, and attaches it to the same draft. It refuses unless the tag is checked out and the draft already has the Windows files.
 4. Kelly says go, and the draft is published. Never publish a release without `MyPhotoLibraryDescribed.appinstaller`: the latest release is where every Windows copy looks for its updates. The signing environment `azure-signing` only accepts `v*` tags.
 
