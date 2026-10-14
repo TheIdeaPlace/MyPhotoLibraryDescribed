@@ -81,9 +81,22 @@ public partial class MainWindow : Window
         }));
 
         model.PropertyChanged += Model_PropertyChanged;
+        // Place Taken's names (#172): the rows showing, the current photo first.
+        _places = new PlaceLookups(Services.PlaceNames.Shared, PlacesWanted, () => _model.Rows, () => _model.FocusedRow);
+        FileList.AddHandler(System.Windows.Controls.ScrollViewer.ScrollChangedEvent, new System.Windows.Controls.ScrollChangedEventHandler((_, _) => ScanShowingRowsSoon()));
+        // A row whose coordinates arrive with its details, after it's shown: looked up if it's on screen.
+        Action<FileRow> arrived = _ => ScanShowingRowsSoon();
+        FileRow.CoordinatesArrived += arrived;
+        Closed += (_, _) =>
+        {
+            FileRow.CoordinatesArrived -= arrived;
+            FileRow.KnownPlaceName = null;
+            _places.Dispose();
+        };
         model.SelectionRequested += Model_SelectionRequested;
         model.ErrorRaised += message => ShowError(message);
         model.ColumnsChanged += BuildColumns;
+        model.ColumnsChanged += RefreshPlaces;
         model.SidebarRebuilding += () => _sidebarHadFocus = Sidebar.IsKeyboardFocusWithin;
         model.SidebarRebuilt += () => { if (_sidebarHadFocus) Dispatcher.BeginInvoke(FocusSidebarSelection, System.Windows.Threading.DispatcherPriority.Loaded); };
 
@@ -165,6 +178,8 @@ public partial class MainWindow : Window
         Bind(AppCommands.PreviousPhoto, () => _model.StepPhoto(-1, announce: !FileList.IsKeyboardFocusWithin));
         Bind(AppCommands.ShowInExplorer, () => _model.ShowInExplorer(), () => _model.SelectedRows.Any(r => r.Item is not null || r.Container?.FolderPath is not null));
         Bind(AppCommands.Export, ExportSelection, HasFiles);
+        // Always enabled: when there's nothing to copy, it says why. A correction not saved yet is copied as typed.
+        Bind(AppCommands.CopyDescription, () => _model.CopyDescriptions(draft: DescriptionPanel.Draft));
         Bind(AppCommands.AddFolder, AddFolder);
         Bind(AppCommands.RemoveFolder, RemoveFolder, () => _model.CurrentRoot is not null);
         Bind(AppCommands.Refresh, () => _model.Fire(_model.RescanAsync()), () => !_model.IsLoading);
@@ -186,11 +201,11 @@ public partial class MainWindow : Window
             try
             {
                 Directory.CreateDirectory(Services.Log.Folder);
-                OpenUrl(Services.Log.Folder);
+                OpenUrl(Services.AppPaths.ForExplorer(Services.Log.Folder));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
             {
-                ShowError($"File Explorer couldn't open the log folder. It's at {Services.Log.Folder}.");
+                ShowError($"File Explorer couldn't open the log folder. It's at {Services.AppPaths.ForExplorer(Services.Log.Folder)}.");
             }
         });
         Bind(AppCommands.GoToStatusBar, FocusStatusBar);
@@ -285,6 +300,12 @@ public partial class MainWindow : Window
         };
         // The arrow is for sighted people; screen readers hear the title and the sort as words.
         AutomationProperties.SetName(header, column.Title);
+        // Place names come from OpenStreetMap, whose licence asks for this credit where they're shown (#172).
+        if (column.Id == "location")
+        {
+            header.ToolTip = $"Place names {Services.PlaceNames.Credit}";
+            AutomationProperties.SetHelpText(header, $"Place names {Services.PlaceNames.Credit}");
+        }
         if (sorted) AutomationProperties.SetItemStatus(header, _model.SortDescending ? "sorted descending" : "sorted ascending");
         header.Click += (_, _) => _model.SortBy(column.Id);
         return header;
@@ -371,7 +392,8 @@ public partial class MainWindow : Window
         _model.Settings.LookUpPlaceNames = on;
         _model.SaveSettings();
         PlaceNamesItem.IsChecked = on;
-        Services.Announcer.AnnounceAfter(on ? "Get Info looks up place names" : "Place names aren't looked up", "PhotoFinderSetting");
+        Services.Announcer.AnnounceAfter(on ? "Place names are looked up for Get Info and Place Taken" : "Place names aren't looked up", "PhotoFinderSetting");
+        RefreshPlaces();
     }
 
     /// <summary>"caption", "caption and alt text", "caption, alt text and extended description".</summary>
@@ -451,6 +473,20 @@ public partial class MainWindow : Window
             ShowError("The captions couldn't be read, so they weren't changed.", owner);
             return;
         }
+        // Photos whose caption would be refused (an older Photoshop caption would still be read, #179) are left out of
+        // the question, and said after; with none left, said now, without asking anything.
+        var refused = new List<FileRow>();
+        foreach (var c in current)
+            if (await XmpFields.WouldRefuseCaptionAsync(c.Row.Item!.Path, c.Text)) refused.Add(c.Row);
+        string? refusal = refused.Count == 0 ? null
+            : refused.Count == 1 ? $"{refused[0].Name}: {new OlderCaptionException().Message}, so it was left as it is."
+            : $"{refused.Count} photos weren't changed: an older caption saved in each by Photoshop or a similar app would still be read instead of the new one.";
+        if (refused.Count == current.Count)
+        {
+            ShowError(refusal!, owner);
+            return;
+        }
+        current = current.Where(c => !refused.Contains(c.Row)).ToList();
         // The Mac's question: "Replace the caption and alt text of name?" with what each holds, or, for several photos,
         // "Replace what's already in N photos?".
         var replacing = current
@@ -473,6 +509,7 @@ public partial class MainWindow : Window
                 && (c.AltText != FileFields.AltText(c.Text) || c.Extended != (FileFields.ExtendedDescription(c.Text) ?? ""))))
             .Select(c => (c.Row.Item!, c.Text)).ToList();
         await _model.SaveCaptionsAsync(toWrite, current.Count - toWrite.Count, photos.Count - described.Count);
+        if (refusal is not null) ShowError(refusal, owner);
         if (unreadable > 0)
             ShowError(unreadable == 1 ? "1 caption couldn't be read, so it wasn't changed." : $"{unreadable} captions couldn't be read, so they weren't changed.", owner);
     }
@@ -514,6 +551,96 @@ public partial class MainWindow : Window
         }
     }
 
+    // MARK: Place Taken's names (#172)
+
+    private readonly PlaceLookups _places;
+    private FileRow? _placesFocused;
+    private System.Windows.Threading.DispatcherTimer? _placesSettle;
+    private bool _scanQueued;
+
+    /// <summary>Names are wanted with Look Up Place Names on and Place Taken showing: a list column in the list, a label
+    /// in the gallery.</summary>
+    private bool PlacesWanted() =>
+        _model.Settings.LookUpPlaceNames
+        && (_model.ViewMode == ViewMode.Gallery ? _model.GalleryLabelOrder : _model.Settings.ShownColumnIds()).Contains("location");
+
+    /// <summary>After the rows, the view, the columns, the labels or the setting change: names already known shown (or
+    /// taken away), and the rows showing looked up.</summary>
+    internal void RefreshPlaces()
+    {
+        FileRow.KnownPlaceName = PlacesWanted() ? Services.PlaceNames.Shared.TryCached : null;
+        _places.ShowKnown();
+        ScanShowingRowsSoon();
+        if (_model.FocusedRow is { } row) _places.Current(row);
+    }
+
+    /// <summary>The list's rows on screen, top to bottom, once scrolling settles: only those whose bounds meet the visible
+    /// part of the list, not the rows the panel keeps ready above and below.</summary>
+    private void ScanShowingRowsSoon()
+    {
+        if (_scanQueued || !PlacesWanted() || _model.ViewMode != ViewMode.List) return;
+        _scanQueued = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _scanQueued = false;
+            // The rows' own viewport: the scroll viewer's content area, below the column headers and above any scroll bar.
+            if (FindItemsHost(FileList) is not { } panel || FindAncestor<System.Windows.Controls.ScrollContentPresenter>(panel) is not { } viewer) return;
+            var view = new Rect(viewer.RenderSize);
+            var showing = new List<(double Top, FileRow Row)>();
+            foreach (var child in panel.Children.OfType<System.Windows.Controls.ListViewItem>())
+            {
+                if (child.DataContext is not FileRow row || !child.IsVisible) continue;
+                var bounds = Rect.Intersect(child.TransformToAncestor(viewer).TransformBounds(new Rect(child.RenderSize)), view);
+                // Some of it showing, not just touching an edge.
+                if (!bounds.IsEmpty && bounds.Height > 1) showing.Add((bounds.Top, row));
+            }
+            _places.Showing(showing.OrderBy(s => s.Top).Select(s => s.Row));
+        }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+    }
+
+    private static T? FindAncestor<T>(DependencyObject from) where T : DependencyObject
+    {
+        for (var at = System.Windows.Media.VisualTreeHelper.GetParent(from); at is not null; at = System.Windows.Media.VisualTreeHelper.GetParent(at))
+            if (at is T found) return found;
+        return null;
+    }
+
+    private static System.Windows.Controls.Panel? FindItemsHost(DependencyObject parent)
+    {
+        for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is System.Windows.Controls.Panel { IsItemsHost: true } panel) return panel;
+            if (FindItemsHost(child) is { } found) return found;
+        }
+        return null;
+    }
+
+    /// <summary>Focus moved: the row left behind is told its name quietly kept back, and the new one is looked up first
+    /// (in the gallery once you've settled on it a moment, so photos passed are never sent).</summary>
+    private void FocusMovedForPlaces()
+    {
+        if (_placesFocused is { } left && left != _model.FocusedRow) left.NotifyAccessibleName();
+        _placesFocused = _model.FocusedRow;
+        _placesSettle?.Stop();
+        if (_model.FocusedRow is not { } row || !PlacesWanted()) return;
+        if (_model.ViewMode == ViewMode.List)
+        {
+            _places.Current(row);
+            return;
+        }
+        _placesSettle ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _placesSettle.Tick -= PlacesSettled;
+        _placesSettle.Tick += PlacesSettled;
+        _placesSettle.Start();
+    }
+
+    private void PlacesSettled(object? sender, EventArgs e)
+    {
+        _placesSettle?.Stop();
+        if (_model.FocusedRow is { } row) _places.Current(row);
+    }
+
     // MARK: Model changes
 
     private void Model_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -526,12 +653,17 @@ public partial class MainWindow : Window
                 break;
             case nameof(LibraryModel.Rows):
                 UpdateEmptyText();
+                RefreshPlaces();
+                break;
+            case nameof(LibraryModel.ViewMode) or nameof(LibraryModel.GalleryLabelOrder):
+                RefreshPlaces();
                 break;
             case nameof(LibraryModel.SortColumn) or nameof(LibraryModel.SortDescending):
                 UpdateSortHeaders();
                 break;
             case nameof(LibraryModel.FocusedRow):
                 if (_model.ViewMode == ViewMode.Gallery) UpdateGallery();
+                FocusMovedForPlaces();
                 break;
             case nameof(LibraryModel.IsLoading):
                 UpdateEmptyText();
@@ -1164,6 +1296,13 @@ public partial class MainWindow : Window
                 }
             }
             else initial = item.Metadata.Caption;
+            // A caption that would be refused whatever's typed (an older Photoshop caption would still be read, #179):
+            // said now, rather than after it's been typed.
+            if (await XmpFields.HasOlderCaptionAsync(item.Path))
+            {
+                ShowError($"{item.Name}: {new OlderCaptionException().Message}, so its caption can't be changed.");
+                return;
+            }
         }
         var dialog = new CaptionDialog(rows.Count, initial) { Owner = this };
         var saved = dialog.ShowDialog() == true;
@@ -1348,8 +1487,8 @@ public partial class MainWindow : Window
                     Inform($"This copy of {AppInfo.Name} isn't installed, so it can't update itself.");
                     break;
                 case Services.Updates.State.NotFromAppInstaller:
-                    Inform($"{AppInfo.Name} was installed without PhotoFinder.appinstaller, so Windows doesn't know where its updates are. " +
-                           "Open PhotoFinder.appinstaller to install it again; your settings are kept.");
+                    Inform($"{AppInfo.Name} wasn't installed from the releases page, so Windows doesn't know where its updates are. " +
+                           $"Open {AppInfo.InstallerFile} from there to install it again; your settings are kept.");
                     break;
                 case Services.Updates.State.UpToDate:
                     Found(result.State, null);

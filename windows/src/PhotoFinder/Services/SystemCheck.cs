@@ -36,7 +36,7 @@ public sealed partial class SystemCheck : ICheckResult
     public sealed record Facts
     {
         public required string AppVersion { get; init; }
-        /// <summary>Installed from PhotoFinder.appinstaller, so it updates itself.</summary>
+        /// <summary>Installed from the .appinstaller, so it updates itself.</summary>
         public bool UpdatesItself { get; init; }
         public required Version OsVersion { get; init; }
         /// <summary>The NPU's name, or null when Windows lists none.</summary>
@@ -104,7 +104,7 @@ public sealed partial class SystemCheck : ICheckResult
             {
                 "Ready" => new("Windows AI", Status.Ok, "Ready to describe photos, on this PC."),
                 "NotReady" => new("Windows AI", Status.Problem, "Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+D) downloads it."),
-                "NotInstalled" => new("Windows AI", Status.Problem, $"The {AppInfo.HelperName} isn't installed. Install {AppInfo.Name} from PhotoFinder.appinstaller."),
+                "NotInstalled" => new("Windows AI", Status.Problem, $"The {AppInfo.HelperName} isn't installed. Install the app again from {AppInfo.InstallerFile}."),
                 var state => new("Windows AI", Status.Problem, facts.Readiness?.Message ?? $"Not available ({state ?? "no answer"})."),
             });
 

@@ -14,7 +14,10 @@ namespace PhotoFinder.Services;
 /// - A file with a Multi-Picture index (Ultra HDR, MPO, #90) has the index patched: it records the main picture's
 ///   size, and where the other pictures start, counted from the index itself. When the index can't be followed, or
 ///   doesn't point at the pictures before and after the change, <see cref="SecondPictureException"/>.
-/// - Extended XMP (spread over several segments) isn't edited.
+/// - Extended XMP (the rest of a large packet, in segments of its own, as Pixel photos have, #149) is kept byte for byte,
+///   as the Mac's #166 does: only the main packet changes, keeping xmpNote:HasExtendedXMP. It's checked first: every part
+///   names that GUID, the parts make one packet whose MD5 is the GUID, and none of the fields being written is in it
+///   (they'd be read from there instead).
 /// </summary>
 public static class JpegMetadata
 {
@@ -22,6 +25,9 @@ public static class JpegMetadata
     private static readonly byte[] ExtendedSignature = Encoding.ASCII.GetBytes("http://ns.adobe.com/xmp/extension/\0");
     private static readonly byte[] ExifSignature = Encoding.ASCII.GetBytes("Exif\0\0");
     private static readonly byte[] MpfSignature = Encoding.ASCII.GetBytes("MPF\0");
+    private static readonly byte[] PhotoshopSignature = Encoding.ASCII.GetBytes("Photoshop 3.0\0");
+    /// <summary>Image resource signatures: Photoshop's own and the ones other apps use, as ExifTool walks them.</summary>
+    private static readonly byte[][] ResourceSignatures = [.. new[] { "8BIM", "PHUT", "DCSR", "AgHg", "MeSa" }.Select(Encoding.ASCII.GetBytes)];
 
     /// <summary>A segment's largest length field: the length counts itself, not the marker.</summary>
     private const int MaxSegmentLength = 65535;
@@ -35,14 +41,13 @@ public static class JpegMetadata
     public static bool LooksLikeJpeg(byte[] b) => b.Length >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF;
 
     /// <summary>The JPEG with the changes made. Throws <see cref="MetadataRefusedException"/> for a file it can't safely
-    /// change (not a JPEG it can follow, unreadable XMP, Extended XMP, too much metadata) and
+    /// change (not a JPEG it can follow, unreadable XMP, Extended XMP that doesn't add up or holds a field being written,
+    /// too much metadata) and
     /// <see cref="SecondPictureException"/> for a multi-picture file whose index can't be kept right.</summary>
     public static byte[] Apply(byte[] jpeg, MetadataChanges changes)
     {
         var segments = Segments(jpeg);
         var xmpAt = segments.FindIndex(s => IsApp1With(jpeg, s, XmpSignature));
-        if (segments.Any(s => IsApp1With(jpeg, s, ExtendedSignature)))
-            throw new MetadataRefusedException("Its metadata is spread over several parts (Extended XMP), which isn't changed.");
         var mpf = segments.FindIndex(s => s.Marker == 0xE2 && Has(jpeg, s.Offset + 4, MpfSignature));
         // Only one index is patched, so a file with two (one would be left wrong) isn't grown.
         var twoIndexes = segments.Count(s => s.Marker == 0xE2 && Has(jpeg, s.Offset + 4, MpfSignature)) > 1;
@@ -60,7 +65,19 @@ public static class JpegMetadata
         {
             document = XmpPacket.New();
         }
+        var extension = segments.Where(s => IsApp1With(jpeg, s, ExtendedSignature)).ToList();
+        string? guid = null;
+        if (extension.Count > 0)
+        {
+            // Which main packet names the extension must be clear, as on the Mac.
+            if (segments.Count(s => IsApp1With(jpeg, s, XmpSignature)) > 1) throw new MetadataRefusedException(DontAddUp);
+            guid = CheckExtension(jpeg, extension, xmpAt >= 0 ? document : null, changes);
+        }
+        if (changes.Caption is { } caption && StaleIptcCaption(jpeg, segments) is { } old && !old.Any(t => SameText(t, caption)))
+            throw new OlderCaptionException();
         XmpPacket.Edit(document, changes);
+        // And after the change, the main packet still names it (as the Mac checks), or the extension would be lost.
+        if (guid is not null && XmpPacket.ExtendedGuid(document) != guid) throw new MetadataRefusedException(DontAddUp);
         var packet = XmpPacket.Serialize(document, oldPacketLength, MaxSegmentLength - 2 - XmpSignature.Length);
         var segment = new byte[4 + XmpSignature.Length + packet.Length];
         var length = segment.Length - 2;
@@ -104,6 +121,183 @@ public static class JpegMetadata
         if (exif.Length > 0) XmpPacket.PatchExif(result, exif.Offset + 4 + ExifSignature.Length, exif.End, changes);
         return result;
     }
+
+    // MARK: Photoshop's IPTC
+
+    /// <summary>The same caption, allowing for the ends trimmed and line breaks written as CR (as Photoshop does).</summary>
+    internal static bool SameText(string a, string b) => Lines(a) == Lines(b);
+
+    /// <summary>Line breaks as LF, the ends trimmed.</summary>
+    private static string Lines(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+
+    /// <summary>
+    /// The caption in Photoshop's IPTC (APP13, image resource 0x0404, dataset 2:120), as UTF-8 and as Latin-1, when readers
+    /// would show it ahead of the XMP's: when there's an IPTC digest (resource 0x0425) and it isn't the MD5 of the IPTC
+    /// block, an app changed the IPTC after the XMP was written, so ImageIO and others take the IPTC's (#169, as the
+    /// Mac's #169, and as the metadata guidelines say). Null when there's no such caption, or the digest matches, or
+    /// there's no digest (then the XMP is read). The IPTC itself isn't changed.
+    ///
+    /// The Photoshop segments are joined first (a long resource list is split to fit, each part repeating the header), and
+    /// the first IPTC block and the first digest count, as ExifTool reads them.
+    /// </summary>
+    private static string[]? StaleIptcCaption(byte[] jpeg, IReadOnlyList<Segment> segments)
+    {
+        var list = new List<byte>();
+        foreach (var s in segments.Where(s => s.Marker == 0xED && Has(jpeg, s.Offset + 4, PhotoshopSignature)))
+            list.AddRange(jpeg.AsSpan((s.Offset + 4 + PhotoshopSignature.Length)..s.End));
+        return StaleIptcCaption(list.ToArray());
+    }
+
+    /// <summary>
+    /// The caption other apps read from this JPEG when it's Photoshop's IPTC caption rather than the XMP's (#181): its
+    /// digest is stale, as above, and the caption isn't empty (an empty one shows the XMP's, as on the Mac). Line breaks as
+    /// LF. Null when the XMP's caption is the one read, or the file can't be followed.
+    /// </summary>
+    public static string? IptcCaptionReadFirst(Stream file) =>
+        IptcCaptionReadings(file)?.Select(Lines).FirstOrDefault(t => t.Length > 0);
+
+    /// <summary>Whether a new caption would be refused (#179): an older IPTC caption, different from it, would still be
+    /// read. For saying so before asking anything.</summary>
+    public static bool WouldRefuseCaption(Stream file, string caption) =>
+        IptcCaptionReadings(file) is { } readings && !readings.Any(t => SameText(t, caption));
+
+    /// <summary>Whether Photoshop's IPTC caption, even an empty one, would still be read instead of any new caption (a
+    /// stale digest): then only its own text could be written.</summary>
+    public static bool HasOlderCaption(Stream file) => IptcCaptionReadings(file) is not null;
+
+    /// <summary>
+    /// The IPTC caption's readings when its digest is stale, reading only the segment headers and Photoshop's segments, not
+    /// the picture, so it's cheap for a library scan. Null when there's none, or the file can't be followed. (The same
+    /// walk as <see cref="Segments"/>, over a stream.) A read that fails partway (a share that dropped) throws, so the
+    /// photo is read again later rather than cached without it.
+    /// </summary>
+    private static string[]? IptcCaptionReadings(Stream file)
+    {
+        try
+        {
+            var photoshop = new List<byte>();
+            var header = new byte[4];
+            var fileLength = file.Length;
+            file.Position = 0;
+            if (file.Read(header, 0, 2) != 2 || header[0] != 0xFF || header[1] != 0xD8) return null;
+            long at = 2;
+            while (at + 4 <= fileLength)
+            {
+                file.Position = at;
+                file.ReadExactly(header);
+                if (header[0] != 0xFF) return null;
+                var marker = header[1];
+                if (marker == 0xFF) { at++; continue; }
+                if (marker is 0xDA or 0xD9) break;
+                if (marker is 0x01 or (>= 0xD0 and <= 0xD7)) { at += 2; continue; }
+                var length = (header[2] << 8) | header[3];
+                if (length < 2 || at + 2 + length > fileLength) return null;
+                if (marker == 0xED && length - 2 > PhotoshopSignature.Length)
+                {
+                    var body = new byte[length - 2];
+                    file.ReadExactly(body);
+                    if (body.AsSpan().StartsWith(PhotoshopSignature)) photoshop.AddRange(body.AsSpan(PhotoshopSignature.Length));
+                }
+                at += 2 + length;
+            }
+            return photoshop.Count == 0 ? null : StaleIptcCaption(photoshop.ToArray());
+        }
+        catch (EndOfStreamException)
+        {
+            // The file got shorter while it was read.
+            return null;
+        }
+    }
+
+    /// <summary>The caption's readings (UTF-8, Latin-1) from Photoshop's joined resource list, when its digest is stale.</summary>
+    private static string[]? StaleIptcCaption(byte[] b)
+    {
+        byte[]? iptc = null, digest = null;
+        var p = 0;
+        while (p + 12 <= b.Length && ResourceSignatures.Any(sig => b.AsSpan(p, 4).SequenceEqual(sig)))
+        {
+            var id = (b[p + 4] << 8) | b[p + 5];
+            // A Pascal name, padded to an even length with its length byte.
+            var q = p + 6 + ((b[p + 6] + 2) & ~1);
+            if (q + 4 > b.Length) break;
+            var size = (long)(uint)((b[q] << 24) | (b[q + 1] << 16) | (b[q + 2] << 8) | b[q + 3]);
+            q += 4;
+            // Compared without adding, so a huge size can't wrap round and pass.
+            if (size > b.Length - q) break;
+            if (id == 0x0404) iptc ??= b[q..(q + (int)size)];
+            if (id == 0x0425) digest ??= b[q..(q + (int)size)];
+            p = q + (int)size + (int)(size & 1);
+        }
+        // Any digest that isn't the IPTC's MD5 (a damaged one too) means the IPTC changed since.
+        if (iptc is null || digest is null || System.Security.Cryptography.MD5.HashData(iptc).AsSpan().SequenceEqual(digest)) return null;
+        // Datasets: 0x1C, record, dataset, a 2-byte length (an extended length isn't followed).
+        for (var i = 0; i + 5 <= iptc.Length && iptc[i] == 0x1C; )
+        {
+            int record = iptc[i + 1], dataset = iptc[i + 2], length = (iptc[i + 3] << 8) | iptc[i + 4];
+            if ((length & 0x8000) != 0 || i + 5 + length > iptc.Length) return null;
+            if (record == 2 && dataset == 120) return [.. XmpPacket.TextOf(iptc, i + 5, length)];
+            i += 5 + length;
+        }
+        return null;
+    }
+
+    // MARK: Extended XMP
+
+    private const string DontAddUp = "Its metadata is spread over several parts (Extended XMP) that don't add up.";
+
+    /// <summary>The Extended XMP parts, checked as XMP's specification describes them: each is the GUID (32 hex digits),
+    /// the whole extension's length and this part's offset in it (4 bytes each, big-endian), then its bytes. Together
+    /// they must cover the extension exactly, its MD5 must be the GUID, and the main packet must name it. Then none of the
+    /// fields being written may be in it.</summary>
+    /// <returns>The GUID.</returns>
+    private static string CheckExtension(byte[] jpeg, List<Segment> parts, XDocument? main, MetadataChanges changes)
+    {
+        // Exactly 32 uppercase hex digits, as XMP writes an MD5 and the Mac requires; each part names it byte for byte.
+        var guid = main is null ? null : XmpPacket.ExtendedGuid(main);
+        if (guid is not { Length: 32 } || !guid.All(c => c is >= '0' and <= '9' or >= 'A' and <= 'F')) throw new MetadataRefusedException(DontAddUp);
+        long total = -1;
+        var pieces = new List<(long Offset, byte[] Bytes)>();
+        foreach (var s in parts)
+        {
+            var at = s.Offset + 4 + ExtendedSignature.Length;
+            // The header and at least one byte: an empty part isn't one.
+            if (at + 40 >= s.End) throw new MetadataRefusedException(DontAddUp);
+            var name = Encoding.ASCII.GetString(jpeg, at, 32);
+            long length = (uint)((jpeg[at + 32] << 24) | (jpeg[at + 33] << 16) | (jpeg[at + 34] << 8) | jpeg[at + 35]);
+            long offset = (uint)((jpeg[at + 36] << 24) | (jpeg[at + 37] << 16) | (jpeg[at + 38] << 8) | jpeg[at + 39]);
+            if (!name.Equals(guid, StringComparison.Ordinal) || (total >= 0 && total != length)) throw new MetadataRefusedException(DontAddUp);
+            total = length;
+            pieces.Add((offset, jpeg[(at + 40)..s.End]));
+        }
+        // The parts can only add up to what they hold: a larger length is refused before anything is allocated for it.
+        if (total != pieces.Sum(p => (long)p.Bytes.Length)) throw new MetadataRefusedException(DontAddUp);
+        var whole = new byte[total];
+        long next = 0;
+        foreach (var (offset, bytes) in pieces.OrderBy(p => p.Offset))
+        {
+            // In order, with no gap or overlap. (With the sum checked above this also keeps every part within the total.)
+            if (offset != next || offset + bytes.Length > total) throw new MetadataRefusedException(DontAddUp);
+            bytes.CopyTo(whole, offset);
+            next += bytes.Length;
+        }
+        if (next != total) throw new MetadataRefusedException(DontAddUp);
+        var md5 = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(whole));
+        if (!md5.Equals(guid, StringComparison.Ordinal)) throw new MetadataRefusedException(DontAddUp);
+        var extended = XmpPacket.Parse(whole);
+        // Named, so it's clear what can't be changed: "its caption is kept in another part".
+        if (XmpPacket.Written(changes).FirstOrDefault(n => XmpPacket.Holds(extended, n)) is { } held)
+            throw new MetadataRefusedException($"Its metadata is spread over several parts (Extended XMP), and its {FieldName(held)} is kept in another part.");
+        return guid;
+    }
+
+    private static string FieldName(System.Xml.Linq.XName name) => name.LocalName switch
+    {
+        "description" => "caption",
+        "title" => "title",
+        "AltTextAccessibility" => "alt text",
+        "ExtDescrAccessibility" => "extended description",
+        _ => "rating",
+    };
 
     // MARK: Segments
 

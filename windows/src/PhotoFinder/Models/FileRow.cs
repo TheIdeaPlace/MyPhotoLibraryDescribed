@@ -21,6 +21,7 @@ public sealed class FileRow : INotifyPropertyChanged
         Item = item;
         Container = container;
         Refresh();
+        _made = true;
     }
 
     public static FileRow ForItem(MediaItem item) => new(item.Path, item, null);
@@ -54,7 +55,36 @@ public sealed class FileRow : INotifyPropertyChanged
     public string Orientation { get; private set; } = "";
     public double Megapixels { get; private set; }
     public string MegapixelsText { get; private set; } = "";
+    /// <summary>Place Taken: the place's name when it's known (#172), otherwise the coordinates.</summary>
     public string LocationText { get; private set; } = "";
+    private string _coordinates = "";
+    private string? _placeName;
+    /// <summary>Made: from now on, coordinates arriving are their details read after the row was shown.</summary>
+    private bool _made;
+
+    /// <summary>A name already found for a spot, when names are wanted (#172), so a row whose details arrive later shows
+    /// it at once; null when they aren't. Set by the window.</summary>
+    public static Func<double, double, string?>? KnownPlaceName { get; set; }
+
+    /// <summary>Raised when a row's coordinates arrive with its details, after it was first shown, so the window can look
+    /// it up if it's on screen.</summary>
+    public static event Action<FileRow>? CoordinatesArrived;
+
+    /// <summary>Where the photo was taken, or null.</summary>
+    public (double Latitude, double Longitude)? Coordinates =>
+        Item?.Metadata is { Latitude: { } lat, Longitude: { } lon } ? (lat, lon) : null;
+
+    /// <summary>Shows the place's name in Place Taken (null for the coordinates again). The row doesn't move, and
+    /// <paramref name="quietly"/> leaves the spoken name to be told later (the row in focus: hearing it again as a name
+    /// arrives would be noise); <see cref="NotifyAccessibleName"/> tells it.</summary>
+    public void SetPlaceName(string? name, bool quietly = false)
+    {
+        if (name == _placeName) return;
+        _placeName = name;
+        LocationText = name ?? _coordinates;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(LocationText)));
+        if (!quietly) NotifyAccessibleName();
+    }
     public string Folder { get; private set; } = "";
     /// <summary>A Segoe Fluent Icons glyph for rows that have no thumbnail.</summary>
     public string Glyph { get; private set; } = "";
@@ -184,8 +214,17 @@ public sealed class FileRow : INotifyPropertyChanged
         IsFavorite = item.IsFavorite;
         Rating = m.Rating;
         RatingText = StarsText(m.Rating);
-        LocationText = m.Latitude is { } lat && m.Longitude is { } lon
+        var had = _coordinates;
+        _coordinates = m.Latitude is { } lat && m.Longitude is { } lon
             ? string.Format(CultureInfo.CurrentCulture, "{0:0.0000}, {1:0.0000}", lat, lon) : "";
+        // A name found earlier stays while the photo is where it was; new coordinates take a name already known for them.
+        if (_coordinates != had)
+        {
+            _placeName = m.Latitude is { } la && m.Longitude is { } lo ? KnownPlaceName?.Invoke(la, lo) : null;
+            // Only when re-read (its details arriving), not as a row is first made.
+            if (_made && had.Length == 0 && _coordinates.Length > 0 && _placeName is null) CoordinatesArrived?.Invoke(this);
+        }
+        LocationText = _placeName ?? _coordinates;
         FileType = MediaTypes.FileTypeDescription(item.Path);
         Size = item.Size;
         SizeText = FormatSize(item.Size);

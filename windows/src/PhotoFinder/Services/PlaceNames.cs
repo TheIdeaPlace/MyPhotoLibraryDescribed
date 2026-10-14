@@ -9,8 +9,9 @@ namespace PhotoFinder.Services;
 /// Photo > Look Up Place Names (#25): Get Info names the place a photo was taken. Finding the name sends the photo's
 /// coordinates to OpenStreetMap's Nominatim service (Kelly, 13 Oct: free, rather than a paid Azure Maps account), so it's
 /// off until the person agrees once, as on the Mac. Following Nominatim's usage policy: one request a second at most, an
-/// identifying User-Agent, never in bulk (only when Get Info opens), and names already found are kept in the data folder,
-/// so a place is sent once. Never throws: no name is no name.
+/// identifying User-Agent, never in bulk (when Get Info opens, and for the photos showing when Place Taken is a column or a
+/// gallery label, #172, a few at a time), and names already found are kept in the data folder, so a place is sent once.
+/// Never throws: no name is no name.
 ///
 /// Nominatim also asks that an app can be switched off "at our request at any time … without requiring a software update"
 /// (#128): before asking it, the app reads config/services.json from its own repository on GitHub, at most once a day and
@@ -21,7 +22,7 @@ public sealed class PlaceNames
     public const string Question = "Look up place names?";
 
     public static readonly string Explanation =
-        $"To name the place a photo was taken, {AppInfo.Name} sends the photo's latitude and longitude, and the language Windows uses so the name comes back in it, to OpenStreetMap's Nominatim service when you open Get Info, and nothing about you or the photo. Before that, at most once a day, it reads a small settings file from its GitHub repository, so lookups can be paused for everyone if the service asks. Nothing is sent until you turn this on, and you can turn it off at any time in the Photo menu.";
+        $"To name the place a photo was taken, {AppInfo.Name} sends the photo's latitude and longitude, and the language Windows uses so the name comes back in it (nothing about you or the photo), to OpenStreetMap's Nominatim service: when you open Get Info, and for the photos showing when Place Taken is a list column or a gallery label. Before that, at most once a day, it reads a small settings file from its GitHub repository, so lookups can be paused for everyone if the service asks. Nothing is sent until you turn this on, and you can turn it off at any time in the Photo menu.";
 
     /// <summary>The credit OpenStreetMap's licence asks for, said with each name.</summary>
     public const string Credit = "© OpenStreetMap contributors";
@@ -197,29 +198,38 @@ public sealed class PlaceNames
 
     /// <summary>The place's name ("Pike Place Market, Seattle, Washington, United States"), or null. Asks Nominatim only
     /// when it isn't already known.</summary>
-    public async Task<string?> LookUpAsync(double latitude, double longitude, CancellationToken cancel = default)
+    public async Task<string?> LookUpAsync(double latitude, double longitude, CancellationToken cancel = default) =>
+        (await LookUpWithResultAsync(latitude, longitude, cancel)).Name;
+
+    /// <summary>How a lookup went, for the place-name queue (#172): known already (nothing sent), asked and answered (a
+    /// name or none), failed (offline, an answer that wasn't Nominatim's: worth trying again later), or stopped (switched
+    /// off remotely, or Nominatim refused: nothing about the photo).</summary>
+    internal enum Outcome { Known, Answered, Failed, Stopped }
+
+    /// <summary>The name, and how the lookup went.</summary>
+    internal async Task<(string? Name, Outcome Outcome)> LookUpWithResultAsync(double latitude, double longitude, CancellationToken cancel = default)
     {
-        if (double.IsNaN(latitude) || double.IsNaN(longitude) || Math.Abs(latitude) > 90 || Math.Abs(longitude) > 180) return null;
+        if (double.IsNaN(latitude) || double.IsNaN(longitude) || Math.Abs(latitude) > 90 || Math.Abs(longitude) > 180) return (null, Outcome.Known);
         // Said only for a lookup the switch stopped, never for a spot known to have no name.
         Paused = null;
         var key = Key(latitude, longitude);
-        if (Cached(key) is { } known) return known.Length > 0 ? known : null;
-        if (_refused) return null;
+        if (Cached(key) is { } known) return (known.Length > 0 ? known : null, Outcome.Known);
+        if (_refused) return (null, Outcome.Stopped);
         try
         {
             await _gate.WaitAsync(cancel);
         }
         catch (OperationCanceledException)
         {
-            return null;
+            return (null, Outcome.Known);
         }
         try
         {
             // Another Get Info may have found it while this waited.
-            if (Cached(key) is { } found) return found.Length > 0 ? found : null;
-            if (_refused) return null;
+            if (Cached(key) is { } found) return (found.Length > 0 ? found : null, Outcome.Known);
+            if (_refused) return (null, Outcome.Stopped);
             // Switched off remotely: nothing goes to Nominatim. A name already found is still shown (above).
-            if (!await SwitchedOnAsync(cancel).ConfigureAwait(false)) return null;
+            if (!await SwitchedOnAsync(cancel).ConfigureAwait(false)) return (null, Outcome.Stopped);
             var wait = _lastRequest + MinimumGap - DateTime.UtcNow;
             if (wait > TimeSpan.Zero) await Task.Delay(wait, cancel);
             _lastRequest = DateTime.UtcNow;
@@ -233,25 +243,25 @@ public sealed class PlaceNames
             var name = NameFrom(json);
             // A place with no name (the open sea) is remembered too, so it isn't asked again.
             Remember(key, name ?? "");
-            return name;
+            return (name, Outcome.Answered);
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)
         {
             // Get Info closed.
-            return null;
+            return (null, Outcome.Known);
         }
         catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.TooManyRequests or System.Net.HttpStatusCode.Forbidden)
         {
             // Nominatim's way of saying stop: respected for the rest of the session.
             _refused = true;
             Log.Error("places", "Nominatim refused place-name lookups; none more until My Photo Library Described starts again", ex);
-            return null;
+            return (null, Outcome.Stopped);
         }
         catch (Exception ex)
         {
             // Offline, refused or unreadable: not remembered, so it's tried again next time.
             Log.Error("places", "A place name couldn't be looked up", ex);
-            return null;
+            return (null, Outcome.Failed);
         }
         finally
         {

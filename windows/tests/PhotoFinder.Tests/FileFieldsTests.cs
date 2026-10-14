@@ -264,10 +264,23 @@ public sealed class FileFieldsTests : IDisposable
         var roomy = _lib.AddJpeg("roomy.jpg");
         File.WriteAllBytes(roomy, WithoutRoom(File.ReadAllBytes(roomy)));
         await XmpFields.WriteAsync(roomy, "First.", null, null);
-        // The read-back's decoder keeps the file mapped until it's collected.
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        File.WriteAllBytes(roomy, [.. WithSegment(File.ReadAllBytes(roomy), 0xE2, mpf), .. "the gain map"u8.ToArray()]);
+        // The read-back's decoder keeps the file mapped until it's collected, which can take a moment: tried again, as
+        // the app's own swap does.
+        byte[] withIndex = [.. WithSegment(File.ReadAllBytes(roomy), 0xE2, mpf), .. "the gain map"u8.ToArray()];
+        for (var attempt = 1; ; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            try
+            {
+                File.WriteAllBytes(roomy, withIndex);
+                break;
+            }
+            catch (IOException) when (attempt < 20)
+            {
+                await Task.Delay(50);
+            }
+        }
         var size = new FileInfo(roomy).Length;
         await XmpFields.WriteAsync(roomy, "Second.", null, null);
         Assert.Equal(size, new FileInfo(roomy).Length);
@@ -488,12 +501,318 @@ public sealed class FileFieldsTests : IDisposable
         Assert.Equal(plain[2..], changed[(s.Offset + s.Length)..]);
     }
 
+    private static readonly byte[] ExtensionSignature = "http://ns.adobe.com/xmp/extension/\0"u8.ToArray();
+
+    /// <summary>A JPEG with Extended XMP, as a Pixel writes it: the main packet naming the extension's GUID (the MD5 of the
+    /// extension packet), then the extension in <paramref name="parts"/> segments, each the GUID, the whole length, its
+    /// offset and its bytes. <paramref name="extensionBody"/> goes inside the extension's rdf:Description.</summary>
+    private byte[] WithExtendedXmp(string extensionBody, int parts = 2, Func<string, string>? guidFor = null, Func<int, (int Offset, int Total)?>? header = null, Func<string, string>? partGuid = null, bool mainNamesIt = true)
+    {
+        var extension = System.Text.Encoding.UTF8.GetBytes(
+            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" " +
+            "xmlns:GDepth=\"http://ns.google.com/photos/1.0/depthmap/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">" +
+            extensionBody + "</rdf:Description></rdf:RDF></x:xmpmeta>");
+        var md5 = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(extension));
+        var guid = guidFor?.Invoke(md5) ?? md5;
+        var main = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" " +
+                   (mainNamesIt ? $"xmlns:xmpNote=\"http://ns.adobe.com/xmp/note/\" xmpNote:HasExtendedXMP=\"{guid}\"" : "") + "/></rdf:RDF></x:xmpmeta>";
+        var jpeg = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("pixel.jpg")));
+        var size = (extension.Length + parts - 1) / parts;
+        // Added in reverse, as WithSegment puts each first: the main packet ends up first, then the parts in order.
+        for (var i = parts - 1; i >= 0; i--)
+        {
+            var offset = i * size;
+            var piece = extension[offset..Math.Min(extension.Length, offset + size)];
+            // A test may give a part its own offset and total, or another GUID.
+            var (o, total) = header?.Invoke(i) ?? (offset, extension.Length);
+            var name = partGuid?.Invoke(guid) ?? guid;
+            byte[] head = [.. System.Text.Encoding.ASCII.GetBytes(name), (byte)(total >> 24), (byte)(total >> 16), (byte)(total >> 8), (byte)total,
+                (byte)(o >> 24), (byte)(o >> 16), (byte)(o >> 8), (byte)o];
+            jpeg = WithSegment(jpeg, 0xE1, [.. ExtensionSignature, .. head, .. piece]);
+        }
+        return WithSegment(jpeg, 0xE1, [.. XmpSignature, .. System.Text.Encoding.UTF8.GetBytes(main)]);
+    }
+
+    private static List<byte[]> ExtensionParts(byte[] b) =>
+        Segments(b).Where(s => s.Marker == 0xE1 && b.AsSpan(s.Offset + 4).StartsWith(ExtensionSignature)).Select(s => b[s.Offset..(s.Offset + s.Length)]).ToList();
+
+    [Fact]
+    public async Task APixelPhotoWithExtendedXmp_IsCaptioned_KeepingTheExtensionByteForByte()
+    {
+        // #149, as the Mac's #166: a depth map (or gain map details) in the extension, untouched.
+        var jpeg = WithExtendedXmp("<GDepth:Data>" + new string('A', 3000) + "</GDepth:Data>");
+        var path = _lib.PathOf("pixel-captioned.jpg");
+        File.WriteAllBytes(path, jpeg);
+        Assert.Equal(1, (await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog on a beach.")).Succeeded);
+        var after = File.ReadAllBytes(path);
+        Assert.Equal(ExtensionParts(jpeg), ExtensionParts(after));
+        Assert.Equal("A dog on a beach.", (await XmpFields.ReadAsync(path)).Caption);
+        var main = Segments(after).Single(s => IsXmp(after, s));
+        var mainBefore = Segments(jpeg).Single(s => IsXmp(jpeg, s));
+        string Guid(byte[] b, (byte Marker, int Offset, int Length) s) =>
+            System.Text.RegularExpressions.Regex.Match(System.Text.Encoding.UTF8.GetString(b, s.Offset, s.Length), "HasExtendedXMP=\"([0-9A-F]{32})\"").Groups[1].Value;
+        Assert.NotEmpty(Guid(after, main));
+        Assert.Equal(Guid(jpeg, mainBefore), Guid(after, main));
+        // A rating too.
+        Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 4)).Succeeded);
+        Assert.Equal(ExtensionParts(jpeg), ExtensionParts(File.ReadAllBytes(path)));
+    }
+
+    /// <summary>The length of the extension packet WithExtendedXmp builds around <paramref name="body"/>.</summary>
+    private static int ExtensionLength(string body) => System.Text.Encoding.UTF8.GetByteCount(
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" " +
+        "xmlns:GDepth=\"http://ns.google.com/photos/1.0/depthmap/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">" +
+        body + "</rdf:Description></rdf:RDF></x:xmpmeta>");
+
+    /// <summary>The file with an extra extension part holding only its header: the GUID, total and offset, no bytes.</summary>
+    private static byte[] WithEmptyPart(byte[] jpeg)
+    {
+        var part = Segments(jpeg).First(s => s.Marker == 0xE1 && jpeg.AsSpan(s.Offset + 4).StartsWith(ExtensionSignature));
+        var headerOnly = jpeg[(part.Offset + 4)..(part.Offset + 4 + ExtensionSignature.Length + 40)];
+        return WithSegment(jpeg, 0xE1, headerOnly);
+    }
+
+    /// <summary>A Pixel-style file whose extension holds dc:description as an attribute.</summary>
+    private byte[] WithExtendedXmpAttribute()
+    {
+        var jpeg = WithExtendedXmp("<GDepth:Data>x</GDepth:Data>");
+        // Rebuilt by hand: the extension's rdf:Description carries dc:description="Old".
+        var extension = System.Text.Encoding.UTF8.GetBytes(
+            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" " +
+            "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" dc:description=\"Old\"/></rdf:RDF></x:xmpmeta>");
+        var guid = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(extension));
+        var main = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" " +
+                   $"xmlns:xmpNote=\"http://ns.adobe.com/xmp/note/\" xmpNote:HasExtendedXMP=\"{guid}\"/></rdf:RDF></x:xmpmeta>";
+        var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("pixel-attribute.jpg")));
+        byte[] head = [.. System.Text.Encoding.ASCII.GetBytes(guid), (byte)(extension.Length >> 24), (byte)(extension.Length >> 16), (byte)(extension.Length >> 8), (byte)extension.Length, 0, 0, 0, 0];
+        var withPart = WithSegment(plain, 0xE1, [.. ExtensionSignature, .. head, .. extension]);
+        return WithSegment(withPart, 0xE1, [.. XmpSignature, .. System.Text.Encoding.UTF8.GetBytes(main)]);
+    }
+
+    public static TheoryData<string> BadExtensions() =>
+    [
+        "guid", "missing part", "caption inside", "rating inside", "no guid in main", "overlap", "different totals", "huge total",
+        "another guid in a part", "lowercase guid", "caption as attribute", "title inside", "main without the note", "empty part",
+    ];
+
+    [Theory]
+    [MemberData(nameof(BadExtensions))]
+    public void ExtendedXmpThatDoesntAddUp_OrHoldsWhatWouldChange_IsRefused(string what)
+    {
+        const string body = "<GDepth:Data>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</GDepth:Data>";
+        var jpeg = what switch
+        {
+            "guid" => WithExtendedXmp("<GDepth:Data>x</GDepth:Data>", guidFor: md5 => new string('0', 32)),
+            "caption inside" => WithExtendedXmp("<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">Old</rdf:li></rdf:Alt></dc:description>"),
+            "caption as attribute" => WithExtendedXmpAttribute(),
+            "title inside" => WithExtendedXmp("<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">Old</rdf:li></rdf:Alt></dc:title>"),
+            "rating inside" => WithExtendedXmp("<xmp:Rating>3</xmp:Rating>"),
+            // The second part says it starts 10 bytes in, over the first.
+            "overlap" => WithExtendedXmp(body, header: i => (i == 1 ? 10 : 0, ExtensionLength(body))),
+            "different totals" => WithExtendedXmp(body, header: i => (i * ((ExtensionLength(body) + 1) / 2), ExtensionLength(body) + i)),
+            "huge total" => WithExtendedXmp(body, header: i => (i * ((ExtensionLength(body) + 1) / 2), int.MaxValue)),
+            "another guid in a part" => WithExtendedXmp(body, partGuid: g => new string('F', 32)),
+            "lowercase guid" => WithExtendedXmp(body, guidFor: md5 => md5.ToLowerInvariant()),
+            "main without the note" => WithExtendedXmp(body, mainNamesIt: false),
+            "empty part" => WithExtendedXmp(body, parts: 2, header: i => (i * ((ExtensionLength(body) + 1) / 2), ExtensionLength(body))) is var j ? WithEmptyPart(j) : j,
+            _ => WithExtendedXmp("<GDepth:Data>" + new string('A', 3000) + "</GDepth:Data>", parts: 3),
+        };
+        if (what == "missing part")
+        {
+            var part = Segments(jpeg).First(s => s.Marker == 0xE1 && jpeg.AsSpan(s.Offset + 4).StartsWith(ExtensionSignature));
+            jpeg = [.. jpeg[..part.Offset], .. jpeg[(part.Offset + part.Length)..]];
+        }
+        if (what == "no guid in main")
+        {
+            var main = Segments(jpeg).Single(s => IsXmp(jpeg, s));
+            jpeg = [.. jpeg[..main.Offset], .. jpeg[(main.Offset + main.Length)..]];
+        }
+        var changes = what switch
+        {
+            "rating inside" => new MetadataChanges { Stars = 4 },
+            "title inside" => new MetadataChanges { Title = "A dog." },
+            _ => new MetadataChanges { Caption = "A dog." },
+        };
+        var refused = Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(jpeg, changes));
+        Assert.StartsWith("Its metadata is spread over several parts (Extended XMP)", refused.Message);
+        if (what is "caption inside" or "caption as attribute") Assert.EndsWith("and its caption is kept in another part.", refused.Message);
+        else if (what is not ("title inside" or "rating inside")) Assert.EndsWith("that don't add up.", refused.Message);
+        if (what == "title inside") Assert.EndsWith("and its title is kept in another part.", refused.Message);
+        if (what == "rating inside") Assert.EndsWith("and its rating is kept in another part.", refused.Message);
+        // What isn't in the extension can still change when the caption is inside it.
+        if (what == "caption inside") Assert.NotNull(JpegMetadata.Apply(jpeg, new MetadataChanges { Stars = 2 }));
+    }
+
+    /// <summary>A JPEG with Photoshop's IPTC (APP13): a caption (2:120) and, unless <paramref name="digest"/> is "none",
+    /// the IPTC digest: right ("right"), stale ("stale", as when an older app changed the IPTC afterwards) or 15 bytes
+    /// ("short"). The IPTC resource can have a name, a junk resource with a huge size can come first, and the resources can
+    /// be split across two APP13 segments, each starting with Photoshop's header, as Photoshop writes a long list.</summary>
+    private byte[] WithPhotoshopIptc(string caption, string digest, string name = "", bool hugeFirst = false, bool split = false)
+    {
+        var text = System.Text.Encoding.UTF8.GetBytes(caption);
+        byte[] iptc = [0x1C, 2, 0, 0, 2, 0, 4, 0x1C, 2, 120, (byte)(text.Length >> 8), (byte)text.Length, .. text];
+        static byte[] Resource(int id, byte[] data, string name = "", uint? size = null)
+        {
+            var n = System.Text.Encoding.ASCII.GetBytes(name);
+            byte[] pascal = [(byte)n.Length, .. n, .. n.Length % 2 == 0 ? new byte[] { 0 } : []];
+            var length = size ?? (uint)data.Length;
+            return [.. "8BIM"u8.ToArray(), (byte)(id >> 8), (byte)id, .. pascal, (byte)(length >> 24), (byte)(length >> 16), (byte)(length >> 8), (byte)length,
+                .. data, .. data.Length % 2 == 1 ? new byte[] { 0 } : []];
+        }
+        var md5 = System.Security.Cryptography.MD5.HashData(digest == "stale" ? [.. iptc, 0] : iptc);
+        byte[] resources = [.. hugeFirst ? Resource(0x0400, [1, 2], size: 0x7FFFFFF0) : [], .. Resource(0x0404, iptc, name),
+            .. digest switch { "none" => [], "short" => Resource(0x0425, md5[..15]), _ => Resource(0x0425, md5) }];
+        var photoshop = "Photoshop 3.0\0"u8.ToArray();
+        var jpeg = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("iptc.jpg")));
+        if (!split) return WithSegment(jpeg, 0xED, [.. photoshop, .. resources]);
+        // Split inside the IPTC resource; WithSegment puts each first, so the second half goes in first.
+        var half = resources.Length / 2;
+        return WithSegment(WithSegment(jpeg, 0xED, [.. photoshop, .. resources[half..]]), 0xED, [.. photoshop, .. resources[..half]]);
+    }
+
+    [Fact]
+    public async Task TheIptcCaptionOtherAppsRead_IsTheCaptionShown_WhenItWins()
+    {
+        // #181: Get Info and the list show the caption everyone else sees.
+        var stale = _lib.PathOf("stale-shown.jpg");
+        File.WriteAllBytes(stale, WithPhotoshopIptc("An old caption", "stale"));
+        Assert.Equal(new XmpFields.Fields("An old caption", "", "", HasCaption: true), await XmpFields.ReadAsync(stale));
+        Assert.Equal("An old caption", (await MetadataReader.ReadAsync(stale)).Caption);
+        // In step: the XMP's (none here) is read, as other apps do.
+        var right = _lib.PathOf("right-shown.jpg");
+        File.WriteAllBytes(right, WithPhotoshopIptc("An old caption", "right"));
+        Assert.False((await XmpFields.ReadAsync(right)).HasCaption);
+        // Split across two segments too.
+        var split = _lib.PathOf("split-shown.jpg");
+        File.WriteAllBytes(split, WithPhotoshopIptc("An old caption", "stale", split: true));
+        Assert.Equal("An old caption", (await XmpFields.ReadAsync(split)).Caption);
+    }
+
+    [Fact]
+    public async Task TheSameCaptionWithCRLineBreaks_IsSaved_AndReadsBack()
+    {
+        // Photoshop writes CR; the description has LF. Allowed (it's the same caption), and the read-back agrees.
+        var path = _lib.PathOf("cr.jpg");
+        File.WriteAllBytes(path, WithPhotoshopIptc("Line one\rLine two", "stale"));
+        Assert.Equal(1, (await MetadataWriter.SetCaptionAsync([ItemFor(path)], "Line one\nLine two")).Succeeded);
+        Assert.Equal("Line one\nLine two", (await XmpFields.ReadAsync(path)).Caption);
+    }
+
+    [Fact]
+    public async Task ARefusal_IsKnownBeforeAnythingIsAsked_AndAnEmptyIptcCaptionShowsTheXmps()
+    {
+        var stale = _lib.PathOf("refuse.jpg");
+        File.WriteAllBytes(stale, WithPhotoshopIptc("An old caption", "stale"));
+        Assert.True(await XmpFields.WouldRefuseCaptionAsync(stale, "A dog."));
+        Assert.False(await XmpFields.WouldRefuseCaptionAsync(stale, "An old caption"));
+        var right = _lib.PathOf("fine.jpg");
+        File.WriteAllBytes(right, WithPhotoshopIptc("An old caption", "right"));
+        Assert.False(await XmpFields.WouldRefuseCaptionAsync(right, "A dog."));
+        // A present but empty IPTC caption isn't shown in place of the XMP's, as on the Mac, but a new caption would
+        // still be refused, so Edit Caption says so before opening.
+        var emptyFile = _lib.PathOf("empty-iptc.jpg");
+        File.WriteAllBytes(emptyFile, WithPhotoshopIptc("", "stale"));
+        using (var empty = File.OpenRead(emptyFile)) Assert.Null(JpegMetadata.IptcCaptionReadFirst(empty));
+        Assert.True(await XmpFields.HasOlderCaptionAsync(emptyFile));
+        Assert.True(await XmpFields.WouldRefuseCaptionAsync(emptyFile, "A dog."));
+        Assert.True(await XmpFields.HasOlderCaptionAsync(stale));
+        Assert.False(await XmpFields.HasOlderCaptionAsync(right));
+    }
+
+    public static TheoryData<string> OddJpegs() => ["fill bytes", "not a jpeg", "not photoshop", "truncated", "past the end", "after the picture"];
+
+    [Theory]
+    [MemberData(nameof(OddJpegs))]
+    public void TheIptcWalk_FollowsOddFiles_WithoutFailing(string what)
+    {
+        var good = WithPhotoshopIptc("An old caption", "stale");
+        var app13 = Segments(good).Single(x => x.Marker == 0xED);
+        byte[] file = what switch
+        {
+            // Fill bytes before a marker are allowed; the caption is still found.
+            "fill bytes" => [0xFF, 0xD8, 0xFF, 0xFF, .. good[2..]],
+            "not a jpeg" => "GIF89a not a jpeg at all"u8.ToArray(),
+            "not photoshop" => WithSegment(WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("odd.jpg"))), 0xED, "Something else\0 8BIM"u8.ToArray()),
+            "truncated" => good[..(app13.Offset + 10)],
+            "past the end" => [.. good[..(app13.Offset + 2)], 0xFF, 0xF0, .. good[(app13.Offset + 4)..(app13.Offset + 40)]],
+            // Photoshop's segment only after the picture starts: not read.
+            _ => [.. WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("plain.jpg")))[..^2], .. good[app13.Offset..(app13.Offset + app13.Length)], 0xFF, 0xD9],
+        };
+        using var stream = new MemoryStream(file);
+        var caption = JpegMetadata.IptcCaptionReadFirst(stream);
+        if (what == "fill bytes") Assert.Equal("An old caption", caption);
+        else Assert.Null(caption);
+    }
+
+    [Fact]
+    public async Task AnOlderIptcCaptionReadersWouldShowInstead_IsntHidden_AndSaysSo()
+    {
+        // #169, as the Mac: the IPTC was changed after its digest was written, so readers show its caption, not the XMP's.
+        var path = _lib.PathOf("stale.jpg");
+        File.WriteAllBytes(path, WithPhotoshopIptc("An old caption", "stale"));
+        var before = File.ReadAllBytes(path);
+        var refused = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog on a beach.");
+        Assert.Equal(0, refused.Succeeded);
+        Assert.Equal("stale.jpg: An older caption saved in it by Photoshop or a similar app would still be read instead of the new one, so it was left as it is.",
+            refused.FailureSummary);
+        Assert.Equal(before, File.ReadAllBytes(path));
+        // A rating isn't the caption, so it can still change.
+        Assert.Equal(1, (await MetadataWriter.SetRatingAsync([ItemFor(path)], 3)).Succeeded);
+    }
+
+    [Theory]
+    [InlineData("odd length", true)]
+    [InlineData("named", true)]
+    [InlineData("split", true)]
+    [InlineData("short digest", true)]
+    [InlineData("cleared", true)]
+    [InlineData("right", false)]
+    [InlineData("none", false)]
+    [InlineData("same caption", false)]
+    [InlineData("same with CR", false)]
+    // A resource with an impossible size stops the walk, as ExifTool's does: nothing found, no error, the caption written.
+    [InlineData("huge size first", false)]
+    public void AnOlderIptcCaption_IsFound_HoweverItsWritten(string what, bool refused)
+    {
+        var jpeg = what switch
+        {
+            "odd length" => WithPhotoshopIptc("An old caption!", "stale"),
+            "named" => WithPhotoshopIptc("An old caption", "stale", name: "IPTC"),
+            "split" => WithPhotoshopIptc("An old caption", "stale", split: true),
+            "short digest" => WithPhotoshopIptc("An old caption", "short"),
+            "same with CR" => WithPhotoshopIptc("Line one\rLine two", "stale"),
+            "huge size first" => WithPhotoshopIptc("An old caption", "stale", hugeFirst: true),
+            "right" => WithPhotoshopIptc("An old caption", "right"),
+            "none" => WithPhotoshopIptc("An old caption", "none"),
+            _ => WithPhotoshopIptc("An old caption", "stale"),
+        };
+        var caption = what switch
+        {
+            "same caption" => "An old caption",
+            "same with CR" => "Line one\nLine two",
+            "cleared" => "",
+            _ => "A dog on a beach.",
+        };
+        if (refused)
+        {
+            Assert.Throws<OlderCaptionException>(() => JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = caption }));
+            return;
+        }
+        var changed = JpegMetadata.Apply(jpeg, new MetadataChanges { Caption = caption });
+        // Photoshop's segments are copied as they were, and the XMP has the new caption.
+        Assert.Equal(Segments(jpeg).Where(x => x.Marker == 0xED).Select(x => jpeg[x.Offset..(x.Offset + x.Length)]),
+            Segments(changed).Where(x => x.Marker == 0xED).Select(x => changed[x.Offset..(x.Offset + x.Length)]));
+        var xmp = Segments(changed).Single(x => IsXmp(changed, x));
+        Assert.Contains($">{caption}<", System.Text.Encoding.UTF8.GetString(changed, xmp.Offset, xmp.Length));
+    }
+
     [Fact]
     public void XmpItCantRead_OrExtendedXmp_IsLeftAlone()
     {
         var plain = WithoutRoom(File.ReadAllBytes(_lib.AddJpeg("a.jpg")));
         var broken = WithSegment(plain, 0xE1, [.. XmpSignature, .. "<x:xmpmeta not xml"u8.ToArray()]);
         Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(broken, new MetadataChanges { Caption = "A" }));
+        // An extension part too short to hold its own header, with no main packet naming it.
         var extended = WithSegment(plain, 0xE1, [.. "http://ns.adobe.com/xmp/extension/\0"u8.ToArray(), 1, 2, 3]);
         Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply(extended, new MetadataChanges { Caption = "A" }));
         Assert.Throws<MetadataRefusedException>(() => JpegMetadata.Apply("not a jpeg"u8.ToArray(), new MetadataChanges { Caption = "A" }));
@@ -526,7 +845,7 @@ public sealed class FileFieldsTests : IDisposable
         File.WriteAllBytes(path, WithSegment(WithoutRoom(File.ReadAllBytes(path)), 0xE1, [.. "http://ns.adobe.com/xmp/extension/\0"u8.ToArray(), 1, 2, 3]));
         var result = await MetadataWriter.SetCaptionAsync([ItemFor(path)], "A dog.");
         Assert.Equal(0, result.Succeeded);
-        Assert.Equal("ext.jpg: Its metadata is spread over several parts (Extended XMP), which isn't changed. It was left as it is.", result.FailureSummary);
+        Assert.Equal("ext.jpg: Its metadata is spread over several parts (Extended XMP) that don't add up. It was left as it is.", result.FailureSummary);
     }
 
     [Fact]

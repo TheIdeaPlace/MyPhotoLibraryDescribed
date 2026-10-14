@@ -74,6 +74,17 @@ public static class XmpFields
                 return new Fields(caption ?? "", alt ?? "", extended ?? "", caption is not null);
             });
         }
+        // A JPEG whose Photoshop IPTC caption other apps read instead of the XMP's (a stale digest, #181): that's its
+        // caption, so Get Info and the list show what everyone else sees, and replacing it is asked about. Read before
+        // WIC opens the file, so nothing else holds it once WIC lets go.
+        var iptc = IsJpeg(path)
+            ? await Task.Run(() =>
+            {
+                // Off the window's thread: a few small reads, but a network share can be slow.
+                using var head = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 12);
+                return JpegMetadata.IptcCaptionReadFirst(head);
+            })
+            : null;
         var file = await StorageFile.GetFileFromPathAsync(path);
         using var stream = await file.OpenAsync(FileAccessMode.Read);
         var decoder = await BitmapDecoder.CreateAsync(stream);
@@ -95,7 +106,7 @@ public static class XmpFields
             }
             return null;
         }
-        var found = await Get(Caption);
+        var found = iptc ?? await Get(Caption);
         return new Fields(found ?? "", await Get(Alt) ?? "", await Get(Extended) ?? "", found is not null);
     }
 
@@ -215,10 +226,37 @@ public static class XmpFields
     {
         if (caption is null && altText is null && extended is null) return;
         var stored = await ReadAsync(path);
-        if ((caption is not null && stored.Caption != caption.Trim())
+        // The caption allowing for line breaks written as CR: an older IPTC caption that matches is read back as it is.
+        if ((caption is not null && !JpegMetadata.SameText(stored.Caption, caption))
             || (altText is not null && stored.AltText != altText.Trim())
             || (extended is not null && stored.ExtendedDescription != extended.Trim()))
             throw new NotSupportedException("The value didn't stick.");
+    }
+
+    /// <summary>Whether a new caption for this photo would be refused (#179), so it's said before anything is asked. Never
+    /// throws: a file that can't be read now is found out when it's written.</summary>
+    public static Task<bool> WouldRefuseCaptionAsync(string path, string caption) =>
+        WithJpegAsync(path, file => JpegMetadata.WouldRefuseCaption(file, caption));
+
+    /// <summary>Whether any new caption for this photo would be refused (an older Photoshop caption, even an empty one,
+    /// would still be read, #179), so Edit Caption can say so instead of opening.</summary>
+    public static Task<bool> HasOlderCaptionAsync(string path) => WithJpegAsync(path, JpegMetadata.HasOlderCaption);
+
+    private static async Task<bool> WithJpegAsync(string path, Func<Stream, bool> check)
+    {
+        if (!IsJpeg(path)) return false;
+        try
+        {
+            return await Task.Run(() =>
+            {
+                using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 12);
+                return check(file);
+            });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private static string TempBeside(string path) =>
@@ -316,6 +354,9 @@ public static class XmpFields
 /// <summary>Windows stopped halfway through swapping a saved copy in: the photo is only in the copy, named here.</summary>
 public sealed class PhotoOnlyInCopyException(string path, string copy) : IOException(
     $"Windows couldn't finish saving it. The photo is safe in the same folder as {Path.GetFileName(copy)}: in File Explorer, rename that to {Path.GetFileName(path)} to get it back.");
+
+/// <summary>A JPEG whose Photoshop IPTC holds an older caption that readers would show instead of a new one (#169).</summary>
+public sealed class OlderCaptionException() : Exception("An older caption saved in it by Photoshop or a similar app would still be read instead of the new one");
 
 /// <summary>A photo holding a second picture (an Ultra HDR gain map, an MPO's other view) whose index can't be followed,
 /// so it couldn't be kept right if the change were made (#90).</summary>

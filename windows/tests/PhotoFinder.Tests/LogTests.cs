@@ -7,6 +7,32 @@ namespace PhotoFinder.Tests;
 public sealed class LogTests
 {
     [Fact]
+    public void FileExplorer_IsGivenThePackagesCopy_OfAFolderWindowsKeptInsideThePackage()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pf-explorer-" + Guid.NewGuid().ToString("N"));
+        var local = Path.Combine(root, "Local");
+        var package = Path.Combine(root, "Packages", "App_x", "LocalCache", "Local");
+        var logs = Path.Combine(local, "My Photo Library Described", "Logs");
+        try
+        {
+            // Not installed as a package, or nothing kept inside it: the usual path.
+            Assert.Equal(logs, AppPaths.ForExplorer(logs, local, null));
+            Assert.Equal(logs, AppPaths.ForExplorer(logs, local, package));
+            // Windows kept the folder inside the package, where Explorer can see it.
+            var moved = Path.Combine(package, "My Photo Library Described", "Logs");
+            Directory.CreateDirectory(moved);
+            Assert.Equal(moved, AppPaths.ForExplorer(logs, local + Path.DirectorySeparatorChar, package));
+            // A folder outside %LOCALAPPDATA% is left alone.
+            var elsewhere = Path.Combine(root, "Elsewhere");
+            Assert.Equal(elsewhere, AppPaths.ForExplorer(elsewhere, local, package));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Lines_GoInTodaysFile_OnOneLineEach_InTheTestsOwnDataFolder()
     {
         Assert.StartsWith(Path.GetTempPath(), Log.Folder);

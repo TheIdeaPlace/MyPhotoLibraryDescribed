@@ -32,7 +32,7 @@ The two apps work the same wherever the platform allows. Where they differ, this
 Both apps are on the [releases page](https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/latest), signed by Kelly Ford.
 
 - **Mac:** download the `My-Photo-Library-Described-<version>-mac.dmg` disk image, open it and drag the app to Applications. It's signed by Kelly Ford and notarized by Apple, so it opens without warnings. Describing photos needs macOS 27 on Apple silicon with Apple Intelligence. It's built to open on macOS 15 and later for browsing, but has only been tested on macOS 26 and 27.
-- **Windows:** download and open `PhotoFinder.appinstaller`. Windows' App Installer shows the app's name and publisher (Kelly Ford) with an Install button, and installs the Windows App Runtime it needs first if the PC doesn't have it. Windows then checks the same place for updates every few hours and installs them while the app isn't running; Help > Check for Updates checks now.
+- **Windows:** download and open `MyPhotoLibraryDescribed.appinstaller`. Windows' App Installer shows the app's name and publisher (Kelly Ford) with an Install button, and installs the Windows App Runtime it needs first if the PC doesn't have it. Windows then checks the same place for updates every few hours and installs them while the app isn't running; Help > Check for Updates checks now.
 
 ## What you need
 
@@ -65,7 +65,7 @@ How photos are described: on the Mac, Settings has the prompt Apple Intelligence
 
 In list view, the panel starts with a picture of the photo you're on, as Finder's and File Explorer's preview panes do, for anyone looking at the screen with you; screen readers skip it, since the description says what's in it. (The gallery already shows the photo large.) It never downloads a photo that's only in iCloud or OneDrive; those show their small thumbnail, or a placeholder when there isn't one.
 
-**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Redescribe, Use as Caption and Copy, and the photo's caption with Edit Caption. **Edit > Copy Description** (Shift-Command-C on the Mac) copies the description of the photo you're on, or of each photo selected, as text, from anywhere in the window; Edit > Copy copies the photos themselves. **Go > Go to Description or Back to Photos** (Shift-Command-D / Ctrl+Shift+D) goes straight to the description, showing the panel if it's hidden, and pressed again goes back to the list or gallery. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow / Alt+Right Arrow) and Previous Photo (Command-Left / Alt+Left): the photo changes, its name and position are read (in the Mac's gallery, what View > Labels… chooses), and focus stays where it is, with the box showing the new photo's description.
+**View > Show Description** (Option-Command-I / Ctrl+Shift+I), on by default, shows the photo you're on with its description in a box you can read by line, word or character, and correct. A correction is saved and marked "Edited by you", and nothing replaces it without asking. The panel also has Redescribe, Use as Caption and Copy, and the photo's caption with Edit Caption. **Edit > Copy Description** (Shift-Command-C / Ctrl+Shift+C) copies the description of the photo you're on, or of each photo selected, as text, from anywhere in the window; Edit > Copy copies the photos themselves. **Go > Go to Description or Back to Photos** (Shift-Command-D / Ctrl+Shift+D) goes straight to the description, showing the panel if it's hidden, and pressed again goes back to the list or gallery. To read descriptions one after another without leaving the box (with a braille display, say), use Go > Next Photo (Command-Right Arrow / Alt+Right Arrow) and Previous Photo (Command-Left / Alt+Left): the photo changes, its name and position are read (in the Mac's gallery, what View > Labels… chooses), and focus stays where it is, with the box showing the new photo's description.
 
 ## Read-only, and changing your photos
 
@@ -104,7 +104,7 @@ Each tab has the same Available and Shown lists, with Add, Remove, Move Up, Move
 
 Photos often record where they were taken, as coordinates. Get Info always shows the coordinates. **Look Up Place Names** (in Settings on the Mac, the Photo menu on Windows) also names the place, such as "Pike Place Market, Seattle, Washington, United States". To find the name, the coordinates are sent to a location service (on Windows with the language Windows uses, so the name comes back in it), and nothing about you or the photo when you open Get Info: Apple's on the Mac, and OpenStreetMap's Nominatim on Windows, where each name ends "(© OpenStreetMap contributors)" as its licence asks. Because of that, it's off until you turn it on, and it asks first. On Windows it also reads a small settings file from the app's GitHub repository, at most once a day, so lookups can be paused for everyone without an update if Nominatim asks; Get Info then says place names are paused. Names found are kept, so a place is sent once. The two services sometimes name the same place a little differently.
 
-On the Mac, with Look Up Place Names on, the list's Place Taken column and the gallery's Place taken label (View > Labels…) show the place's name too, once it's known, and the coordinates until then. For that, the coordinates of the photos showing are sent as well, a few at first and then one every few seconds; names fill in as they arrive, without moving focus, moving rows or saying anything. Nothing is looked up while Place Taken isn't a column or label. Windows will do the same.
+With Look Up Place Names on, the list's Place Taken column and the gallery's Place taken label (View > Labels…) show the place's name too, once it's known, and the coordinates until then. For that, the coordinates of the photos showing are sent as well, a few at a time, then one every few seconds; names fill in as they arrive, without moving focus, moving rows or saying anything. Nothing is looked up while Place Taken isn't a column or label.
 
 ## Settings
 
@@ -146,7 +146,7 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 | Next / previous photo, leaving focus where it is (in the Description panel, say) | Command-Right / Command-Left Arrow | Alt+Right / Alt+Left Arrow |
 | Next / previous pane | F6 / Shift-F6 | F6 / Shift+F6 |
 | Show or hide the Description panel | Option-Command-I | Ctrl+Shift+I |
-| Copy the description as text | Shift-Command-C | Not yet (#175) |
+| Copy the description as text | Shift-Command-C | Ctrl+Shift+C |
 | Read the status bar / go to it | Control-F9 / Control-Shift-F9 | Ctrl+F9 / Ctrl+Shift+F9 |
 | Go to All Photos | Shift-Command-A | Ctrl+Shift+A |
 | Refresh | Shift-Command-R | F5 |
@@ -158,7 +158,7 @@ On the Mac, My Photo Library Described > Settings (Command-,) has the descriptio
 
 Your photos are never touched by removing the app, and descriptions saved into photos stay in them. The app's own files are left, so reinstalling picks up where you left off; to remove them too:
 
-- **Windows:** delete the folder `%LOCALAPPDATA%\PhotoFinder` (type it into File Explorer's address bar). It holds the descriptions, settings, place names already looked up and the log. If it isn't there, Windows kept it inside the app's package, and uninstalling removed it.
+- **Windows:** delete the folder `%LOCALAPPDATA%\My Photo Library Described` (type it into File Explorer's address bar). It holds the descriptions, settings, place names already looked up and the log. If it isn't there, Windows kept it inside the app's package, and uninstalling removed it.
 - **Mac:** quit the app, then delete the folder `~/Library/Application Support/My Photo Library Described` (descriptions and your corrections, place names already looked up, and the log; in Finder, Go > Go to Folder reaches it). Settings and the folders you added are in macOS's preferences; to remove them, run `defaults delete net.theideaplace.PhotoFinder` in Terminal. Deleting the preferences file itself doesn't work, as macOS keeps a copy and writes it back.
 
 ## Privacy
