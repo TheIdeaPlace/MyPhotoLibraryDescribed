@@ -109,8 +109,9 @@ public static class XmpPacket
         XName name = XNamespace.Get("http://ns.adobe.com/xmp/note/") + "HasExtendedXMP";
         foreach (var d in document.Descendants(Rdf + "Description"))
         {
-            if (d.Attribute(name) is { } a) return a.Value.Trim();
-            if (d.Element(name) is { } e) return e.Value.Trim();
+            // As written: the parts must name exactly the same GUID.
+            if (d.Attribute(name) is { } a) return a.Value;
+            if (d.Element(name) is { } e) return e.Value;
         }
         return null;
     }

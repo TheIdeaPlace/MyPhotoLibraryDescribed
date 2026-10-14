@@ -38,7 +38,8 @@ public static class JpegMetadata
     public static bool LooksLikeJpeg(byte[] b) => b.Length >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF;
 
     /// <summary>The JPEG with the changes made. Throws <see cref="MetadataRefusedException"/> for a file it can't safely
-    /// change (not a JPEG it can follow, unreadable XMP, Extended XMP, too much metadata) and
+    /// change (not a JPEG it can follow, unreadable XMP, Extended XMP that doesn't add up or holds a field being written,
+    /// too much metadata) and
     /// <see cref="SecondPictureException"/> for a multi-picture file whose index can't be kept right.</summary>
     public static byte[] Apply(byte[] jpeg, MetadataChanges changes)
     {
@@ -62,8 +63,16 @@ public static class JpegMetadata
             document = XmpPacket.New();
         }
         var extension = segments.Where(s => IsApp1With(jpeg, s, ExtendedSignature)).ToList();
-        if (extension.Count > 0) CheckExtension(jpeg, extension, xmpAt >= 0 ? document : null, changes);
+        string? guid = null;
+        if (extension.Count > 0)
+        {
+            // Which main packet names the extension must be clear, as on the Mac.
+            if (segments.Count(s => IsApp1With(jpeg, s, XmpSignature)) > 1) throw new MetadataRefusedException(DontAddUp);
+            guid = CheckExtension(jpeg, extension, xmpAt >= 0 ? document : null, changes);
+        }
         XmpPacket.Edit(document, changes);
+        // And after the change, the main packet still names it (as the Mac checks), or the extension would be lost.
+        if (guid is not null && XmpPacket.ExtendedGuid(document) != guid) throw new MetadataRefusedException(DontAddUp);
         var packet = XmpPacket.Serialize(document, oldPacketLength, MaxSegmentLength - 2 - XmpSignature.Length);
         var segment = new byte[4 + XmpSignature.Length + packet.Length];
         var length = segment.Length - 2;
@@ -116,20 +125,23 @@ public static class JpegMetadata
     /// the whole extension's length and this part's offset in it (4 bytes each, big-endian), then its bytes. Together
     /// they must cover the extension exactly, its MD5 must be the GUID, and the main packet must name it. Then none of the
     /// fields being written may be in it.</summary>
-    private static void CheckExtension(byte[] jpeg, List<Segment> parts, XDocument? main, MetadataChanges changes)
+    /// <returns>The GUID.</returns>
+    private static string CheckExtension(byte[] jpeg, List<Segment> parts, XDocument? main, MetadataChanges changes)
     {
+        // Exactly 32 uppercase hex digits, as XMP writes an MD5 and the Mac requires; each part names it byte for byte.
         var guid = main is null ? null : XmpPacket.ExtendedGuid(main);
-        if (guid is not { Length: 32 }) throw new MetadataRefusedException(DontAddUp);
+        if (guid is not { Length: 32 } || !guid.All(c => c is >= '0' and <= '9' or >= 'A' and <= 'F')) throw new MetadataRefusedException(DontAddUp);
         long total = -1;
         var pieces = new List<(long Offset, byte[] Bytes)>();
         foreach (var s in parts)
         {
             var at = s.Offset + 4 + ExtendedSignature.Length;
-            if (at + 40 > s.End) throw new MetadataRefusedException(DontAddUp);
+            // The header and at least one byte: an empty part isn't one.
+            if (at + 40 >= s.End) throw new MetadataRefusedException(DontAddUp);
             var name = Encoding.ASCII.GetString(jpeg, at, 32);
             long length = (uint)((jpeg[at + 32] << 24) | (jpeg[at + 33] << 16) | (jpeg[at + 34] << 8) | jpeg[at + 35]);
             long offset = (uint)((jpeg[at + 36] << 24) | (jpeg[at + 37] << 16) | (jpeg[at + 38] << 8) | jpeg[at + 39]);
-            if (!name.Equals(guid, StringComparison.OrdinalIgnoreCase) || (total >= 0 && total != length)) throw new MetadataRefusedException(DontAddUp);
+            if (!name.Equals(guid, StringComparison.Ordinal) || (total >= 0 && total != length)) throw new MetadataRefusedException(DontAddUp);
             total = length;
             pieces.Add((offset, jpeg[(at + 40)..s.End]));
         }
@@ -139,17 +151,29 @@ public static class JpegMetadata
         long next = 0;
         foreach (var (offset, bytes) in pieces.OrderBy(p => p.Offset))
         {
+            // In order, with no gap or overlap. (With the sum checked above this also keeps every part within the total.)
             if (offset != next || offset + bytes.Length > total) throw new MetadataRefusedException(DontAddUp);
             bytes.CopyTo(whole, offset);
             next += bytes.Length;
         }
         if (next != total) throw new MetadataRefusedException(DontAddUp);
         var md5 = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(whole));
-        if (!md5.Equals(guid, StringComparison.OrdinalIgnoreCase)) throw new MetadataRefusedException(DontAddUp);
+        if (!md5.Equals(guid, StringComparison.Ordinal)) throw new MetadataRefusedException(DontAddUp);
         var extended = XmpPacket.Parse(whole);
-        if (XmpPacket.Written(changes).Any(n => XmpPacket.Holds(extended, n)))
-            throw new MetadataRefusedException("Its metadata is spread over several parts (Extended XMP), and what would change is in another part.");
+        // Named, so it's clear what can't be changed: "its caption is kept in another part".
+        if (XmpPacket.Written(changes).FirstOrDefault(n => XmpPacket.Holds(extended, n)) is { } held)
+            throw new MetadataRefusedException($"Its metadata is spread over several parts (Extended XMP), and its {FieldName(held)} is kept in another part.");
+        return guid;
     }
+
+    private static string FieldName(System.Xml.Linq.XName name) => name.LocalName switch
+    {
+        "description" => "caption",
+        "title" => "title",
+        "AltTextAccessibility" => "alt text",
+        "ExtDescrAccessibility" => "extended description",
+        _ => "rating",
+    };
 
     // MARK: Segments
 
