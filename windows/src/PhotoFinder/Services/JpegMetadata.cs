@@ -135,8 +135,8 @@ public static class JpegMetadata
     /// Mac's #169, and as the metadata guidelines say). Null when there's no such caption, or the digest matches, or
     /// there's no digest (then the XMP is read). The IPTC itself isn't changed.
     ///
-    /// Consecutive Photoshop segments are one resource list split to fit (each repeating the header), so they're joined
-    /// first; the first IPTC block and the first digest count, as ExifTool reads them.
+    /// The Photoshop segments are joined first (a long resource list is split to fit, each part repeating the header), and
+    /// the first IPTC block and the first digest count, as ExifTool reads them.
     /// </summary>
     private static string[]? StaleIptcCaption(byte[] jpeg, IReadOnlyList<Segment> segments)
     {

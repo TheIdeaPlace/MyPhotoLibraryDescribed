@@ -683,6 +683,7 @@ public sealed class FileFieldsTests : IDisposable
     [InlineData("none", false)]
     [InlineData("same caption", false)]
     [InlineData("same with CR", false)]
+    // A resource with an impossible size stops the walk, as ExifTool's does: nothing found, no error, the caption written.
     [InlineData("huge size first", false)]
     public void AnOlderIptcCaption_IsFound_HoweverItsWritten(string what, bool refused)
     {

@@ -317,9 +317,9 @@ public static class XmpFields
 public sealed class PhotoOnlyInCopyException(string path, string copy) : IOException(
     $"Windows couldn't finish saving it. The photo is safe in the same folder as {Path.GetFileName(copy)}: in File Explorer, rename that to {Path.GetFileName(path)} to get it back.");
 
-/// <summary>A photo holding a second picture (an Ultra HDR gain map, an MPO's other view) whose index can't be followed,
-/// so it couldn't be kept right if the change were made (#90).</summary>
 /// <summary>A JPEG whose Photoshop IPTC holds an older caption that readers would show instead of a new one (#169).</summary>
 public sealed class OlderCaptionException() : Exception("An older caption saved in it by Photoshop or a similar app would still be read instead of the new one");
 
+/// <summary>A photo holding a second picture (an Ultra HDR gain map, an MPO's other view) whose index can't be followed,
+/// so it couldn't be kept right if the change were made (#90).</summary>
 public sealed class SecondPictureException() : Exception("It holds a second picture, such as an HDR map, laid out in a way that can't be updated safely.");
