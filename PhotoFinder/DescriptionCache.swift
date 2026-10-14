@@ -123,7 +123,14 @@ final class DescriptionCache: @unchecked Sendable {
         self.fileURL = fileURL
         let editedURL = folderURL.appendingPathComponent("EditedDescriptions.json")
         if FileManager.default.fileExists(atPath: editedURL.path) { legacyEditedURL = editedURL }
-        guard let data = try? Data(contentsOf: fileURL) else { return }
+        guard let data = try? Data(contentsOf: fileURL) else {
+            // There but unreadable (permissions, a disk error): never written over, rather than lost.
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                mayWrite = false
+                DiagnosticLog.write("descriptions", "Descriptions.json couldn't be read, so it isn't written to this run")
+            }
+            return
+        }
         if let file = try? JSONDecoder().decode(File.self, from: data) {
             entries = file.descriptions
         } else if let flat = try? JSONDecoder().decode([String: String].self, from: data) {
