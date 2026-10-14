@@ -2289,7 +2289,6 @@ final class LibraryModel {
         announce("Description saved")
     }
 
-    /// The Description panel's Copy.
     /// Whether rows need their descriptions: the Description column is showing, or the list is sorted by it (Sort By
     /// lists every column).
     private var showsDescriptionColumn: Bool { columnOrder.contains("description") || sortColumnID == "description" }
