@@ -473,6 +473,17 @@ public partial class MainWindow : Window
             ShowError("The captions couldn't be read, so they weren't changed.", owner);
             return;
         }
+        // Every one would be refused (an older Photoshop caption would still be read, #179): said now, not after a
+        // question about replacing captions that can't be replaced.
+        var refused = new List<FileRow>();
+        foreach (var c in current)
+            if (await XmpFields.WouldRefuseCaptionAsync(c.Row.Item!.Path, c.Text)) refused.Add(c.Row);
+        if (refused.Count == current.Count)
+        {
+            var reason = $"{refused[0].Name}: {new OlderCaptionException().Message}, so it was left as it is.";
+            ShowError(refused.Count == 1 ? reason : $"{refused.Count} items couldn't be changed. {reason}", owner);
+            return;
+        }
         // The Mac's question: "Replace the caption and alt text of name?" with what each holds, or, for several photos,
         // "Replace what's already in N photos?".
         var replacing = current
@@ -1281,6 +1292,13 @@ public partial class MainWindow : Window
                 }
             }
             else initial = item.Metadata.Caption;
+            // A caption that would be refused whatever's typed (an older Photoshop caption would still be read, #179):
+            // said now, rather than after it's been typed.
+            if (initial.Trim().Length > 0 && await XmpFields.WouldRefuseCaptionAsync(item.Path, ""))
+            {
+                ShowError($"{item.Name}: {new OlderCaptionException().Message}, so its caption can't be changed.");
+                return;
+            }
         }
         var dialog = new CaptionDialog(rows.Count, initial) { Owner = this };
         var saved = dialog.ShowDialog() == true;

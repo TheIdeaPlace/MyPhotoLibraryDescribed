@@ -74,6 +74,17 @@ public static class XmpFields
                 return new Fields(caption ?? "", alt ?? "", extended ?? "", caption is not null);
             });
         }
+        // A JPEG whose Photoshop IPTC caption other apps read instead of the XMP's (a stale digest, #181): that's its
+        // caption, so Get Info and the list show what everyone else sees, and replacing it is asked about. Read before
+        // WIC opens the file, so nothing else holds it once WIC lets go.
+        var iptc = IsJpeg(path)
+            ? await Task.Run(() =>
+            {
+                // Off the window's thread: a few small reads, but a network share can be slow.
+                using var head = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 12);
+                return JpegMetadata.IptcCaptionReadFirst(head);
+            })
+            : null;
         var file = await StorageFile.GetFileFromPathAsync(path);
         using var stream = await file.OpenAsync(FileAccessMode.Read);
         var decoder = await BitmapDecoder.CreateAsync(stream);
@@ -95,14 +106,7 @@ public static class XmpFields
             }
             return null;
         }
-        var found = await Get(Caption);
-        // A JPEG whose Photoshop IPTC caption other apps read instead of the XMP's (a stale digest, #181): that's its
-        // caption, so Get Info and the list show what everyone else sees, and replacing it is asked about.
-        if (IsJpeg(path))
-        {
-            await using var head = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 12);
-            if (JpegMetadata.IptcCaptionReadFirst(head) is { } iptc) found = iptc.Trim();
-        }
+        var found = iptc ?? await Get(Caption);
         return new Fields(found ?? "", await Get(Alt) ?? "", await Get(Extended) ?? "", found is not null);
     }
 
@@ -222,10 +226,30 @@ public static class XmpFields
     {
         if (caption is null && altText is null && extended is null) return;
         var stored = await ReadAsync(path);
-        if ((caption is not null && stored.Caption != caption.Trim())
+        // The caption allowing for line breaks written as CR: an older IPTC caption that matches is read back as it is.
+        if ((caption is not null && !JpegMetadata.SameText(stored.Caption, caption))
             || (altText is not null && stored.AltText != altText.Trim())
             || (extended is not null && stored.ExtendedDescription != extended.Trim()))
             throw new NotSupportedException("The value didn't stick.");
+    }
+
+    /// <summary>Whether a new caption for this photo would be refused (#179), so it's said before anything is asked. Never
+    /// throws: a file that can't be read now is found out when it's written.</summary>
+    public static async Task<bool> WouldRefuseCaptionAsync(string path, string caption)
+    {
+        if (!IsJpeg(path)) return false;
+        try
+        {
+            return await Task.Run(() =>
+            {
+                using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 12);
+                return JpegMetadata.WouldRefuseCaption(file, caption);
+            });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private static string TempBeside(string path) =>
