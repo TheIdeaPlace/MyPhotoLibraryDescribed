@@ -313,7 +313,13 @@ struct ImageContents: Sendable {
 enum ImageDescriber {
     static func describe(_ data: Data) async throws -> ImageContents {
         try await Task.detached(priority: .userInitiated) {
-            let handler = VNImageRequestHandler(data: data, options: [:])
+            // At 2048 pixels, upright, as for descriptions: on a full-size original it took far too long (Kelly,
+            // 19 Oct).
+            let handler = if let image = scaled(data) {
+                VNImageRequestHandler(cgImage: image, options: [:])
+            } else {
+                VNImageRequestHandler(data: data, options: [:])
+            }
             let classify = VNClassifyImageRequest()
             let recognize = VNRecognizeTextRequest()
             recognize.recognitionLevel = .accurate
@@ -328,5 +334,15 @@ enum ImageDescriber {
             let lines = (recognize.results ?? []).compactMap { $0.topCandidates(1).first?.string }
             return ImageContents(labels: Array(labels), text: lines)
         }.value
+    }
+
+    nonisolated static func scaled(_ data: Data, maxPixelSize: Int = 2048) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 }
