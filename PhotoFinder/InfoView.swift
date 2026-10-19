@@ -72,7 +72,8 @@ struct InfoView: View {
     @ViewBuilder private var contentsSection: some View {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
-            AppleIntelligenceSection(imageData: imageData, descriptionKey: target.descriptionKey)
+            AppleIntelligenceSection(imageData: imageData, descriptionKey: target.descriptionKey,
+                                     askNow: target.askNow)
         }
 #endif
         if let contents {

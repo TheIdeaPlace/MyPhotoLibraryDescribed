@@ -107,6 +107,33 @@ final class LibraryModelTests: XCTestCase {
     }
 
     @MainActor
+    func testAskAboutPhotoOpensGetInfoInTheQuestionFieldAndSaysWhyNotOnAVideoOrFolder() async throws {
+        let library = try await makeLibrary()
+        let model = library.model
+        model.selection = [library.id("a.jpg")]
+        model.askAboutPhoto()
+        XCTAssertEqual(model.infoTarget?.id, library.id("a.jpg"))
+        XCTAssertEqual(model.infoTarget?.askNow, true)
+        model.infoTarget = nil
+
+        // Get Info itself doesn't go to the question field.
+        model.showInfo()
+        XCTAssertEqual(model.infoTarget?.askNow, false)
+        model.infoTarget = nil
+
+        // The same words as Windows' (#235).
+        model.selection = [library.id("b.mov")]
+        model.askAboutPhoto()
+        XCTAssertNil(model.infoTarget)
+        XCTAssertEqual(library.said.last?.text, "Questions are about photos, not videos.")
+
+        model.selection = [library.folderID("d")]
+        model.askAboutPhoto()
+        XCTAssertNil(model.infoTarget)
+        XCTAssertEqual(library.said.last?.text, "Choose a photo to ask about.")
+    }
+
+    @MainActor
     func testDescribePhotoSaysWhyWithoutAppleIntelligence() async throws {
         let library = try await makeLibrary()
         let model = library.model

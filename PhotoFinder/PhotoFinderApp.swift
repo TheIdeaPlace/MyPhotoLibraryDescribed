@@ -193,6 +193,8 @@ struct PhotoCommands: Commands {
             }
             // The diagnostic log (#103), as on Windows.
             Button("Open Log Folder") { model.openLogFolder() }
+            // The descriptions, settings and logs (#236), as on Windows.
+            Button("Open Descriptions Folder") { model.openDescriptionsFolder() }
             Divider()
             Button("\(AppInfo.name) User Guide") { NSWorkspace.shared.open(AppInfo.userGuideURL) }
             Button("Privacy Policy") { NSWorkspace.shared.open(AppInfo.privacyPolicyURL) }
@@ -257,6 +259,10 @@ struct PhotoCommands: Commands {
                 .disabled(!model.canStepPhotos)
             Button("Redescribe") { model.describeFocusedPhotoAgain() }
                 .keyboardShortcut("r", modifiers: .command)
+                .disabled(!model.canStepPhotos)
+            // Get Info, in the follow-up question field (#235): Command-K, as Windows' Ctrl+K.
+            Button("Ask About Photo…") { model.askAboutPhoto() }
+                .keyboardShortcut("k", modifiers: .command)
                 .disabled(!model.canStepPhotos)
             Toggle("Describe Photos Automatically", isOn: Binding(
                 get: { model.describeAutomatically },

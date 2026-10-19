@@ -241,14 +241,38 @@ struct AppleIntelligenceSection: View {
     let imageData: Data?
     /// The key the photo's description is saved under: a Photos identifier, or a file's key (#36).
     let descriptionKey: String
+    /// Ask About Photo (#235): focus goes to the question field, and a photo with no description yet is described
+    /// first, with focus already in the field, so the description is heard and the question can follow.
+    let askNow: Bool
     @Environment(LibraryModel.self) private var model
     @State private var conversation: ImageConversation?
     @State private var question = ""
+    @State private var askStarted = false
+    @FocusState private var questionFocused: Bool
 
     var body: some View {
         content
-            .onAppear(perform: showSaved)
-            .onChange(of: imageData) { showSaved() }
+            .onAppear(perform: appeared)
+            .onChange(of: imageData) { appeared() }
+    }
+
+    private func appeared() {
+        showSaved()
+        startAsking()
+    }
+
+    /// Once the photo's data is in, for Ask About Photo. Where Apple Intelligence can't answer, Get Info is as usual
+    /// and says why, as on Windows.
+    private func startAsking() {
+        guard askNow, !askStarted, imageData != nil else { return }
+        askStarted = true
+        if let reason = ImageConversation.unavailableReason {
+            LibraryModel.postAnnouncement("Questions about photos need Apple Intelligence. \(reason)", queued: true)
+            return
+        }
+        if conversation == nil { start() }
+        // After the field is shown.
+        Task { questionFocused = true }
     }
 
     @ViewBuilder private var content: some View {
@@ -288,18 +312,17 @@ struct AppleIntelligenceSection: View {
                     start(replacingEdit: agreed)
                 }
             }
-            if conversation?.exchanges.isEmpty ?? true {
-                if !(conversation?.isWorking ?? false) {
-                    Button("Describe Image") { start() }
-                        .disabled(imageData == nil)
-                }
-            } else if let conversation {
+            if let conversation, !conversation.exchanges.isEmpty || (askNow && conversation.isWorking) {
                 HStack {
                     TextField("Ask a follow-up question", text: $question)
+                        .focused($questionFocused)
                         .onSubmit(ask)
                     Button("Ask", action: ask)
                         .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty || conversation.isWorking)
                 }
+            } else if !(conversation?.isWorking ?? false) {
+                Button("Describe Image") { start() }
+                    .disabled(imageData == nil)
             }
             Text("Describes the photo with Apple Intelligence on this Mac. The photo isn't sent anywhere.")
                 .font(.caption)
@@ -344,7 +367,8 @@ struct AppleIntelligenceSection: View {
 
     private func ask() {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let conversation else { return }
+        // A question typed while the photo is still being described stays in the field until it can be asked.
+        guard !text.isEmpty, let conversation, !conversation.isWorking else { return }
         question = ""
         Task { await conversation.ask(text) }
     }
