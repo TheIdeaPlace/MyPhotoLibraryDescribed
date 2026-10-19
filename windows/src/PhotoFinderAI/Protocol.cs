@@ -204,6 +204,33 @@ public static class Protocol
         _ => (Codes.NotSupported, $"Windows' text model isn't available on this PC ({state})."),
     };
 
+    /// <summary>Phi Silica's Limited Access Feature, and the attestation Microsoft gave with this app's token (#24). Neither
+    /// is secret; the token is, and comes from the build (<see cref="BuiltInToken"/>).</summary>
+    public const string PhiSilicaFeature = "com.microsoft.windows.ai.languagemodel";
+    public const string PhiSilicaAttestation =
+        "mzky7tc8qkasw has registered their use of com.microsoft.windows.ai.languagemodel with Microsoft and agrees to the terms of use.";
+
+    /// <summary>The access status reported for a build made without the token.</summary>
+    public const string NoToken = "NoToken";
+
+    /// <summary>The Phi Silica token the build put in the assembly's metadata, or null if it was built without one.</summary>
+    public static string? BuiltInToken(System.Reflection.Assembly assembly) =>
+        assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+            .OfType<System.Reflection.AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "PhiSilicaToken")?.Value is { Length: > 0 } token ? token.Trim() : null;
+
+    /// <summary>Whether Windows granted Phi Silica, by the LimitedAccessFeatureStatus name. AvailableWithoutToken is a
+    /// Windows that no longer asks.</summary>
+    public static bool PhiSilicaGranted(string access) => access is "Available" or "AvailableWithoutToken";
+
+    /// <summary>The code and message for Phi Silica not being granted, or null if it was.</summary>
+    public static (string Code, string Message)? ForPhiSilicaAccess(string access) => PhiSilicaGranted(access) ? null : access switch
+    {
+        NoToken => (Codes.NotSupported,
+            "This copy was built without Microsoft's permission to use Windows' text model, so it can't answer follow-up questions."),
+        _ => (Codes.NotSupported, $"Windows didn't let this app use its text model ({access})."),
+    };
+
     /// <summary>Checks a request's parts, wherever they came from, and normalises the kind and type.</summary>
     public static DescribeRequest Validate(int id, string? kind, string? mime, byte[] image)
     {

@@ -143,6 +143,16 @@ if (-not $relayKey) {
     Write-Warning "No relay key (APPKIT_RELAY_KEY or the signing kit): Report a Bug will offer the GitHub page instead of filing reports itself."
 }
 
+# Microsoft's token for Phi Silica (#24), a Limited Access Feature, built into the helper by PhotoFinderAI.csproj: the
+# repository's secret in the release workflow (PHI_SILICA_TOKEN), or the signing kit's copy on Kelly's PC. Windows
+# accepts it only from the signed package, so an unsigned build without one loses nothing it could use.
+$kitToken = Join-Path $env:USERPROFILE '.signing-kit\phi-silica-photofinder.token'
+$phiSilicaToken = if ($env:PHI_SILICA_TOKEN) { $env:PHI_SILICA_TOKEN.Trim() } elseif (Test-Path -LiteralPath $kitToken) { (Get-Content -LiteralPath $kitToken -Raw).Trim() } else { '' }
+if (-not $phiSilicaToken -and $Sign) {
+    if ($env:GITHUB_ACTIONS) { throw "No Phi Silica token: set the PHI_SILICA_TOKEN secret, or a release can't answer follow-up questions." }
+    Write-Warning "No Phi Silica token (PHI_SILICA_TOKEN or the signing kit): follow-up questions will say this copy can't answer them."
+}
+
 # The runtime the helper is built against, and that the manifest depends on: the version PhotoFinderAI.csproj
 # references, not just the newest in a cache other projects share.
 $runtimeName = 'Microsoft.WindowsAppRuntime.1.8'
@@ -199,8 +209,12 @@ foreach ($a in $arches) {
     if ($LASTEXITCODE -ne 0) { throw "Publishing My Photo Library Described for $a failed." }
     # The relay key beside the app (see above), read by BugReportRelay.
     if ($relayKey) { [IO.File]::WriteAllText((Join-Path $layout 'App\appkit-relay.key'), $relayKey, (New-Object Text.UTF8Encoding $false)) }
-    dotnet publish (Join-Path $windows 'src\PhotoFinderAI\PhotoFinderAI.csproj') -c Release -r "win-$a" `
-        -o (Join-Path $layout 'AI') --nologo "-p:Version=$text" "-p:FileVersion=$version"
+    # The token goes in through the environment, not the command line, so it isn't echoed in the build's log.
+    $env:PHI_SILICA_TOKEN = $phiSilicaToken
+    try {
+        dotnet publish (Join-Path $windows 'src\PhotoFinderAI\PhotoFinderAI.csproj') -c Release -r "win-$a" `
+            -o (Join-Path $layout 'AI') --nologo "-p:Version=$text" "-p:FileVersion=$version"
+    } finally { Remove-Item Env:PHI_SILICA_TOKEN -ErrorAction SilentlyContinue }
     if ($LASTEXITCODE -ne 0) { throw "Publishing the Windows AI helper for $a failed." }
     # Debug symbols are for development, not every installed copy; the helper's own package files belong to its
     # development registration, not this package.

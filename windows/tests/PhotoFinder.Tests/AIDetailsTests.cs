@@ -110,6 +110,25 @@ public sealed class AIDetailsTests : IDisposable
     [InlineData("Unavailable (COMException, 0x80004005)", "Unavailable (COMException, 0x80004005)")]
     public void ReadyStates_AreSaidInWords(string state, string words) => Assert.Equal(words, SystemCheck.StateText(state));
 
+    [Theory]
+    [InlineData("Available", "Permission granted")]
+    [InlineData("AvailableWithoutToken", "Permission granted")]
+    [InlineData("NoToken", "This copy was built without Microsoft's permission to use it")]
+    [InlineData("Unavailable", "Windows didn't grant this copy permission to use it")]
+    [InlineData("Unknown", "Permission: Unknown")]
+    public void PhiSilicasPermission_IsSaidInWords(string access, string words) => Assert.Equal(words, SystemCheck.AccessText(access));
+
+    [Fact]
+    public void PhiSilica_SaysWhetherThisCopyMayUseIt_WhenTheHelperSays()
+    {
+        var readiness = Ready with
+        {
+            Components = new Dictionary<string, string> { ["languageModelAccess"] = "Available", ["languageModel"] = "Ready" },
+        };
+        var check = new SystemCheck(Facts() with { Readiness = readiness });
+        Assert.Contains("Phi Silica: Ready. Permission granted.", check.Items.Select(i => i.Line));
+    }
+
     [Fact]
     public void TheHelpersCheck_CarriesItsVersionProtocolAndTheOtherFeatures()
     {

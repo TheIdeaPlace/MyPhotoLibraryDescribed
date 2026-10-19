@@ -6,6 +6,7 @@ using Microsoft.Windows.AI;
 using Microsoft.Windows.AI.ContentSafety;
 using Microsoft.Windows.AI.Imaging;
 using Microsoft.Windows.AI.Text;
+using Windows.ApplicationModel;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 
@@ -40,8 +41,18 @@ public sealed class Describer : IDisposable
         return result.Text.Trim();
     }
 
+    /// <summary>Unlocks Phi Silica, a Limited Access Feature, with Microsoft's token for this app (#24), once per run.
+    /// Windows checks the token against the package family, TheIdeaPlace.MyPhotoLibraryDescribed_mzky7tc8qkasw, so only
+    /// a build signed as Kelly Ford gets it. The token isn't in the source: the build takes it from the PhiSilicaToken
+    /// property or environment variable (the release workflow's PHI_SILICA_TOKEN secret), and a build without one
+    /// says NoToken. Otherwise the status, as LimitedAccessFeatureStatus names it.</summary>
+    private static readonly Lazy<string> PhiSilicaAccess = new(() =>
+        Protocol.BuiltInToken(typeof(Describer).Assembly) is not { } token ? Protocol.NoToken : StateOf(() =>
+            LimitedAccessFeatures.TryUnlockFeature(Protocol.PhiSilicaFeature, token, Protocol.PhiSilicaAttestation).Status.ToString()));
+
     private static async Task<LanguageModel> StartLanguageModelAsync(Protocol.AskRequest request)
     {
+        if (Protocol.ForPhiSilicaAccess(PhiSilicaAccess.Value) is { } refused) throw new ProtocolException(request.Id, refused.Code, refused.Message);
         var state = LanguageModel.GetReadyState();
         if (Protocol.ForTextReadyState(state.ToString()) is { } unavailable) throw new ProtocolException(request.Id, unavailable.Code, unavailable.Message);
         if (state != AIFeatureReadyState.Ready)
@@ -62,6 +73,7 @@ public sealed class Describer : IDisposable
     public static Dictionary<string, string> OtherStates() => new()
     {
         ["textRecognition"] = StateOf(() => TextRecognizer.GetReadyState().ToString()),
+        ["languageModelAccess"] = PhiSilicaAccess.Value,
         ["languageModel"] = StateOf(() => LanguageModel.GetReadyState().ToString()),
     };
 

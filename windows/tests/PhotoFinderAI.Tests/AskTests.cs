@@ -2,11 +2,54 @@ using System.Text.Json.Nodes;
 using PhotoFinderAI;
 using Xunit;
 
+// A stand-in for the token the release build puts in the helper, for BuiltInToken's test.
+[assembly: System.Reflection.AssemblyMetadata("PhiSilicaToken", " test-token \n")]
+
 namespace PhotoFinderAI.Tests;
 
 /// <summary>Follow-up questions (#24): the "ask" request, the prompt Phi Silica gets, and how its results are read.</summary>
 public class AskTests
 {
+    // MARK: Phi Silica's Limited Access Feature token
+
+    [Fact]
+    public void TheToken_IsReadFromTheBuild_AndABuildWithoutOneHasNone()
+    {
+        Assert.Equal("test-token", Protocol.BuiltInToken(typeof(AskTests).Assembly));
+        Assert.Null(Protocol.BuiltInToken(typeof(FactAttribute).Assembly));
+    }
+
+    [Theory]
+    [InlineData("Available", true)]
+    [InlineData("AvailableWithoutToken", true)]
+    [InlineData("Unavailable", false)]
+    [InlineData("Unknown", false)]
+    [InlineData(Protocol.NoToken, false)]
+    [InlineData("Unavailable (COMException, 0x80004005)", false)]
+    public void PhiSilica_IsGranted_OnlyWhenWindowsSaysAvailable(string access, bool granted)
+    {
+        Assert.Equal(granted, Protocol.PhiSilicaGranted(access));
+        Assert.Equal(granted, Protocol.ForPhiSilicaAccess(access) is null);
+    }
+
+    [Fact]
+    public void ARefusal_SaysWhy_PlainlyAsNotSupported()
+    {
+        var noToken = Protocol.ForPhiSilicaAccess(Protocol.NoToken)!.Value;
+        Assert.Equal(Codes.NotSupported, noToken.Code);
+        Assert.Contains("built without Microsoft's permission", noToken.Message);
+        var refused = Protocol.ForPhiSilicaAccess("Unavailable")!.Value;
+        Assert.Equal(Codes.NotSupported, refused.Code);
+        Assert.Equal("Windows didn't let this app use its text model (Unavailable).", refused.Message);
+    }
+
+    [Fact]
+    public void TheAttestation_NamesTheFeatureAndThePublisher_AsMicrosoftGaveIt()
+    {
+        Assert.Equal("com.microsoft.windows.ai.languagemodel", Protocol.PhiSilicaFeature);
+        Assert.StartsWith("mzky7tc8qkasw has registered their use of com.microsoft.windows.ai.languagemodel", Protocol.PhiSilicaAttestation);
+    }
+
     private static string Ask(int id, string description = "A dog on a beach.", string question = "What colour is the dog?",
         string? text = null, JsonArray? history = null)
     {
