@@ -49,6 +49,7 @@
             </v:AppMenuItem>
             <v:AppMenuItem Header="_Edit">
                 <v:AppMenuItem Header="_Copy" Command="ApplicationCommands.Copy" />
+                <v:AppMenuItem Command="v:AppCommands.CopyDescription" />
                 <v:AppMenuItem Header="Select _All" Command="ApplicationCommands.SelectAll" />
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.Find" />
@@ -58,7 +59,7 @@
                 <v:AppMenuItem x:Name="AsGalleryItem" Command="v:AppCommands.AsGallery" IsCheckable="False" />
                 <Separator />
                 <v:AppMenuItem x:Name="ShowDescriptionItem" Command="v:AppCommands.ShowDescription" IsCheckable="False" />
-                <v:AppMenuItem Command="v:AppCommands.ChooseColumns" />
+                <v:AppMenuItem Command="v:AppCommands.ChooseLabels" />
                 <v:AppMenuItem Header="_Sort By" x:Name="SortMenu" />
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.ReadStatusBar" />
@@ -237,6 +238,7 @@
                                 <v:AppMenuItem Command="v:AppCommands.ShowInExplorer" />
                                 <Separator />
                                 <v:AppMenuItem Header="_Copy" Command="ApplicationCommands.Copy" />
+                                <v:AppMenuItem Command="v:AppCommands.CopyDescription" />
                                 <v:AppMenuItem Command="v:AppCommands.Export" />
                                 <Separator />
                                 <v:AppMenuItem Command="v:AppCommands.ToggleFavorite" />

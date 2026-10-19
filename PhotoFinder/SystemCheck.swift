@@ -170,7 +170,6 @@ struct SystemCheck: Equatable {
 }
 
 extension SystemCheck {
-    /// The body of a new bug report: the questions the app kit's Report a Bug form asks, then the system check.
     /// "40% described, 159 of 400 photos." Rounded down, so 100% means every photo.
     static func coverageText(described: Int, total: Int) -> String {
         guard total > 0 else { return "No photos in the library yet." }
@@ -178,25 +177,5 @@ extension SystemCheck {
         let percent = described * 100 / total
         let photos = total == 1 ? "photo" : "photos"
         return "\(percent)% described, \(described.formatted()) of \(total.formatted()) \(photos)."
-    }
-
-    static func bugReportTemplate(systemText: String) -> String {
-        """
-        **What happened**
-
-
-        **What you expected**
-
-
-        **Steps**
-        1.
-
-        **System**
-        ```
-        \(systemText)
-        ```
-
-        Help > Open Log Folder has a log of what went wrong, which can be attached here. It names files and folders, so look at it first: issues are public.
-        """
     }
 }

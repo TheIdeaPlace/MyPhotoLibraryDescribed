@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
 Builds My Photo Library Described's Windows installer: an MSIX bundle for x64 and Arm64, the Windows App Runtime it depends on,
-and a PhotoFinder.appinstaller file that installs both.
+and a MyPhotoLibraryDescribed.appinstaller file that installs both.
 
 .DESCRIPTION
-Opening PhotoFinder.appinstaller shows Windows' App Installer: My Photo Library Described's name, publisher and icon and an
+Opening MyPhotoLibraryDescribed.appinstaller shows Windows' App Installer: My Photo Library Described's name, publisher and icon and an
 Install button. It installs the Windows App Runtime first if the PC doesn't have it, then My Photo Library Described for the
 PC's architecture, with a Start menu entry and an uninstall entry in Settings > Apps. Later builds published to
 the same place are installed as updates: Windows checks every few hours, and Help > Check for Updates checks now.
@@ -15,8 +15,8 @@ For each architecture it lays out the package in windows\out\msix\<arch>:
   Assets\     the logos, with resources.pri at the root so Windows picks the right size
   AppxManifest.xml   from windows\packaging, with the architecture, version and publisher filled in
 then packs it, bundles both architectures, and writes everything to -Destination:
-  PhotoFinder.appinstaller
-  PhotoFinder_<version>.msixbundle
+  MyPhotoLibraryDescribed.appinstaller
+  MyPhotoLibraryDescribed_<version>.msixbundle
   Dependencies\Microsoft.WindowsAppRuntime.1.8_<arch>.msix
 
 Windows installs only signed packages from a publisher it trusts. -Sign signs with Kelly Ford's Azure Artifact
@@ -47,11 +47,14 @@ The version's fourth number, instead of the one from the git history (see above)
 Sign the executables, then the bundle, with the kellyford-public certificate.
 
 .EXAMPLE
-.\scripts\build-msix.ps1 -Sign -Destination "$env:USERPROFILE\OneDrive\testing\photos\PhotoFinder"
+.\scripts\build-msix.ps1 -Sign -Destination "$env:USERPROFILE\OneDrive\testing\photos\MyPhotoLibraryDescribed"
 #>
 param(
     [string]$Destination,
     [string]$BaseUri,
+    # The Windows App Runtime packages beside the bundle rather than in Dependencies\: a GitHub release's files can't
+    # be in folders.
+    [switch]$Flat,
     [ValidateSet('x64', 'arm64', 'both')]
     [string]$Arch = 'both',
     [int]$Revision = -1,
@@ -76,12 +79,20 @@ $arches = if ($Arch -eq 'both') { @('x64', 'arm64') } else { @($Arch) }
 # The signing certificate's subject, which the package's Publisher must equal exactly; an unsigned build uses a
 # stand-in. sign-files.ps1 checks each signature against it.
 $certificateSubject = 'CN=kelly ford, O=kelly ford, L=Madison, S=wi, C=US'
-$publisher = if ($Sign) { $certificateSubject } else { 'CN=Photo Finder Development' }
+$publisher = if ($Sign) { $certificateSubject } else { 'CN=My Photo Library Described Development' }
 
 # The display name, from the one place the app keeps it (AppInfo.Name, #34).
 $appInfo = Get-Content -LiteralPath (Join-Path $windows 'src\PhotoFinder\AppInfo.cs') -Raw -Encoding UTF8
 if ($appInfo -notmatch 'const string Name = "([^"]+)"') { throw "AppInfo.cs has no Name constant." }
 $displayName = [Security.SecurityElement]::Escape($Matches[1])
+# The installer's file name, which the app names in its messages (AppInfo.InstallerFile), and the package's name, which
+# the .appinstaller's MainBundle must repeat exactly.
+if ($appInfo -notmatch 'const string InstallerFile = "([^"]+)"') { throw "AppInfo.cs has no InstallerFile constant." }
+$installerFile = $Matches[1]
+$installerBase = [IO.Path]::GetFileNameWithoutExtension($installerFile)
+$packageManifest = Get-Content -LiteralPath (Join-Path $windows 'packaging\AppxManifest.xml') -Raw -Encoding UTF8
+if ($packageManifest -notmatch '<Identity Name="([^"]+)"') { throw "packaging\AppxManifest.xml has no Identity Name." }
+$packageName = $Matches[1]
 
 $text = (Get-Content -LiteralPath (Join-Path $windows 'VERSION') -Raw).Trim()
 if ($text -notmatch '^(\d+)\.(\d+)\.(\d+)$') { throw "windows\VERSION should be three numbers, not '$text'." }
@@ -121,6 +132,16 @@ function Invoke-Tool([string]$tool, [string[]]$arguments, [string]$what) {
 }
 $makeappx = Find-Tool 'makeappx.exe'
 $makepri = Find-Tool 'makepri.exe'
+
+# Report a Bug's relay key (#138), so reports are filed without a GitHub account: the repository's secret in the
+# release workflow (APPKIT_RELAY_KEY), or the signing kit's copy on Kelly's PC. Without one, Report a Bug offers the
+# GitHub page instead, which a release mustn't ship with.
+$kitKey = Join-Path $env:USERPROFILE '.signing-kit\appkit-relay-photofinder.key'
+$relayKey = if ($env:APPKIT_RELAY_KEY) { $env:APPKIT_RELAY_KEY.Trim() } elseif (Test-Path -LiteralPath $kitKey) { (Get-Content -LiteralPath $kitKey -Raw).Trim() } else { '' }
+if (-not $relayKey) {
+    if ($Sign -and $env:GITHUB_ACTIONS) { throw "No relay key: set the APPKIT_RELAY_KEY secret, or a release can't file bug reports." }
+    Write-Warning "No relay key (APPKIT_RELAY_KEY or the signing kit): Report a Bug will offer the GitHub page instead of filing reports itself."
+}
 
 # The runtime the helper is built against, and that the manifest depends on: the version PhotoFinderAI.csproj
 # references, not just the newest in a cache other projects share.
@@ -176,6 +197,8 @@ foreach ($a in $arches) {
     dotnet publish (Join-Path $windows 'src\PhotoFinder\PhotoFinder.csproj') -c Release -r "win-$a" --self-contained true `
         -o (Join-Path $layout 'App') --nologo "-p:Version=$text" "-p:FileVersion=$version"
     if ($LASTEXITCODE -ne 0) { throw "Publishing My Photo Library Described for $a failed." }
+    # The relay key beside the app (see above), read by BugReportRelay.
+    if ($relayKey) { [IO.File]::WriteAllText((Join-Path $layout 'App\appkit-relay.key'), $relayKey, (New-Object Text.UTF8Encoding $false)) }
     dotnet publish (Join-Path $windows 'src\PhotoFinderAI\PhotoFinderAI.csproj') -c Release -r "win-$a" `
         -o (Join-Path $layout 'AI') --nologo "-p:Version=$text" "-p:FileVersion=$version"
     if ($LASTEXITCODE -ne 0) { throw "Publishing the Windows AI helper for $a failed." }
@@ -196,24 +219,24 @@ foreach ($a in $arches) {
             (Join-Path $layout 'App\PhotoFinder.exe') (Join-Path $layout 'AI\PhotoFinderAI.exe')
     }
     # Fully validated, so a manifest mistake fails here rather than when someone installs it.
-    Invoke-Tool $makeappx @('pack', '/d', $layout, '/p', (Join-Path $packed "PhotoFinder_$($version)_$a.msix"), '/o') "Packing $a"
+    Invoke-Tool $makeappx @('pack', '/d', $layout, '/p', (Join-Path $packed "$($installerBase)_$($version)_$a.msix"), '/o') "Packing $a"
     Write-Host "Packed My Photo Library Described $version for $a"
 }
 
-$bundleName = "PhotoFinder_$version.msixbundle"
+$bundleName = "$($installerBase)_$version.msixbundle"
 $bundle = Join-Path $work $bundleName
 Invoke-Tool $makeappx @('bundle', '/d', $packed, '/p', $bundle, '/bv', $version, '/o') 'Bundling'
 if ($Sign) { & (Join-Path $PSScriptRoot 'sign-files.ps1') -ExpectedSubject $certificateSubject $bundle }
 
 $dependencyXml = foreach ($r in $runtimes) {
-    "    <Package Name=`"$($r.Identity.Name)`" Publisher=`"$([Security.SecurityElement]::Escape($r.Identity.Publisher))`" Version=`"$($r.Identity.Version)`" ProcessorArchitecture=`"$($r.Arch)`" Uri=`"$BaseUri/Dependencies/$($r.File)`" />"
+    "    <Package Name=`"$($r.Identity.Name)`" Publisher=`"$([Security.SecurityElement]::Escape($r.Identity.Publisher))`" Version=`"$($r.Identity.Version)`" ProcessorArchitecture=`"$($r.Arch)`" Uri=`"$BaseUri/$(if ($Flat) { '' } else { 'Dependencies/' })$($r.File)`" />"
 }
 $appInstaller = @"
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Opening this installs My Photo Library Described with App Installer: the Windows App Runtime first if needed, then My Photo Library Described
      for this PC's architecture. Updates are looked for here. -->
-<AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021" Version="$version" Uri="$BaseUri/PhotoFinder.appinstaller">
-  <MainBundle Name="TheIdeaPlace.PhotoFinder" Publisher="$([Security.SecurityElement]::Escape($publisher))" Version="$version" Uri="$BaseUri/$bundleName" />
+<AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021" Version="$version" Uri="$BaseUri/$installerFile">
+  <MainBundle Name="$packageName" Publisher="$([Security.SecurityElement]::Escape($publisher))" Version="$version" Uri="$BaseUri/$bundleName" />
   <Dependencies>
 $($dependencyXml -join "`r`n")
   </Dependencies>
@@ -229,15 +252,15 @@ $($dependencyXml -join "`r`n")
 
 # Into -Destination in an order that never leaves the .appinstaller pointing at a missing file: the new bundle and
 # runtimes first, then the .appinstaller, and the previous build's bundle last.
-$dependencies = Join-Path $Destination 'Dependencies'
+$dependencies = if ($Flat) { $Destination } else { Join-Path $Destination 'Dependencies' }
 New-Item -ItemType Directory -Force -Path $dependencies | Out-Null
 foreach ($r in $runtimes) { Copy-Item -LiteralPath $r.Source -Destination (Join-Path $dependencies $r.File) -Force }
 Copy-Item -LiteralPath $bundle -Destination $Destination -Force
-[IO.File]::WriteAllText((Join-Path $Destination 'PhotoFinder.appinstaller'), $appInstaller, (New-Object Text.UTF8Encoding $false))
-Get-ChildItem -LiteralPath $Destination -Filter 'PhotoFinder_*.msixbundle' | Where-Object { $_.Name -ne $bundleName } | Remove-Item -Force
+[IO.File]::WriteAllText((Join-Path $Destination $installerFile), $appInstaller, (New-Object Text.UTF8Encoding $false))
+Get-ChildItem -LiteralPath $Destination -Filter "$($installerBase)_*.msixbundle" | Where-Object { $_.Name -ne $bundleName } | Remove-Item -Force
 
 if ($Sign) {
-    Write-Host "My Photo Library Described $($version): open $(Join-Path $Destination 'PhotoFinder.appinstaller') to install."
+    Write-Host "My Photo Library Described $($version): open $(Join-Path $Destination $installerFile) to install."
 } else {
     Write-Host "My Photo Library Described $version, unsigned, in $Destination. Windows won't install it; build with -Sign for that."
 }

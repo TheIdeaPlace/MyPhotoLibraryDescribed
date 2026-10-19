@@ -1,5 +1,6 @@
 import CoreLocation
 import ImageIO
+import MapKit
 import Photos
 import SwiftUI
 import UniformTypeIdentifiers
@@ -256,15 +257,13 @@ enum PhotoMetadata {
         return (fields, data)
     }
 
-    /// The place's name, only when Look Up Place Names is on: finding it sends the coordinates to Apple (#105).
+    /// The place's name, only when Look Up Place Names is on: finding it sends the coordinates to Apple (#105). A name
+    /// already found (here, or for the list's Place Taken column) is said without asking again, and one found now is
+    /// kept (#172).
     private static func placeName(for location: CLLocation) async -> String? {
         guard PlaceNames.isOn(in: .standard),
-              let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }
-        var parts: [String] = []
-        for part in [placemark.name, placemark.locality, placemark.administrativeArea, placemark.country] {
-            if let part, !parts.contains(part) { parts.append(part) }
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+              let key = PlaceKey(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude) else { return nil }
+        return await PlaceNameCache.shared.lookUp(key, using: PlaceNames.geocode)
     }
 
     private static func exifFields(_ data: Data) -> [InfoField] {

@@ -35,12 +35,21 @@ public sealed class MetadataCache
         lock (_lock)
         {
             return Entries.TryGetValue(item.Path, out var e) && e.Size == item.Size && e.ModifiedTicks == Stamp(item)
-                   // Read by an older version without dc:description: read again, once. Not online-only files, which
-                   // aren't read until they're downloaded: their older details are better than none.
-                   && (e.Metadata.Version >= MediaMetadata.CurrentVersion || !XmpFields.CanWrite(item.Path) || item.IsOnlineOnly)
+                   // Read by an older version without dc:description (or, for HEIC, before its XMP was read): read
+                   // again, once. Not online-only files, which aren't read until they're downloaded: their older
+                   // details are better than none.
+                   && (e.Metadata.Version >= VersionNeeded(item.Path) || !XmpFields.CanWrite(item.Path) || item.IsOnlineOnly)
                 ? e.Metadata : null;
         }
     }
+
+    /// <summary>The oldest reader whose details still hold for this file. HEIC's were read without their XMP before
+    /// version 3 (#31), so only they are read again, not the whole library; the rest need version 2 (dc:description).</summary>
+    public static int VersionNeeded(string path) => XmpFields.IsHeif(path) ? HeifXmpRead : 2;
+
+    /// <summary>The reader version that first read HEIC's XMP. Not CurrentVersion: a later bump meant for every format
+    /// changes the 2 above as well, on purpose.</summary>
+    private const int HeifXmpRead = 3;
 
     public void Remember(MediaItem item, MediaMetadata metadata)
     {
@@ -117,4 +126,24 @@ public static class AppPaths
 {
     public static string DataFolder { get; set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppInfo.DataFolderName);
+
+    /// <summary>Where a folder of the app's really is, for File Explorer. A packaged app's new folders under
+    /// %LOCALAPPDATA% are kept in its package's LocalCache\Local, and only the app sees them at the usual path; Explorer
+    /// runs outside the package, so it's given the package's copy when there is one.</summary>
+    public static string ForExplorer(string path) =>
+        ForExplorer(path, Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), PackageLocalFolder());
+
+    internal static string ForExplorer(string path, string localAppData, string? packageLocal)
+    {
+        var root = Path.TrimEndingDirectorySeparator(localAppData) + Path.DirectorySeparatorChar;
+        if (packageLocal is null || !path.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return path;
+        var moved = Path.Combine(packageLocal, path[root.Length..]);
+        return Directory.Exists(moved) ? moved : path;
+    }
+
+    private static string? PackageLocalFolder()
+    {
+        try { return Path.Combine(Windows.Storage.ApplicationData.Current.LocalCacheFolder.Path, "Local"); }
+        catch (Exception) { return null; } // not installed as a package
+    }
 }

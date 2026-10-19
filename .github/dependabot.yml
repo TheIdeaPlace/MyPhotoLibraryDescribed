@@ -1,0 +1,36 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directories:
+      - /windows/src/*
+      - /windows/tests/*
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    reviewers:
+      - kellylford
+    assignees:
+      - kellylford
+    groups:
+      # The Windows App SDK packages ship as one release; one PR rather than four.
+      windows-app-sdk:
+        patterns:
+          - "Microsoft.WindowsAppSDK*"
+      # The test stack moves together.
+      test-tooling:
+        patterns:
+          - "xunit*"
+          - "Xunit*"
+          - "Microsoft.NET.Test.Sdk"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    reviewers:
+      - kellylford
+    assignees:
+      - kellylford

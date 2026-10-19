@@ -17,5 +17,8 @@ internal static class AllowPhotoChangesInTests
         Services.PhotoChanges.Allowed = true;
         // Nothing a test does may land in the real data folder (the log, especially).
         Services.AppPaths.DataFolder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "PhotoFinderTests", $"data-{Environment.ProcessId}");
+        // What's saved with each description (#199), without reading Windows' package list in every test run.
+        Services.DescriptionProvenance.OsOverride = "Windows 11 Pro 26H2, build 26340.9616";
+        Services.DescriptionProvenance.ModelOverride = "Windows AI image description, MicrosoftWindows.Client.CoreAI 1.2.3.4";
     }
 }

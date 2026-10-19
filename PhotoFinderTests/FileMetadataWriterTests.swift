@@ -17,6 +17,7 @@ final class FileMetadataWriterTests: XCTestCase {
 
     override func tearDownWithError() throws {
         PhotoChanges.allowed = false
+        FileMetadataWriter.beforeReplacing = nil
         try? FileManager.default.removeItem(at: temp)
     }
 
@@ -177,7 +178,7 @@ final class FileMetadataWriterTests: XCTestCase {
             let untitled = try makePhoto("untitled.\(ext)", type: type, title: nil)
             try FileMetadataWriter.write(.init(caption: "Two dogs"), to: untitled)
             XCTAssertEqual(title(untitled), "Two dogs", ext)
-            // A title that was the caption (as Photo Finder on Windows wrote) keeps following it.
+            // A title that was the caption (as the Windows app wrote) keeps following it.
             let windows = try makePhoto("windows.\(ext)", type: type, caption: "Rex", title: "Rex")
             try FileMetadataWriter.write(.init(caption: "Rex on the beach"), to: windows)
             XCTAssertEqual(title(windows), "Rex on the beach", ext)
@@ -261,7 +262,8 @@ final class FileMetadataWriterTests: XCTestCase {
         XCTAssertEqual(JPEGLayout.trailingData(try Data(contentsOf: url)), video, "the video is byte-for-byte the same")
     }
 
-    func testAMultiPictureJPEGIsRefusedAndLeftAlone() throws {
+    /// An MPF segment with no MP Entries can't be patched (#90): JPEGMetadataTests covers the ones that can.
+    func testAMultiPictureJPEGWhoseIndexCantBeFollowedIsRefusedAndLeftAlone() throws {
         let url = try jpeg(mpf: true)
         let before = try Data(contentsOf: url)
         XCTAssertTrue(JPEGLayout.hasMultiPicture(before))
@@ -285,6 +287,63 @@ final class FileMetadataWriterTests: XCTestCase {
         XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: renamed)) { error in
             XCTAssertEqual(error as? FileMetadataWriteError, .unsupportedFormat("GIF"))
         }
+    }
+
+    // MARK: - Changed while it's saved (#111)
+
+    /// Another app writing into the file after it was read: the new copy was made from the old bytes, so it isn't
+    /// swapped in, and the file is left as the other app left it, with no copy left behind.
+    func testAFileChangedWhileItsSavedIsLeftAsTheOtherAppLeftIt() throws {
+        for (ext, type) in Self.formats {
+            let url = try makePhoto("changed.\(ext)", type: type)
+            var theirs = Data()
+            FileMetadataWriter.beforeReplacing = { url in
+                // Appended to in place, as an editor saving over it might, keeping its inode.
+                guard let handle = try? FileHandle(forWritingTo: url) else { return }
+                handle.seekToEndOfFile()
+                handle.write(Data("more".utf8))
+                try? handle.close()
+                theirs = (try? Data(contentsOf: url)) ?? Data()
+            }
+            XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: url), ext) { error in
+                XCTAssertEqual(error as? FileMetadataWriteError, FileMetadataWriter.changedWhileSaving, ext)
+            }
+            XCTAssertFalse(theirs.isEmpty, ext)
+            XCTAssertEqual(try Data(contentsOf: url), theirs, ext)
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: temp.path), ["changed.\(ext)"], ext)
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    /// Another file put in its place, the same size with the same modified time: still refused, being a different file.
+    func testAFileReplacedWhileItsSavedIsLeftAlone() throws {
+        let url = try makePhoto("replaced.jpg", type: .jpeg)
+        var theirs = Data()
+        FileMetadataWriter.beforeReplacing = { url in
+            let other = url.deletingLastPathComponent().appendingPathComponent("other.tmp")
+            guard var bytes = try? Data(contentsOf: url),
+                  let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else { return }
+            bytes[bytes.count - 3] ^= 0xFF
+            try? bytes.write(to: other)
+            try? FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: other.path)
+            _ = rename(other.path, url.path)
+            theirs = bytes
+        }
+        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: url)) {
+            XCTAssertEqual($0 as? FileMetadataWriteError, FileMetadataWriter.changedWhileSaving)
+        }
+        XCTAssertFalse(theirs.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: url), theirs)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: temp.path), ["replaced.jpg"])
+    }
+
+    /// Nothing changed it: written as usual, the hook seeing the original still there.
+    func testAFileNobodyElseTouchesIsWritten() throws {
+        let url = try makePhoto("untouched.png", type: .png)
+        var called = false
+        FileMetadataWriter.beforeReplacing = { _ in called = true }
+        XCTAssertEqual(try FileMetadataWriter.write(.init(caption: short), to: url).caption, short)
+        XCTAssertTrue(called)
     }
 
     // MARK: - Alt text
@@ -352,6 +411,14 @@ final class FileMetadataWriterTests: XCTestCase {
                        "Saved to 2 files. Skipped anim.gif: GIF files can't hold captions or descriptions. 1 photo hasn't been described yet")
         XCTAssertEqual(FileWriteSummary.text(done: nil, skipped: [("a.gif", "GIF"), ("b.webp", "WEBP"), ("c.gif", "GIF")], notDescribed: 2),
                        "Skipped 3 files: GIF and WEBP files can't hold captions or descriptions. 2 photos haven't been described yet")
+    }
+
+    func testAPhotoWhoseSecondPictureCantBeKeptRightIsNamed() {
+        // Worded as Windows says it (#90, #150).
+        XCTAssertEqual(FileWriteSummary.text(done: "Saved to 2 files", skipped: [], secondPicture: ["hdr.jpg"], notDescribed: 0),
+                       "Saved to 2 files. hdr.jpg holds a second picture, such as an HDR map, laid out in a way that can't be updated safely, so it was left as it is")
+        XCTAssertEqual(FileWriteSummary.text(done: nil, skipped: [], secondPicture: ["a.jpg", "b.jpg"], notDescribed: 0),
+                       "2 files hold a second picture, such as an HDR map, laid out in a way that can't be updated safely, so they were left as they are")
     }
 
     func testUnsupportedFilesAreFoundByName() {

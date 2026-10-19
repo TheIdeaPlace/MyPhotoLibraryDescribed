@@ -11,6 +11,9 @@ public sealed class Settings
     public ViewMode ViewMode { get; set; } = ViewMode.List;
     /// <summary>The columns shown, in the order they're shown and read, by id. Null until chosen.</summary>
     public List<string>? ColumnOrder { get; set; }
+    /// <summary>View > Labels > Gallery (#38): what the gallery says when you move to a photo, in order. Null means the
+    /// default, Position only.</summary>
+    public List<string>? GalleryLabels { get; set; }
 
     /// <summary>Columns turned on or off from their defaults, from before columns could be reordered. Read once
     /// to carry the choice over; ColumnOrder replaces it.</summary>

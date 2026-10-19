@@ -109,7 +109,7 @@ public sealed class SystemCheckTests : IDisposable
         Assert.Contains("Windows AI: Needs attention. Windows' image description model isn't downloaded yet. Describe Photo (Ctrl+D) downloads it.",
             notReady.Items.Select(i => i.Line));
         var missing = new SystemCheck(Good() with { Readiness = new AIReadiness(false, "NotInstalled", "x") });
-        Assert.Contains($"Windows AI: Needs attention. The {AppInfo.HelperName} isn't installed. Install {AppInfo.Name} from PhotoFinder.appinstaller.",
+        Assert.Contains($"Windows AI: Needs attention. The {AppInfo.HelperName} isn't installed. Install the app again from {AppInfo.InstallerFile}.",
             missing.Items.Select(i => i.Line));
         var other = new SystemCheck(Good() with { Readiness = new AIReadiness(false, "DisabledByUser", "Turn it on in Settings.") });
         Assert.Contains("Windows AI: Needs attention. Turn it on in Settings.", other.Items.Select(i => i.Line));
@@ -137,26 +137,6 @@ public sealed class SystemCheckTests : IDisposable
         Assert.Contains("Describe Photos in the Background: On.", lines);
         Assert.Contains("Library folders: Needs attention. None. Add one with File > Add Folder to Library.",
             new SystemCheck(Good() with { LibraryFolders = [] }).Items.Select(i => i.Line));
-    }
-
-    [Fact]
-    public void ABugReport_HasTheQuestionsAndTheSystem_AndOpensAsAWindowsIssue()
-    {
-        var body = BugReport.Body("Everything needed to describe photos is ready.\nWindows: OK. Build 26100.");
-        Assert.Contains("**What happened**", body);
-        Assert.Contains("**What you expected**", body);
-        Assert.Contains("**Steps**", body);
-        Assert.Contains("```\nEverything needed to describe photos is ready.\nWindows: OK. Build 26100.\n```", body.Replace("\r\n", "\n"));
-        var uri = BugReport.NewIssueUri(body, out var includesBody).AbsoluteUri;
-        Assert.True(includesBody);
-        Assert.StartsWith(AppInfo.IssuesUrl + "?title=%5BWindows%5D%20&labels=bug%2Cuser-reported%2Cwindows&body=", uri);
-
-        // Too long for an address: the issue opens without the body, which is on the clipboard.
-        var longBody = BugReport.Body(new string('x', 8000));
-        var shortUri = BugReport.NewIssueUri(longBody, out var fits).AbsoluteUri;
-        Assert.False(fits);
-        Assert.DoesNotContain("body=", shortUri);
-        Assert.True(shortUri.Length <= BugReport.MaxUriLength);
     }
 
     [Fact]

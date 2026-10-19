@@ -31,14 +31,18 @@ public sealed class BackgroundDescriber : IDisposable
     private int _total;
     private int _done;
 
+    /// <param name="failuresPath">Where the photos that couldn't be described are remembered between starts; none in
+    /// tests unless given.</param>
     public BackgroundDescriber(LibraryModel model, DescriptionStore store, AutoDescriber.DescribeFunc describe,
-        Func<CancellationToken, Task<AIReadiness>> check, Func<CancellationToken, Task<AIReadiness>> prepare)
+        Func<CancellationToken, Task<AIReadiness>> check, Func<CancellationToken, Task<AIReadiness>> prepare, string? failuresPath = null)
     {
         _model = model;
         _store = store;
         _describe = describe;
         _check = check;
         _prepare = prepare;
+        _failuresPath = failuresPath;
+        LoadFailures();
         _resume = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token);
         _model.FolderAdded += (folder, paths) => Busy(FolderAddedAsync(folder, paths));
     }
@@ -56,12 +60,16 @@ public sealed class BackgroundDescriber : IDisposable
         _busy.Add(task);
     }
 
-    /// <summary>For tests: finishes once nothing is being checked, queued or described.</summary>
+    /// <summary>For tests: finishes once nothing is being checked, queued or described. Waiting to ask Windows AI again
+    /// counts as idle, since that goes on until it answers.</summary>
     internal async Task WhenIdleAsync()
     {
         var until = DateTime.UtcNow.AddSeconds(10);
-        while ((IsRunning || _busy.Any(t => !t.IsCompleted)) && DateTime.UtcNow < until) await Task.Delay(10);
+        while ((IsRunning || (_busy.Any(t => !t.IsCompleted) && !(_waitingForAI && _asking == 0))) && DateTime.UtcNow < until) await Task.Delay(10);
     }
+
+    /// <summary>For tests: a check of Windows AI is under way.</summary>
+    private int _asking;
 
     public bool Enabled
     {
@@ -78,6 +86,9 @@ public sealed class BackgroundDescriber : IDisposable
                     : "Photos won't be described in the background");
                 return;
             }
+            // Turned on by the person: everything is tried again, including photos that couldn't be described before
+            // (a codec installed since, say).
+            ForgetFailures();
             Announcer.Announce("Photos in the library will be described in the background");
             Busy(TurnedOnAsync());
         }
@@ -98,6 +109,8 @@ public sealed class BackgroundDescriber : IDisposable
     private int StopQueue()
     {
         var left = _front.Count + _queue.Count;
+        // Failures not yet shown to be the photos' own aren't kept once the run ends early, however it was stopped.
+        _pending.Clear();
         _front.Clear();
         _queue.Clear();
         _queued.Clear();
@@ -105,8 +118,10 @@ public sealed class BackgroundDescriber : IDisposable
         _announceLibrary = false;
         // A new run: the photo still being described belongs to the old one, so it isn't counted again.
         _run++;
-        // And no more asking Windows AI again from the start: Stop means until the next start.
+        // And no more asking Windows AI again from the start, nor starting when a description works: Stop means until the
+        // next start.
         CancelResume();
+        _waitingForAI = false;
         // The status bar clears now, even while the photo already being described finishes.
         Finish();
         return left;
@@ -116,15 +131,39 @@ public sealed class BackgroundDescriber : IDisposable
     {
         // Asks for itself, and says why if it can't.
         CancelResume();
+        _waitingForAI = false;
         if (await CheckWhenTurnedOnAsync()) await DescribeLibraryAsync(announce: true);
     }
 
     /// <summary>At a start: the library's photos not described yet, quietly, tracked so tests can wait for it.</summary>
-    public void Resume() => Busy(ResumeAsync(_resume.Token));
+    public void Resume()
+    {
+        _waitingForAI = false;
+        Busy(ResumeAsync(_resume.Token));
+    }
 
-    /// <summary>How long to wait before asking Windows AI again when it couldn't answer at a start. Tests shorten it.</summary>
+    /// <summary>Gave up waiting for Windows AI at a start: the next description that works anywhere (Describe Photo, say)
+    /// starts it, with nothing for the person to do.</summary>
+    private bool _waitingForAI;
+
+    /// <summary>Windows AI has just described a photo: if background describing was waiting for it, it starts now.</summary>
+    public void WindowsAIWorked()
+    {
+        if (!_waitingForAI || !Enabled || IsRunning) return;
+        Log.Write("background", "Windows AI is working again; background describing starts");
+        CancelResume();
+        Resume();
+    }
+
+    /// <summary>How long to wait before asking Windows AI again when it couldn't answer at a start, then every
+    /// <see cref="ResumePoll"/> after that. Tests shorten them.</summary>
     internal TimeSpan[] ResumeRetries { get; set; } =
-        [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10)];
+        [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(5)];
+
+    internal TimeSpan ResumePoll { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>Said while background describing waits for Windows AI to answer.</summary>
+    internal const string WaitingText = "Background describing is waiting for Windows AI. It starts by itself once Windows AI is working.";
 
     /// <summary>Asking again from a start; cancelled by Stop, turning it off or on, and closing.</summary>
     private CancellationTokenSource _resume;
@@ -137,26 +176,38 @@ public sealed class BackgroundDescriber : IDisposable
     }
 
     /// <summary>Windows AI can be slow to answer just after a start or signing in (the helper's check timing out, say), so
-    /// a check that fails is tried again for a while, rather than waiting for the next start. When it can't start, the
-    /// status bar says why, without a busy indicator, until it's turned off or a folder's photos are described.</summary>
+    /// a check that fails is asked again, soon and then every ten minutes, rather than waiting for the next start;
+    /// meanwhile the status bar says it's waiting, without a busy indicator, and the first description that works anywhere
+    /// starts it at once. When Windows AI can't describe on this PC at all, the status bar says why and it stops asking.</summary>
     private async Task ResumeAsync(CancellationToken cancel)
     {
-        string? problem = null;
-        foreach (var wait in (TimeSpan[])[TimeSpan.Zero, .. ResumeRetries])
+        var tries = 0;
+        while (!cancel.IsCancellationRequested)
         {
-            if (wait > TimeSpan.Zero)
+            var (tryAgain, problem) = await DescribeLibraryAsync(cancel: cancel);
+            if (cancel.IsCancellationRequested) return;
+            if (!tryAgain)
             {
-                try { await Task.Delay(wait, cancel); }
-                catch (OperationCanceledException) { return; }
+                _waitingForAI = false;
+                if (problem is not null && Enabled && !IsRunning)
+                {
+                    Log.Write("background", $"Not describing: {problem}");
+                    _model.ShowBackgroundProblem(problem);
+                }
+                return;
             }
-            bool tryAgain;
-            (tryAgain, problem) = await DescribeLibraryAsync(cancel: cancel);
-            if (!tryAgain) break;
-            problem = "Background describing couldn't start: Windows AI didn't answer. Turn it off and on to try again.";
+            if (!Enabled) return;
+            if (!IsRunning)
+            {
+                if (!_waitingForAI) Log.Write("background", "Waiting for Windows AI; asking again soon, then every ten minutes");
+                _model.ShowBackgroundProblem(WaitingText);
+                _waitingForAI = true;
+            }
+            var wait = tries < ResumeRetries.Length ? ResumeRetries[tries] : ResumePoll;
+            tries++;
+            try { await Task.Delay(wait, cancel); }
+            catch (OperationCanceledException) { return; }
         }
-        if (problem is null || cancel.IsCancellationRequested) return;
-        Log.Write("background", $"Not describing until it's turned off and on, or the next start: {problem}");
-        if (Enabled && !IsRunning) _model.ShowBackgroundProblem(problem);
     }
 
     /// <summary>The library's photos not described yet, newest first, queued: when it's turned on, and when My Photo Library Described
@@ -168,6 +219,7 @@ public sealed class BackgroundDescriber : IDisposable
         if (!Enabled) return (false, null);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token, cancel);
         AIReadiness readiness;
+        _asking++;
         try
         {
             readiness = await _check(linked.Token);
@@ -181,7 +233,38 @@ public sealed class BackgroundDescriber : IDisposable
             Log.Error("background", "Couldn't ask Windows AI whether it's ready", ex);
             return (true, null);
         }
+        finally
+        {
+            _asking--;
+        }
         if (!Enabled || linked.IsCancellationRequested) return (false, null);
+        if (readiness.State == "NotReady")
+        {
+            // The model's gone since it was turned on (a Windows update, say): got ready again, saying so, rather than
+            // waiting for the person to do something. The first time it can take a few minutes.
+            Log.Write("background", "Windows AI's model isn't ready; getting it ready");
+            if (!IsRunning) _model.BackgroundProgress = "Getting Windows' image description model ready for background describing";
+            try
+            {
+                readiness = await _prepare(linked.Token);
+            }
+            catch (OperationCanceledException) when (linked.IsCancellationRequested)
+            {
+                return (false, null);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("background", "Windows AI's model couldn't be got ready", ex);
+                readiness = new AIReadiness(true, "Error", ex.Message);
+            }
+            finally
+            {
+                if (!IsRunning) _model.BackgroundProgress = null;
+            }
+            if (!Enabled || linked.IsCancellationRequested) return (false, null);
+            // Not ready yet (still downloading, say): asked again later, as for a helper that didn't answer.
+            if (readiness.State == "NotReady") readiness = readiness with { State = "Error" };
+        }
         if (readiness.State != "Ready")
         {
             Log.Write("background", $"Not started: Windows AI is {readiness.State}. {readiness.Message}");
@@ -189,19 +272,20 @@ public sealed class BackgroundDescriber : IDisposable
             {
                 // The helper not starting or not answering in time, which can pass.
                 "Error" => (true, null),
-                // The model's gone since it was turned on (a Windows update, say). Getting it can mean a download of
-                // minutes, so that waits for the person: turning it on again does it, and says so.
-                "NotReady" => (false, "Background describing is waiting for Windows' image description model. Turn it off and on to get the model ready."),
                 _ => (false, $"Background describing can't run. {readiness.Message}"),
             };
         }
         var kind = _model.Settings.DescriptionKind;
-        var todo = _model.AllItems
-            .Where(i => !i.IsVideo && !i.IsOnlineOnly && MediaTypes.KindOf(i.Path) == MediaKind.Image && Wanted(i.Path) && _store.Get(i, kind) is null
-                        && !_failed.Contains(FailureKey(i)))
+        var undescribed = _model.AllItems
+            .Where(i => !i.IsVideo && !i.IsOnlineOnly && MediaTypes.KindOf(i.Path) == MediaKind.Image && Wanted(i.Path) && _store.Get(i, kind) is null)
+            .ToList();
+        var todo = undescribed
+            .Where(i => !_failed.Contains(FailureKey(i, kind)))
             .OrderByDescending(i => i.Metadata?.DateTaken ?? i.Modified)
             .Select(i => i.Path)
             .ToList();
+        if (undescribed.Count > todo.Count)
+            Log.Write("background", $"Skipped {undescribed.Count - todo.Count} photos that couldn't be described before");
         if (todo.Count == 0)
         {
             if (!announce) Log.Write("background", "Nothing in the library left to describe");
@@ -236,13 +320,87 @@ public sealed class BackgroundDescriber : IDisposable
     /// <summary>The photo being described now.</summary>
     private string? _current;
 
-    /// <summary>Photos that couldn't be described this session, by path, size and date, so a new run doesn't try them
-    /// again.</summary>
+    /// <summary>Photos that couldn't be described, by path, size and date, so a new run doesn't try them again: not this
+    /// session, and not after a restart either, or the same few photos at the front of the queue (newest first) would
+    /// fail again at every start and stop the run before it reached the rest (Kelly, 13 Oct). Kept per version of the app:
+    /// an update may describe them, so they're tried once more then. An edited photo has a new date, so it's tried too.</summary>
     private readonly HashSet<string> _failed = new(StringComparer.OrdinalIgnoreCase);
-    private static string FailureKey(MediaItem item) => $"{item.Path}|{item.Size}|{item.Modified.Ticks}";
+    /// <summary>The failures kept for later starts: the photo's own verdicts at once, other failures only once a later
+    /// photo in the same run was described, proving describing works. A run that stops after failures in a row keeps
+    /// none of its streak, so a problem with every photo (a missing codec, a broken helper) can't leave good photos
+    /// skipped once it's fixed.</summary>
+    private readonly HashSet<string> _remembered = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _pending = [];
+
+    /// <summary>The photo by path, size and modified time (UTC, so a daylight saving change doesn't lose them all), and the
+    /// description type: one the filter declined as Detailed may be fine as Brief.</summary>
+    private static string FailureKey(MediaItem item, string kind) => $"{item.Path}|{item.Size}|{item.Modified.ToUniversalTime().Ticks}|{kind}";
+    private readonly string? _failuresPath;
+
+    private sealed record Failures(string Version, List<string>? Keys);
+
+    public static string DefaultFailuresPath => Path.Combine(AppPaths.DataFolder, "BackgroundFailures.json");
+
+    private void LoadFailures()
+    {
+        if (_failuresPath is null || !File.Exists(_failuresPath)) return;
+        try
+        {
+            var saved = System.Text.Json.JsonSerializer.Deserialize<Failures>(File.ReadAllText(_failuresPath));
+            if (saved?.Version != Updates.AppVersion) return;
+            var keys = (saved.Keys ?? []).Where(k => !string.IsNullOrEmpty(k)).ToList();
+            _remembered.UnionWith(keys);
+            _failed.UnionWith(keys);
+        }
+        catch (Exception ex)
+        {
+            // Never a reason not to start: they're just tried again.
+            Log.Write("background", $"The photos that couldn't be described before weren't read ({ex.GetType().Name}); they'll be tried again");
+        }
+    }
+
+    private void SaveFailures()
+    {
+        if (_failuresPath is null) return;
+        try
+        {
+            // Photos no longer in the library are dropped, so the file doesn't grow forever. (One on a share that's offline
+            // just now is dropped too, and simply tried again later.)
+            var paths = _model.AllItems.Select(i => i.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _remembered.RemoveWhere(k => !paths.Contains(k[..Math.Max(0, k.IndexOf('|'))]));
+            Directory.CreateDirectory(Path.GetDirectoryName(_failuresPath)!);
+            var temp = _failuresPath + ".tmp";
+            File.WriteAllText(temp, System.Text.Json.JsonSerializer.Serialize(new Failures(Updates.AppVersion, [.. _remembered])));
+            File.Move(temp, _failuresPath, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Write("background", $"The photos that couldn't be described weren't saved ({ex.GetType().Name}); they'll be tried again next start");
+        }
+    }
+
+    private void ForgetFailures()
+    {
+        _failed.Clear();
+        _pending.Clear();
+        if (_remembered.Count == 0) return;
+        _remembered.Clear();
+        SaveFailures();
+    }
+
+    /// <summary>Windows' final verdict on the photo itself, not a sign that describing doesn't work: its content filter
+    /// declining what's in the picture, or too much text in it to describe. These don't count towards stopping the run.
+    /// A missing codec shows as decode_failed or unsupported_format, which do.</summary>
+    internal static bool IsAboutThePhoto(Exception ex) => ex is DescriptionException { Code: "content_filtered" or "too_much_text" };
+
+    /// <summary>A failure that may well not happen next time: Windows taking too long, or the helper stopping partway
+    /// (WindowsAI says "stopped unexpectedly"). Never kept for later starts.</summary>
+    internal static bool IsPassing(Exception ex) =>
+        ex is TimeoutException or DescriptionException { Code: "timeout" }
+        || (ex is DescriptionException { Code: "internal_error" } d && d.Message.Contains("stopped unexpectedly", StringComparison.Ordinal));
 
     /// <summary>After this many photos in a row fail, the run stops and says why, rather than failing through thousands
-    /// of photos (a missing HEIF codec, a broken helper).</summary>
+    /// of photos (a missing HEIF codec, a broken helper). Photos Windows' content filter declines don't count.</summary>
     internal const int FailuresInARow = 5;
 
     /// <summary>Whether it's a good time to work: not on energy saver. Set by the app; it waits meanwhile.</summary>
@@ -354,9 +512,16 @@ public sealed class BackgroundDescriber : IDisposable
                 _current = path;
                 try
                 {
-                    var text = await _describe(item, kind, _closing.Token);
-                    if (text.Length > 0) _store.PutUnlessEdited(item, kind, text);
+                    var (text, took) = await _describe(item, kind, _closing.Token);
+                    if (text.Length > 0) _store.PutUnlessEdited(item, kind, text, took);
                     failedInARow = 0;
+                    // Describing works, so the failures before this one were the photos' own: kept for later starts.
+                    if (_pending.Count > 0)
+                    {
+                        _remembered.UnionWith(_pending);
+                        _pending.Clear();
+                        SaveFailures();
+                    }
                 }
                 catch (OperationCanceledException) when (_closing.IsCancellationRequested)
                 {
@@ -364,16 +529,27 @@ public sealed class BackgroundDescriber : IDisposable
                 }
                 catch (Exception ex)
                 {
-                    // One photo that can't be described (filtered, unreadable, timed out) doesn't stop the rest, but many
-                    // in a row means something's wrong with every photo: stop and say what, once.
-                    _failed.Add(FailureKey(item));
-                    Log.Write("background", $"Couldn't describe {item.Name}: {(ex is DescriptionException d ? $"{d.Code}: " : ex.GetType().Name + ": ")}{ex.Message}");
-                    if (run == _run && ++failedInARow >= FailuresInARow)
+                    // One photo that can't be described (filtered, unreadable, timed out) doesn't stop the rest, and is
+                    // remembered so it isn't tried at every start; but many in a row means something's wrong with every
+                    // photo: stop and say what, once.
+                    var key = FailureKey(item, kind);
+                    _failed.Add(key);
+                    if (IsAboutThePhoto(ex))
                     {
+                        _remembered.Add(key);
+                        SaveFailures();
+                    }
+                    // A timeout, or the helper stopping partway, says nothing about the photo: skipped this session only.
+                    else if (!IsPassing(ex)) _pending.Add(key);
+                    Log.Write("background", $"Couldn't describe {item.Name}: {(ex is DescriptionException d ? $"{d.Code}: " : ex.GetType().Name + ": ")}{ex.Message}");
+                    if (run == _run && !IsAboutThePhoto(ex) && ++failedInARow >= FailuresInARow)
+                    {
+                        // Something may be wrong with every photo: StopQueue drops the streak, so it isn't kept for later starts.
                         var left = StopQueue();
                         Log.Write("background", $"Stopped after {FailuresInARow} failures in a row; {left} not tried");
                         Announcer.AnnounceAfter(
-                            $"Background describing stopped: {Plural(FailuresInARow)} in a row couldn't be described, so {Plural(left)} weren't tried. " +
+                            // "so 1 photo wasn't tried", and nothing about the rest when none are left (#158, as the Mac's #159).
+                            $"Background describing stopped: {Plural(FailuresInARow)} in a row couldn't be described{(left switch { 0 => "", 1 => ", so 1 photo wasn't tried", _ => $", so {Plural(left)} weren't tried" })}. " +
                             (ex is DescriptionException ? ex.Message : $"Windows couldn't describe them: {ex.Message}"), "PhotoFinderBackground");
                         break;
                     }

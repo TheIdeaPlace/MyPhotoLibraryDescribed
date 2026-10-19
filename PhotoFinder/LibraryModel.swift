@@ -61,30 +61,63 @@ final class LibraryModel {
     }
 
     private(set) var rows: [FileRow] = [] {
-        didSet { if !fillingDescriptions, showsDescriptionColumn { fillDescriptions() } }
+        didSet {
+            guard !fillingRows else { return }
+            if showsDescriptionColumn { fillDescriptions() }
+            fillPlaceNames()
+        }
     }
-    @ObservationIgnored private var fillingDescriptions = false
+    /// Set while descriptions or place names are copied into the rows, which changes them again.
+    @ObservationIgnored private var fillingRows = false
     /// View > Show Description: the Description panel beside the list or gallery (#50). On unless turned off.
-    var showDescriptionPanel: Bool = UserDefaults.standard.object(forKey: "showDescriptionPanel") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(showDescriptionPanel, forKey: "showDescriptionPanel") }
+    var showDescriptionPanel: Bool {
+        didSet { defaults.set(showDescriptionPanel, forKey: "showDescriptionPanel") }
     }
     /// Photos being described right now, by row id and how many describes are running on each, so the Description
     /// panel can say "Describing…" until the last one finishes.
     private(set) var describingIDs: [String: Int] = [:]
     /// The list's sort, remembered between launches as a column and a direction, as Windows does (#46).
-    var sortOrder: [KeyPathComparator<FileRow>] = ColumnOrder.savedSort(UserDefaults.standard) {
+    var sortOrder: [KeyPathComparator<FileRow>] {
         didSet {
-            rows.sort(using: sortOrder)
-            ColumnOrder.saveSort(sortOrder, to: UserDefaults.standard)
+            // Sorting by Place Taken sorts by the names shown, so they're filled in first.
+            fillPlaceNames()
+            rows = ColumnOrder.sorted(rows, by: sortOrder)
+            ColumnOrder.saveSort(sortOrder, to: defaults)
         }
     }
     var selection: Set<String> = [] {
-        didSet { if selection != oldValue { movedSelection() } }
+        didSet { if selection != oldValue, !keepingSelectionShowing { movedSelection() } }
     }
     var searchText = "" {
         didSet {
             if searchText != oldValue { announceResultsAfterPause() }
         }
+    }
+    /// Set while a search drops hidden rows from the selection, which isn't a move to describe.
+    @ObservationIgnored private var keepingSelectionShowing = false
+
+    /// The selected rows that are showing: what Open, Favorite, Rating, Edit Caption and the rest act on, so nothing
+    /// out of sight is changed while a search hides it, whatever reloaded or changed meanwhile (#159).
+    var selectedShowing: Set<String> { showing(nil) }
+
+    /// `ids` (a context menu's rows, which can include hidden ones it got from the selection), or the selection,
+    /// without any a search hides.
+    func showing(_ ids: Set<String>?) -> Set<String> {
+        let ids = ids ?? selection
+        guard !ids.isEmpty, !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return ids }
+        return ids.intersection(visibleRows.map(\.id))
+    }
+
+    /// Once typing in Search pauses, rows it hides leave the selection, as on Windows, so they don't come back when
+    /// it's cleared. Not on every key: a typo that hides the photo for a moment mustn't lose it.
+    private func keepSelectionShowing() {
+        let showing = selectedShowing
+        guard showing != selection else { return }
+        keepingSelectionShowing = true
+        selection = showing
+        keepingSelectionShowing = false
+        // Not a move to describe, but the photo you were on is no longer it, so landing on it again speaks it.
+        autoDescriber.moved(to: nil)
     }
     @ObservationIgnored private var resultsAnnouncement: Task<Void, Never>?
     var searchFocusRequest = 0
@@ -106,19 +139,28 @@ final class LibraryModel {
     }
     var viewMode: ViewMode = .list {
         didSet {
-            UserDefaults.standard.set(viewMode.rawValue, forKey: "viewMode")
+            defaults.set(viewMode.rawValue, forKey: "viewMode")
             if viewMode == .gallery { ensureGallerySelection() }
+            if viewMode != oldValue { placeNamesShownChanged() }
         }
     }
     /// The columns shown, in the order they're shown and read. Always includes Name.
     var columnOrder: [String] = ColumnOrder.defaultOrder {
         didSet {
-            UserDefaults.standard.set(columnOrder, forKey: "columnOrder")
+            defaults.set(columnOrder, forKey: "columnOrder")
             if showsDescriptionColumn, !oldValue.contains("description") { fillDescriptions() }
+            if columnOrder.contains("location") != oldValue.contains("location") { placeNamesShownChanged() }
         }
     }
-    var columnsSheetShown = false {
-        didSet { if !columnsSheetShown, oldValue { autoDescriber.refocused(currentID: autoDescribeCandidate) } }
+    /// What the gallery says, in order, when you move to a photo (View > Labels > Gallery, #38). Position by default.
+    var galleryLabels: [GalleryItem] = GalleryLabels.defaultOrder {
+        didSet {
+            defaults.set(galleryLabels.map(\.rawValue), forKey: GalleryLabels.defaultsKey)
+            if galleryLabels.contains(.location) != oldValue.contains(.location) { placeNamesShownChanged() }
+        }
+    }
+    var labelsSheetShown = false {
+        didSet { if !labelsSheetShown, oldValue { autoDescriber.refocused(currentID: autoDescribeCandidate) } }
     }
     /// What describing in the background is doing, shown in the status bar.
     var backgroundProgress: String?
@@ -133,7 +175,7 @@ final class LibraryModel {
     /// The files listed when an added folder is showing, by row id (#36). Empty for Photos' albums.
     @ObservationIgnored private var filesByID: [String: MediaFile] = [:]
     /// Folders added to the library (File > Add Folder to Library…), in the order they were added.
-    private(set) var folderRoots: [String] = FolderRoots.load()
+    private(set) var folderRoots: [String]
     /// The Folders section's tree, from the last scan of the added folders.
     @ObservationIgnored private var folderNodes: [FolderNode] = []
     /// Photos' own sidebar sections from the last full rebuild, kept so a folder scan rebuilds only Folders (#47).
@@ -169,7 +211,14 @@ final class LibraryModel {
     @ObservationIgnored private var nameFillTask: Task<Void, Never>?
     private let names = NameCache()
     /// Apple Intelligence descriptions already made, shared by Get Info and background describing.
-    let descriptions = DescriptionCache()
+    let descriptions: DescriptionCache
+    /// Where settings are remembered: the app's own defaults, or a suite of their own in tests.
+    @ObservationIgnored private let defaults: UserDefaults
+    /// Apple Intelligence, as Describe Photo, Redescribe and describing automatically use it; nil where it can't be
+    /// used (before macOS 27). A stand-in in tests, so describing can be tested on any Mac.
+    @ObservationIgnored var photoDescribing: PhotoDescribing?
+    /// Says something with VoiceOver; `queued` waits for what it's saying. Collected instead in tests.
+    @ObservationIgnored var announcer: @MainActor (_ message: String, _ queued: Bool) -> Void = LibraryModel.postAnnouncement
     /// Every photo, watched for new ones to describe in the background.
     @ObservationIgnored private var allPhotosFetch: PHFetchResult<PHAsset>?
     /// The background describer (macOS 27), kept untyped so this class builds with older SDKs too.
@@ -186,19 +235,42 @@ final class LibraryModel {
     @ObservationIgnored private var terminationObserver: NSObjectProtocol?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
     @ObservationIgnored private var descriptionObserver: NSObjectProtocol?
+    @ObservationIgnored private var placeNameObserver: NSObjectProtocol?
+    /// Place names already found (#172): the app's data folder, or a test's.
+    let placeNames: PlaceNameCache
+    /// Looks up names for the photos showing while Place Taken is (#172); a stand-in asks in tests.
+    @ObservationIgnored let placeLookup: PlaceNameLookup
+    /// Whether some row has a place name in it, so turning names off clears them without looking at every row each time.
+    @ObservationIgnored private var rowsHavePlaceNames = false
     /// Changes whenever a description is saved, so views showing one (the gallery) update.
     private(set) var descriptionRevision = 0
     /// Photo > Describe Photos Automatically; on unless turned off.
-    var describeAutomatically: Bool = UserDefaults.standard.object(forKey: "describeAutomatically") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(describeAutomatically, forKey: "describeAutomatically") }
+    var describeAutomatically: Bool {
+        didSet { defaults.set(describeAutomatically, forKey: "describeAutomatically") }
     }
-    @ObservationIgnored private lazy var autoDescriber = makeAutoDescriber()
+    /// Not private, so tests can see what automatic describing would do.
+    @ObservationIgnored lazy var autoDescriber = makeAutoDescriber()
+    /// Whether the window is in front with no sheet over it, so a photo you're on is still being looked at. Tests
+    /// can say it is, since they run without the window in front.
+    @ObservationIgnored var isInFront: @MainActor () -> Bool = {
+        // An alert (the update note or the crash question at launch) counts as something over the window.
+        NSApplication.shared.isActive && NSApplication.shared.keyWindow?.isSheet == false
+            && NSApplication.shared.modalWindow == nil
+    }
+    /// Whether a file in an added folder is on this Mac, not only in the cloud (iCloud Drive, OneDrive and the like,
+    /// #197). Files that aren't are left unread by the list and by describing as you arrow, and writing into them asks
+    /// first. Tests stand in for the cloud.
+    @ObservationIgnored var isOnThisMac: @Sendable (URL) -> Bool = FileAvailability.isOnThisMac
+    /// Reads what a photo file says about itself before a caption is written into it. Tests watch which are read.
+    @ObservationIgnored var readMetadata: @Sendable (URL) -> FileMetadata = FileMetadata.read
+    /// Asks the question before writing into files that are only in the cloud; true to go on. Tests answer it.
+    @ObservationIgnored var confirmDownload: @MainActor (_ action: String, _ question: String) -> Bool = LibraryModel.askToDownload
 
     /// Describe photos added to the Photos library behind the scenes, so their descriptions are ready in Get Info.
-    var describeInBackground: Bool = UserDefaults.standard.bool(forKey: "describeInBackground") {
-        didSet { UserDefaults.standard.set(describeInBackground, forKey: "describeInBackground") }
+    var describeInBackground: Bool {
+        didSet { defaults.set(describeInBackground, forKey: "describeInBackground") }
     }
-    nonisolated private static let log = Logger(subsystem: "net.theideaplace.PhotoFinder", category: "library")
+    nonisolated private static let log = Logger(subsystem: "net.theideaplace.MyPhotoLibraryDescribed", category: "library")
     private let imageManager = PHCachingImageManager()
     private let galleryImageSize = CGSize(width: 2400, height: 2400)
     private let galleryImageOptions: PHImageRequestOptions = {
@@ -208,26 +280,54 @@ final class LibraryModel {
         return options
     }()
 
-    init() {
-        if let raw = UserDefaults.standard.string(forKey: "viewMode"), let mode = ViewMode(rawValue: raw) {
+    /// - Parameters:
+    ///   - descriptions: the saved descriptions; tests pass one in a temporary folder.
+    ///   - defaults: where settings are remembered; tests pass a suite of their own.
+    ///   - photoDescribing: Apple Intelligence where it can be used; tests pass a stand-in.
+    ///   - placeNames: the place names found; tests pass one in a temporary folder.
+    ///   - geocodePlace: asks Apple for a place's name; tests pass a stand-in.
+    init(descriptions: DescriptionCache = DescriptionCache(), defaults: UserDefaults = .standard,
+         photoDescribing: PhotoDescribing? = .appleIntelligence, placeNames: PlaceNameCache = .shared,
+         geocodePlace: @escaping PlaceGeocoder = PlaceNames.geocode) {
+        self.descriptions = descriptions
+        self.placeNames = placeNames
+        placeLookup = PlaceNameLookup(cache: placeNames, geocode: geocodePlace)
+        self.defaults = defaults
+        self.photoDescribing = photoDescribing
+        showDescriptionPanel = defaults.object(forKey: "showDescriptionPanel") as? Bool ?? true
+        sortOrder = ColumnOrder.savedSort(defaults)
+        folderRoots = FolderRoots.load(from: defaults)
+        describeAutomatically = defaults.object(forKey: "describeAutomatically") as? Bool ?? true
+        describeInBackground = defaults.bool(forKey: "describeInBackground")
+        saveInPhotos = CaptionPolicy.isOn(in: defaults)
+        lookUpPlaceNames = PlaceNames.isOn(in: defaults)
+        availableUpdate = Updates.remembered(running: AppInfo.shortVersion, in: defaults)
+        if let raw = defaults.string(forKey: "viewMode"), let mode = ViewMode(rawValue: raw) {
             viewMode = mode
         }
-        if let saved = UserDefaults.standard.stringArray(forKey: "columnOrder") {
+        if let saved = defaults.stringArray(forKey: "columnOrder") {
             columnOrder = ColumnOrder.clean(saved)
-        } else if let data = UserDefaults.standard.data(forKey: "columns"),
+        } else if let data = defaults.data(forKey: "columns"),
                   let migrated = ColumnOrder.migrate(customization: data) {
             // Columns from before they could be reordered: keep which were on, in the default order.
             columnOrder = migrated
         }
+        if let saved = defaults.stringArray(forKey: GalleryLabels.defaultsKey) {
+            galleryLabels = GalleryLabels.clean(saved)
+        }
         // Descriptions are saved a couple of seconds after each change; don't lose one made just before quitting.
         let cache = descriptions
         terminationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in cache.save() }
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [placeNames] _ in
+            cache.save()
+            placeNames.flush()
+        }
         // Back from another app: the photo you're on is described if you left during the pause.
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.recheckPhotosAccess()
                 self.autoDescriber.refocused(currentID: self.autoDescribeCandidate)
             }
         }
@@ -241,6 +341,13 @@ final class LibraryModel {
                 if let key, let text { self?.captionFromNewDescription(text, key: key) }
             }
         }
+        // A place's name found: the list and gallery show it, without a word, wherever focus is.
+        placeNameObserver = NotificationCenter.default.addObserver(
+            forName: PlaceNameCache.didChange, object: placeNames, queue: .main) { [weak self] note in
+            let key = note.userInfo?[PlaceNameCache.keyInfo] as? PlaceKey
+            MainActor.assumeIsolated { if let key { self?.fillPlaceName(for: key) } }
+        }
+        placeLookup.isAllowed = { [weak self] in self?.placeNamesShowing ?? false }
     }
 
     /// The saved description of a photo, for showing it. Updates when one is saved.
@@ -271,27 +378,33 @@ final class LibraryModel {
     /// File > Read-Only Mode: on at every launch; allowing changes lasts until the app quits (Kelly, 12 Oct).
     private(set) var readOnly = true
 
+    /// Asks before Read-Only Mode is turned off; true to allow changes. Tests answer it.
+    @ObservationIgnored var confirmAllowChanges: @MainActor () -> Bool = LibraryModel.askToAllowChanges
+
     /// Turns Read-Only Mode off, after asking every time, or back on.
     func setReadOnly(_ on: Bool) {
-        if !on {
-            let alert = NSAlert()
-            alert.messageText = "Let \(AppInfo.name) change your photos?"
-            alert.informativeText = "\(AppInfo.name) will be able to write captions, alt text and ratings into your photos, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to Read-Only Mode at any time."
-            alert.window.title = "Allow Changes to Photos"
-            // Keep Read-Only first, so it's the default: Return alone never allows changes.
-            alert.addButton(withTitle: "Keep Read-Only Mode")
-            alert.addButton(withTitle: "Allow Changes")
-            let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                guard event.keyCode == 53 else { return event }
-                NSApp.stopModal(withCode: .alertFirstButtonReturn)
-                return nil
-            }
-            defer { if let escape { NSEvent.removeMonitor(escape) } }
-            guard alert.runModal() == .alertSecondButtonReturn else { return }
-        }
+        if !on, !confirmAllowChanges() { return }
         readOnly = on
         PhotoChanges.allowed = !on
         announce(on ? "Read-Only Mode. Photos won't be changed" : "Editing Mode. Photos can be changed")
+    }
+
+    /// The question before changes are allowed, with Keep Read-Only Mode the default.
+    static func askToAllowChanges() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Let \(AppInfo.name) change your photos?"
+        alert.informativeText = "\(AppInfo.name) will be able to write captions, alt text and ratings into your photos, and Save Descriptions in Photos will work. Every change is checked before it's saved, but an undiscovered bug could still damage a photo, so keep a backup of photos you care about. You can go back to Read-Only Mode at any time."
+        alert.window.title = "Allow Changes to Photos"
+        // Keep Read-Only first, so it's the default: Return alone never allows changes.
+        alert.addButton(withTitle: "Keep Read-Only Mode")
+        alert.addButton(withTitle: "Allow Changes")
+        let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 53 else { return event }
+            NSApp.stopModal(withCode: .alertFirstButtonReturn)
+            return nil
+        }
+        defer { if let escape { NSEvent.removeMonitor(escape) } }
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     /// Whether a command may change photos; says why not while read-only.
@@ -301,7 +414,7 @@ final class LibraryModel {
         return false
     }
 
-    /// The window's title, with the mode: "All Photos - Photo Finder - Read-Only Mode". "Mode", so a screen reader
+    /// The window's title, with the mode: "All Photos - My Photo Library Described - Read-Only Mode". "Mode", so a screen reader
     /// doesn't sound as if the window or a control is read-only (Kelly, 13 Oct).
     var windowTitle: String { "\(currentTitle) - \(AppInfo.name) - \(readOnly ? "Read-Only Mode" : "Editing Mode")" }
 
@@ -342,6 +455,7 @@ final class LibraryModel {
         }
         lastPhoto = index.map { (id!, $0) }
         autoDescriber.moved(to: id, step: step)
+        wantCurrentPlaceName()
     }
 
     /// The photo to describe ahead of `id`, going `step` (1 or -1): the very next row, if it's a photo with no
@@ -379,8 +493,8 @@ final class LibraryModel {
         }
         describer.isStillOn = { [weak self] id in
             // Not while another app, Get Info or a sheet is in front: you've moved on from the photo for now.
-            guard let self, NSApplication.shared.isActive, NSApplication.shared.keyWindow?.isSheet == false,
-                  self.infoTarget == nil, self.captionTarget == nil, !self.columnsSheetShown else { return false }
+            guard let self, self.isInFront(),
+                  self.infoTarget == nil, self.captionTarget == nil, !self.labelsSheetShown else { return false }
             // Redescribe is working on it: leave it alone, even if you arrow away and back, so the old
             // description isn't spoken first (as on Windows). Redescribe speaks the new one.
             guard (self.describingAgain[id] ?? 0) == 0 else { return false }
@@ -394,9 +508,11 @@ final class LibraryModel {
                 (self?.describingAgain[id] ?? 0) == 0
             }
         }
-        describer.mayDescribeAhead = {
+        describer.mayDescribeAhead = { [weak self] in
+            // In front through the same check as isStillOn (which tests replace), so a sheet up also waits (#143's
+            // review).
             let info = ProcessInfo.processInfo
-            return NSApplication.shared.isActive && !info.isLowPowerModeEnabled
+            return (self?.isInFront() ?? false) && !info.isLowPowerModeEnabled
                 && [.nominal, .fair].contains(info.thermalState)
         }
         return describer
@@ -415,6 +531,7 @@ final class LibraryModel {
                 try? await Task.sleep(for: .milliseconds(200))
             }
             guard let self, !Task.isCancelled else { return }
+            self.keepSelectionShowing()
             self.announce(Self.resultCount(self.visibleRows.count), queued: true)
         }
     }
@@ -451,13 +568,17 @@ final class LibraryModel {
     var visibleRows: [FileRow] {
         let query = searchText.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return rows }
-        return rows.filter {
-            $0.name.localizedCaseInsensitiveContains(query)
-                || $0.kind.localizedCaseInsensitiveContains(query)
-                || $0.caption.localizedCaseInsensitiveContains(query)
-                || $0.keywords.localizedCaseInsensitiveContains(query)
-                || $0.dateText.localizedCaseInsensitiveContains(query)
-        }
+        return rows.filter { Self.matchesSearch($0, query) }
+    }
+
+    /// Whether a row is found by a search, already trimmed and not empty: its name, kind, caption, keywords or date,
+    /// ignoring case, as on Windows.
+    nonisolated static func matchesSearch(_ row: FileRow, _ query: String) -> Bool {
+        row.name.localizedCaseInsensitiveContains(query)
+            || row.kind.localizedCaseInsensitiveContains(query)
+            || row.caption.localizedCaseInsensitiveContains(query)
+            || row.keywords.localizedCaseInsensitiveContains(query)
+            || row.dateText.localizedCaseInsensitiveContains(query)
     }
 
     var currentItem: SidebarItem? { selectedSourceID.flatMap { itemsByID[$0] } }
@@ -465,62 +586,137 @@ final class LibraryModel {
 
     var statusText: String {
         if isLoading { return "Loading…" }
-        let count = visibleRows.count
-        let items = count == 1 ? "1 item" : "\(count.formatted()) items"
-        return selection.isEmpty ? items : "\(selection.count.formatted()) of \(items) selected"
+        if showingPhotosNoAccess { return "No access to Photos" }
+        let visible = visibleRows
+        let items = visible.count == 1 ? "1 item" : "\(visible.count.formatted()) items"
+        // Only rows showing count, as only they're acted on (`selectedShowing`); a reload can also leave ids no longer listed.
+        let selected = selection.isEmpty ? 0 : visible.reduce(0) { $0 + (selection.contains($1.id) ? 1 : 0) }
+        return selected == 0 ? items : "\(selected.formatted()) of \(items) selected"
     }
 
     // MARK: - Startup
 
+    /// Whether Photos access is given (full or limited). Without it the browser still works for added folders (#47).
+    var photosAllowed: Bool { authState == .authorized }
+
+    /// Whether the place showing is the "Photos library: no access" row.
+    var showingPhotosNoAccess: Bool { currentItem?.kind == .photosNoAccess }
+
+    /// Whether `start` has run this launch.
+    @ObservationIgnored private var started = false
+
+    /// Without Photos access, the first added folder is shown once its scan is in, rather than the no-access row.
+    private var showFirstFolderWhenScanned = false
+
+    /// The added folder the app moved to by itself at launch without Photos access, so that move isn't taken for you
+    /// choosing a place.
+    @ObservationIgnored private(set) var launchFolderID: String?
+
+    /// Whether the place the window opens on has settled: access asked, its first place loaded (or, without Photos
+    /// access, the first added folder shown), so focus can go to its first item (Kelly, 14 Oct).
+    var launchPlaceSettled: Bool { authState != .unknown && !isLoading && !showFirstFolderWhenScanned }
+
     func start() async {
+        // Once per launch. The window's task can run again while macOS's question is still showing (the window's
+        // content made again), and asking a second time stacked a second Photos question that never went away
+        // (Kelly, 14 Oct).
+        guard !started else {
+            DiagnosticLog.write("start", "Window started again; Photos was already asked")
+            return
+        }
         guard authState == .unknown else { return }
+        started = true
         DiagnosticLog.started(appleIntelligence: describeUnavailableReason ?? "available")
+        if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined {
+            DiagnosticLog.write("start", "Asking for Photos access")
+        }
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        try? FileManager.default.removeItem(at: PhotoExporter.temporaryRoot)
         guard status == .authorized || status == .limited else {
-            DiagnosticLog.write("start", "Photos access not given")
+            // The browser still opens: added folders, describing and Get Info for files don't need Photos (#47).
+            DiagnosticLog.write("start", "Photos access not given; \(folderRoots.count) added folders")
             authState = .denied
+            rebuildSidebar()
+            selectedSourceID = SidebarID.photosNoAccess
+            showFirstFolderWhenScanned = !folderRoots.isEmpty
+            refreshFolders()
             return
         }
         DiagnosticLog.write("start", "Photos access: \(status == .limited ? "limited" : "full"); \(folderRoots.count) added folders")
-        authState = .authorized
-        try? FileManager.default.removeItem(at: PhotoExporter.temporaryRoot)
+        await startPhotos(afterNoAccess: false)
+    }
 
+    /// Everything that reads the Photos library: its sections, the change observer, background describing of its
+    /// photos. At launch, or when access is given while the app is running (`afterNoAccess`).
+    private func startPhotos(afterNoAccess: Bool) async {
+        authState = .authorized
         let observer = LibraryObserver { [weak self] change in
             Task { @MainActor in self?.libraryDidChange(change.value) }
         }
         self.observer = observer
         PHPhotoLibrary.shared().register(observer)
 
-        rebuildSidebar()
-        selectedSourceID = SidebarID.allPhotos
-        refreshFolders()
+        if afterNoAccess {
+            // On the no-access row: to All Photos, said. In a folder: stay there, and say the library is there now.
+            if selectedSourceID == SidebarID.photosNoAccess {
+                loadAnnouncementPrefix = "Showing "
+            } else {
+                announce("Photos library added to the sidebar", queued: true)
+            }
+            rebuildSidebar()
+            if selectedSourceID == nil { selectedSourceID = SidebarID.allPhotos }
+        } else {
+            rebuildSidebar()
+            selectedSourceID = SidebarID.allPhotos
+            refreshFolders()
+        }
         // Watched for new photos only while describing them in the background is on: it's a whole-library fetch.
-        // The photos not described yet carry on from where the last run left off (#102).
+        // The photos not described yet carry on from where the last run left off (#102). The added folders' photos
+        // are already queued when access comes later.
         if describeInBackground {
             allPhotosFetch = PHAsset.fetchAssets(with: .image, options: nil)
-            describeLibraryBacklog(announce: false)
+            describeLibraryBacklog(announce: false, includeFolders: !afterNoAccess)
         }
         await refreshDateBuckets()
         rebuildSidebar()
         warmNameCache()
     }
 
+    /// Back from another app (System Settings, say): if Photos access was given meanwhile, the library joins the
+    /// sidebar without reopening the app.
+    private func recheckPhotosAccess() {
+        guard authState == .denied else { return }
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard status == .authorized || status == .limited else { return }
+        DiagnosticLog.write("start", "Photos access given while running: \(status == .limited ? "limited" : "full")")
+        // Set now, not in the task: a second return to the app before it runs mustn't start the library twice.
+        authState = .authorized
+        Task { await startPhotos(afterNoAccess: true) }
+    }
+
+    /// Opens System Settings at Privacy & Security, Photos.
+    func openPhotosPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     // MARK: - Sidebar
 
-    private static let hiddenSmartAlbums: Set<Int> = [
+    static let hiddenSmartAlbums: Set<Int> = [
         PHAssetCollectionSubtype.smartAlbumUserLibrary.rawValue,
         PHAssetCollectionSubtype.smartAlbumAllHidden.rawValue,
         1_000_000_201, // Recently Deleted
     ]
 
-    private static let smartAlbumOrder: [PHAssetCollectionSubtype] = [
+    static let smartAlbumOrder: [PHAssetCollectionSubtype] = [
         .smartAlbumFavorites, .smartAlbumRecentlyAdded, .smartAlbumVideos, .smartAlbumLivePhotos,
         .smartAlbumScreenshots, .smartAlbumSelfPortraits, .smartAlbumDepthEffect, .smartAlbumPanoramas,
         .smartAlbumBursts, .smartAlbumSlomoVideos, .smartAlbumTimelapses, .smartAlbumCinematic,
         .smartAlbumLongExposures, .smartAlbumAnimated, .smartAlbumRAW,
     ]
 
-    private static func symbol(for subtype: PHAssetCollectionSubtype) -> String {
+    static func symbol(for subtype: PHAssetCollectionSubtype) -> String {
         switch subtype {
         case .smartAlbumFavorites: "heart"
         case .smartAlbumRecentlyAdded: "clock"
@@ -543,6 +739,15 @@ final class LibraryModel {
     private func rebuildSidebar() -> Bool {
         let previousItem = currentItem
 
+        // Without Photos access, one row stands in for Photos' sections; nothing is fetched from Photos (#47).
+        guard photosAllowed else {
+            let row = SidebarItem(id: SidebarID.photosNoAccess, title: SidebarID.photosNoAccessTitle, kind: .photosNoAccess,
+                                  systemImage: "photo.badge.exclamationmark", count: 0, children: nil, parentID: nil,
+                                  containerKind: "Library")
+            photoSections = [SidebarSection(id: "library", title: "Photos", items: [row])]
+            return applySidebar(previousItem: previousItem)
+        }
+
         allPhotosCount = PHAsset.fetchAssets(with: nil).count
         var library = [SidebarItem(id: SidebarID.allPhotos, title: "All Photos", kind: .allPhotos,
                                    systemImage: "photo.on.rectangle", count: allPhotosCount,
@@ -561,19 +766,7 @@ final class LibraryModel {
         }
         library += ranked.sorted { ($0.rank, $0.item.title) < ($1.rank, $1.item.title) }.map(\.item)
 
-        var dates: [SidebarItem] = []
-        for year in dateBuckets.keys.sorted(by: >) {
-            let months = dateBuckets[year] ?? [:]
-            let yearID = "year:\(year)"
-            let children = months.keys.sorted(by: >).map { month in
-                SidebarItem(id: "month:\(year)-\(month)", title: Self.monthTitle(year: year, month: month),
-                            kind: .month(year: year, month: month), systemImage: "calendar",
-                            count: months[month] ?? 0, children: nil, parentID: yearID, containerKind: "Month")
-            }
-            dates.append(SidebarItem(id: yearID, title: String(year), kind: .year(year), systemImage: "folder",
-                                     count: months.values.reduce(0, +), children: children, parentID: nil,
-                                     containerKind: "Year"))
-        }
+        let dates = Self.dateItems(dateBuckets)
 
         let albums = collectionItems(PHCollectionList.fetchTopLevelUserCollections(with: nil), parentID: nil)
 
@@ -623,14 +816,14 @@ final class LibraryModel {
         if let id = selectedSourceID, index[id] == nil {
             // A subfolder whose last photo was deleted in Finder drops out: go to the nearest folder above it that's
             // still listed and say so ("Showing Pictures, 12 items"), rather than to All Photos without a word (#47).
-            if let path = previousItem?.directoryPath,
-               let parent = FolderRoots.nearestListed(above: path, roots: folderRoots,
-                                                      isListed: { index[FolderID.folder($0)] != nil }) {
+            // Without Photos access, to the first added folder still listed, or the no-access row.
+            let place = FolderRoots.fallbackPlace(previousPath: previousItem?.directoryPath, roots: folderRoots,
+                                                  photosAllowed: photosAllowed,
+                                                  isListed: { index[FolderID.folder($0)] != nil })
+            if previousItem?.isDirectory == true, place != SidebarID.allPhotos {
                 loadAnnouncementPrefix = loadAnnouncementPrefix ?? "Showing "
-                selectedSourceID = FolderID.folder(parent)
-            } else {
-                selectedSourceID = SidebarID.allPhotos
             }
+            selectedSourceID = place
         } else if let item = currentItem, item.children != nil || item.isDirectory, item != previousItem {
             // A folder's contents changed while it was showing.
             loadSelectedSource(keepSelection: true)
@@ -664,7 +857,24 @@ final class LibraryModel {
         return items
     }
 
-    private static func monthTitle(year: Int, month: Int) -> String {
+    /// The Dates section: years newest first, each holding its months newest first, from photo counts by year and
+    /// month.
+    nonisolated static func dateItems(_ buckets: [Int: [Int: Int]]) -> [SidebarItem] {
+        buckets.keys.sorted(by: >).map { year in
+            let months = buckets[year] ?? [:]
+            let yearID = "year:\(year)"
+            let children = months.keys.sorted(by: >).map { month in
+                SidebarItem(id: "month:\(year)-\(month)", title: monthTitle(year: year, month: month),
+                            kind: .month(year: year, month: month), systemImage: "calendar",
+                            count: months[month] ?? 0, children: nil, parentID: yearID, containerKind: "Month")
+            }
+            return SidebarItem(id: yearID, title: String(year), kind: .year(year), systemImage: "folder",
+                               count: months.values.reduce(0, +), children: children, parentID: nil,
+                               containerKind: "Year")
+        }
+    }
+
+    nonisolated static func monthTitle(year: Int, month: Int) -> String {
         guard let date = Calendar.current.date(from: DateComponents(year: year, month: month, day: 1)) else {
             return "\(month)/\(year)"
         }
@@ -726,7 +936,7 @@ final class LibraryModel {
                   let end = calendar.date(byAdding: .month, value: 1, to: start) else { return nil }
             options.predicate = NSPredicate(format: "creationDate >= %@ AND creationDate < %@", start as NSDate, end as NSDate)
             return PHAsset.fetchAssets(with: options)
-        case .collectionList, .year, .directory:
+        case .collectionList, .year, .directory, .photosNoAccess:
             return nil
         }
     }
@@ -734,6 +944,7 @@ final class LibraryModel {
     private func loadSelectedSource(keepSelection: Bool) {
         loadGeneration += 1
         let generation = loadGeneration
+        if !keepSelection { placeLookup.clear() }
         nameFillTask?.cancel()
         nameProgress = nil
         let previousSelection = keepSelection ? selection : []
@@ -760,11 +971,21 @@ final class LibraryModel {
         filesByID = [:]
         watchFolder(nil)
 
+        // The no-access row lists nothing; the browser shows how to give access instead (#47).
+        if item.kind == .photosNoAccess {
+            currentFetch = nil
+            assetsByID = [:]
+            rows = []
+            isLoading = false
+            finishLoad(previousSelection: [], item: item, slow: false)
+            return
+        }
+
         if let children = item.children {
             currentFetch = nil
             assetsByID = [:]
             isLoading = false
-            rows = children.map { FileRow(container: $0) }.sorted(using: sortOrder)
+            rows = ColumnOrder.sorted(children.map { FileRow(container: $0) }, by: sortOrder)
             finishLoad(previousSelection: previousSelection, item: item, slow: false)
             if viewMode == .gallery { ensureGallerySelection() }
             return
@@ -789,7 +1010,7 @@ final class LibraryModel {
             guard generation == self.loadGeneration else { return }
             Self.log.info("Loaded \(built.value.rows.count) items for \(item.title, privacy: .public) in \(Date().timeIntervalSince(started), format: .fixed(precision: 2))s; \(built.value.needingDetails.count) need details")
             self.assetsByID = built.value.assets
-            self.rows = built.value.rows.sorted(using: self.sortOrder)
+            self.rows = ColumnOrder.sorted(self.withPlaceNames(built.value.rows), by: self.sortOrder)
             self.isLoading = false
             self.finishLoad(previousSelection: previousSelection, item: item,
                             slow: Date().timeIntervalSince(started) > 1)
@@ -826,7 +1047,7 @@ final class LibraryModel {
             Self.log.info("Read details for \(assets.count) items in \(Date().timeIntervalSince(began), format: .fixed(precision: 2))s")
             let detailColumns: [PartialKeyPath<FileRow>] = [\FileRow.name, \FileRow.caption, \FileRow.keywords, \FileRow.fileType]
             if let key = self.sortOrder.first?.keyPath, detailColumns.contains(key) {
-                self.rows.sort(using: self.sortOrder)
+                self.rows = ColumnOrder.sorted(self.rows, by: self.sortOrder)
             }
             names.save()
         }
@@ -844,7 +1065,9 @@ final class LibraryModel {
             announceNextLoad = false
             let prefix = loadAnnouncementPrefix ?? ""
             loadAnnouncementPrefix = nil
-            announce("\(prefix)\(item.title), \(rows.count == 1 ? "1 item" : "\(rows.count.formatted()) items")")
+            // The no-access row has no items to count: just its name ("Showing Photos library: no access").
+            announce(item.kind == .photosNoAccess ? "\(prefix)\(item.title)"
+                     : "\(prefix)\(item.title), \(rows.count == 1 ? "1 item" : "\(rows.count.formatted()) items")")
         }
     }
 
@@ -861,7 +1084,7 @@ final class LibraryModel {
         isLoading = true
         if !keepSelection {
             filesByID = [:]
-            rows = containers.sorted(using: sortOrder)
+            rows = ColumnOrder.sorted(containers, by: sortOrder)
         }
         let started = Date()
         Task {
@@ -869,7 +1092,7 @@ final class LibraryModel {
             guard generation == self.loadGeneration else { return }
             self.filesByID = Dictionary(files.map { (FolderID.file($0.path), $0) }, uniquingKeysWith: { first, _ in first })
             let fileRows = files.map { FileRow(file: $0, metadata: self.fileMetadata[$0.descriptionKey]) }
-            self.rows = (containers + fileRows).sorted(using: self.sortOrder)
+            self.rows = ColumnOrder.sorted(self.withPlaceNames(containers + fileRows), by: self.sortOrder)
             self.isLoading = false
             self.finishLoad(previousSelection: previousSelection, item: item, slow: Date().timeIntervalSince(started) > 1)
             if self.viewMode == .gallery { self.ensureGallerySelection() }
@@ -885,6 +1108,7 @@ final class LibraryModel {
         nameFillTask?.cancel()
         nameProgress = nil
         guard !files.isEmpty else { return }
+        let isOnThisMac = self.isOnThisMac
         nameFillTask = Task {
             var start = 0
             while start < files.count {
@@ -892,7 +1116,10 @@ final class LibraryModel {
                 let batch = Array(files[start..<end])
                 let found = await Task.detached(priority: .userInitiated) { () -> [(MediaFile, FileMetadata)] in
                     var found: [(MediaFile, FileMetadata)] = []
-                    for file in batch {
+                    // A file only in the cloud (iCloud Drive, OneDrive and the like) isn't read: that would download
+                    // it (#197). Its row keeps what the file system says (name, size, dates), as Windows does for
+                    // OneDrive's online-only files, and it's read once it's on this Mac and the folder is shown again.
+                    for file in batch where isOnThisMac(file.url) {
                         found.append((file, file.isVideo ? await FileMetadata.readVideo(file.url) : FileMetadata.read(file.url)))
                     }
                     return found
@@ -908,7 +1135,7 @@ final class LibraryModel {
                 start = end
             }
             self.nameProgress = nil
-            self.rows.sort(using: self.sortOrder)
+            self.rows = ColumnOrder.sorted(self.rows, by: self.sortOrder)
         }
     }
 
@@ -962,12 +1189,26 @@ final class LibraryModel {
                 if !newPhotos.isEmpty { describeFilesLater(newPhotos, first: true, announce: text) }
                 if !backlog.isEmpty { describeFilesLater(backlog, first: false, announce: nil) }
             }
-            guard !fresh.isEmpty else { return }
+            guard !fresh.isEmpty else {
+                // Every folder removed: the no-access row it is. (Scans replaced by a newer one leave it to that one.)
+                if results.allSatisfy({ !$0.0.isCancelled }) { showFirstFolderWhenScanned = false }
+                return
+            }
             // In the order they were added; folders removed meanwhile drop out.
             let old = Dictionary(folderNodes.map { ($0.path.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
             folderNodes = folderRoots.compactMap { fresh[$0.lowercased()] ?? old[$0.lowercased()] }
             // Only the Folders section: Photos' album counts are left alone (#47).
             let reloaded = rebuildFolderSection()
+            // Without Photos access, the first added folder rather than the no-access row, once it's listed (#47).
+            if showFirstFolderWhenScanned {
+                showFirstFolderWhenScanned = false
+                if selectedSourceID == SidebarID.photosNoAccess,
+                   let root = folderRoots.first(where: { itemsByID[FolderID.folder($0)] != nil }) {
+                    launchFolderID = FolderID.folder(root)
+                    selectedSourceID = FolderID.folder(root)
+                    return
+                }
+            }
             if reloadCurrent, !reloaded, currentItem?.isDirectory == true {
                 loadSelectedSource(keepSelection: true)
             }
@@ -1040,7 +1281,7 @@ final class LibraryModel {
             }
         }
         folderRoots = roots
-        FolderRoots.save(roots)
+        FolderRoots.save(roots, to: defaults)
         refreshFolders()
         if added.isEmpty {
             announce(already.count == 1 ? "\(already[0]) is already in the library" : "Those folders are already in the library")
@@ -1070,14 +1311,16 @@ final class LibraryModel {
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         folderRoots = FolderRoots.removing(root, from: folderRoots)
-        FolderRoots.save(folderRoots)
+        FolderRoots.save(folderRoots, to: defaults)
         folderNodes.removeAll { FolderRoots.same($0.path, root) }
         folderMediaPaths[root.lowercased()] = nil
         justAddedFolders.remove(root.lowercased())
         // You're always in the folder being removed: go to All Photos first, so its place going away isn't announced
-        // as if it happened by itself. Said as on Windows: "Removed Pictures from Photo Finder. Showing All Photos, 12 items".
+        // as if it happened by itself. Said as on Windows: "Removed Pictures from My Photo Library Described. Showing All Photos, 12 items".
+        // Without Photos access, to the next added folder, or the no-access row (#47).
         loadAnnouncementPrefix = "Removed \(name) from \(AppInfo.name). Showing "
-        selectedSourceID = SidebarID.allPhotos
+        selectedSourceID = FolderRoots.fallbackPlace(previousPath: nil, roots: folderRoots, photosAllowed: photosAllowed,
+                                                     isListed: { self.itemsByID[FolderID.folder($0)] != nil })
         rebuildSidebar()
         refreshFolders()
     }
@@ -1172,7 +1415,7 @@ final class LibraryModel {
     }
 
     func open(_ ids: Set<String>? = nil) {
-        let ids = ids ?? selection
+        let ids = showing(ids)
         let chosen = rows.filter { ids.contains($0.id) }
         if let container = chosen.first(where: \.isContainer), chosen.allSatisfy(\.isContainer) {
             navigate(to: container.id)
@@ -1208,13 +1451,13 @@ final class LibraryModel {
             previewURL = nil
             return
         }
-        let files = Array(files(for: ids ?? selection).prefix(200))
+        let files = Array(files(for: showing(ids)).prefix(200))
         if !files.isEmpty {
             previewURLs = files.map(\.url)
             previewURL = previewURLs.first
             return
         }
-        let assets = Array(assets(for: ids ?? selection).prefix(200))
+        let assets = Array(assets(for: showing(ids)).prefix(200))
         guard !assets.isEmpty else { NSSound.beep(); return }
         perform("Preparing preview…") {
             let urls = try await self.exportTemporary(assets)
@@ -1224,8 +1467,8 @@ final class LibraryModel {
     }
 
     func exportSelection(_ ids: Set<String>? = nil) {
-        let assets = assets(for: ids ?? selection)
-        let files = files(for: ids ?? selection)
+        let assets = assets(for: showing(ids))
+        let files = files(for: showing(ids))
         let count = assets.count + files.count
         guard count > 0 else { NSSound.beep(); return }
         let panel = NSOpenPanel()
@@ -1254,14 +1497,14 @@ final class LibraryModel {
     }
 
     func copySelection(_ ids: Set<String>? = nil) {
-        let files = files(for: ids ?? selection)
+        let files = files(for: showing(ids))
         if !files.isEmpty {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.writeObjects(files.map { $0.url as NSURL })
             announce(files.count == 1 ? "Copied \(files[0].name)" : "Copied \(files.count) items")
             return
         }
-        let assets = assets(for: ids ?? selection)
+        let assets = assets(for: showing(ids))
         guard !assets.isEmpty else { NSSound.beep(); return }
         perform("Copying…") {
             let urls = try await self.exportTemporary(assets)
@@ -1272,12 +1515,50 @@ final class LibraryModel {
         }
     }
 
+    /// Where Copy Description puts its text; tests use their own, so the person's clipboard is never touched.
+    @ObservationIgnored var pasteboard: NSPasteboard = .general
+
+    /// Edit > Copy Description (Shift-Command-C, Kelly 13 Oct): the saved description of the photo you're on, or of
+    /// each photo selected, as text. Copy itself copies the photos.
+    func copyDescription(_ ids: Set<String>? = nil) {
+        let picked = visibleRows.filter { showing(ids).contains($0.id) }
+        guard !picked.isEmpty else {
+            announce("Select a photo to copy its description")
+            return
+        }
+        let chosen = picked.filter { !$0.isContainer && isDescribable($0.id) }
+        guard !chosen.isEmpty else {
+            announce("Videos and folders aren't described")
+            return
+        }
+        // What the Description panel's box shows, when you've changed it and not yet pressed Return.
+        func text(_ row: FileRow) -> String? {
+            if let draft = panelDraft, draft.id == row.id { return draft.text }
+            return savedDescription(for: row.id)
+        }
+        let described = chosen.compactMap { row in text(row).map { (row.name, $0) } }
+        guard !described.isEmpty else {
+            announce(chosen.count == 1 ? "\(chosen[0].name) hasn't been described yet" : "None of these photos has been described yet")
+            return
+        }
+        let copied = chosen.count == 1 ? described[0].1 : described.map { "\($0.0)\n\($0.1)" }.joined(separator: "\n\n")
+        pasteboard.clearContents()
+        pasteboard.setString(copied, forType: .string)
+        let missing = chosen.count - described.count
+        var said = described.count == 1 ? "Copied the description" : "Copied \(described.count) descriptions"
+        if missing > 0 { said += missing == 1 ? ". 1 photo hasn't been described yet" : ". \(missing) photos haven't been described yet" }
+        announce(said)
+    }
+
+    /// The Description panel's correction not yet saved, so Copy Description copies what the box shows.
+    @ObservationIgnored var panelDraft: (id: String, text: String)?
+
     func toggleFavorite(_ ids: Set<String>? = nil) {
         guard changesAllowed() else { return }
-        let assets = assets(for: ids ?? selection)
+        let assets = assets(for: showing(ids))
         guard !assets.isEmpty else {
             // Windows makes a file a favorite by rating it five stars; writing file metadata on the Mac is to come.
-            if !files(for: ids ?? selection).isEmpty { announce("Favorites aren't available for files yet") } else { NSSound.beep() }
+            if !files(for: showing(ids)).isEmpty { announce("Favorites aren't available for files yet") } else { NSSound.beep() }
             return
         }
         let makeFavorite = !assets.allSatisfy(\.isFavorite)
@@ -1300,7 +1581,7 @@ final class LibraryModel {
             errorMessage = "Rating photos requires macOS 27 or later."
             return
         }
-        let ids = ids ?? selection
+        let ids = showing(ids)
         let assets = assets(for: ids)
         guard !assets.isEmpty else {
             if !files(for: ids).isEmpty { announce("Ratings aren't available for files yet") } else { NSSound.beep() }
@@ -1325,7 +1606,7 @@ final class LibraryModel {
     }
 
     func showInfo(_ ids: Set<String>? = nil) {
-        let ids = ids ?? selection
+        let ids = showing(ids)
         guard let row = rows.first(where: { ids.contains($0.id) && !$0.isContainer }) else {
             NSSound.beep()
             return
@@ -1373,7 +1654,7 @@ final class LibraryModel {
 
     func editCaption(_ ids: Set<String>? = nil) {
         guard changesAllowed() else { return }
-        let ids = ids ?? selection
+        let ids = showing(ids)
         // Files in an added folder have their caption written into the file (#31).
         let files = files(for: ids)
         if !files.isEmpty {
@@ -1413,15 +1694,20 @@ final class LibraryModel {
             return
         }
         let ids = photos.map { FolderID.file($0.path) }
-        guard photos.count == 1 else {
-            captionTarget = CaptionTarget(assetIDs: ids, initialText: "", inFiles: true)
-            return
-        }
-        // The caption as the file has it now, not the list's copy: that's empty until the file's details are read,
-        // and saving an empty field would remove the real caption.
-        let url = photos[0].url
         Task {
-            let caption = await Task.detached(priority: .userInitiated) { FileMetadata.read(url).caption }.value
+            // Files only in the cloud (iCloud Drive, OneDrive and the like) are downloaded to read or change them:
+            // asked first (#197).
+            guard await mayDownload(photos, for: "Edit Caption") else { return }
+            guard photos.count == 1 else {
+                guard captionTarget == nil else { return }
+                captionTarget = CaptionTarget(assetIDs: ids, initialText: "", inFiles: true)
+                return
+            }
+            // The caption as the file has it now, not the list's copy: that's empty until the file's details are
+            // read, and saving an empty field would remove the real caption.
+            let url = photos[0].url
+            let read = self.readMetadata
+            let caption = await Task.detached(priority: .userInitiated) { read(url).caption }.value
             // Pressed twice: the sheet from the first press is already up, with whatever's been typed in it.
             guard captionTarget == nil else { return }
             captionTarget = CaptionTarget(assetIDs: ids, initialText: caption, inFiles: true)
@@ -1461,7 +1747,7 @@ final class LibraryModel {
     // MARK: - Descriptions as captions (#30)
 
     /// Photo > Save Descriptions in Photos: off until the person agrees once (Kelly, 12 Oct).
-    private(set) var saveInPhotos: Bool = CaptionPolicy.isOn(in: .standard)
+    private(set) var saveInPhotos: Bool
     var captionPolicy: CaptionPolicy { saveInPhotos ? .whenEmpty : .never }
 
     /// Save Descriptions in Photos, as the Photo menu and Settings show it: paused, and unchecked, while read-only.
@@ -1496,14 +1782,14 @@ final class LibraryModel {
             }
         }
         saveInPhotos = on
-        UserDefaults.standard.set(on, forKey: CaptionPolicy.key)
+        defaults.set(on, forKey: CaptionPolicy.key)
         announce(on ? "New descriptions are saved in your photos" : "Descriptions aren't saved in your photos")
     }
 
     // MARK: - Place names (#105)
 
     /// Settings > Look Up Place Names: off until the person agrees once, since it sends coordinates to Apple.
-    private(set) var lookUpPlaceNames: Bool = PlaceNames.isOn(in: .standard)
+    private(set) var lookUpPlaceNames: Bool
 
     /// Changed when a question behind a Settings checkbox is cancelled, so the checkbox is made again and shows off.
     private(set) var switchesRedraw = 0
@@ -1522,15 +1808,16 @@ final class LibraryModel {
             }
         }
         lookUpPlaceNames = on
-        UserDefaults.standard.set(on, forKey: PlaceNames.key)
-        announce(on ? "Get Info looks up place names" : "Place names aren't looked up")
+        defaults.set(on, forKey: PlaceNames.key)
+        placeNamesShownChanged()
+        announce(on ? "Place names are looked up for Get Info and Place Taken" : "Place names aren't looked up")
     }
 
     /// Photo > Use Description as Caption: each selected photo's saved description becomes its caption. Asks before
     /// replacing captions people wrote.
     func useDescriptionAsCaption(_ ids: Set<String>? = nil) {
         guard changesAllowed() else { return }
-        let ids = ids ?? selection
+        let ids = showing(ids)
         let files = files(for: ids)
         if !files.isEmpty {
             guard assets(for: ids).isEmpty else { announceMixedSelection(); return }
@@ -1624,13 +1911,19 @@ final class LibraryModel {
         }
         let notDescribed = photos.count - described.count
         Task {
+            // Files only in the cloud (iCloud Drive, OneDrive and the like) are downloaded to read or change them:
+            // asked first (#197).
+            guard await mayDownload(described.map(\.0), for: "Use Description as Caption") else { return }
             // The captions as the files have them now, not the list's copy, which is empty until their details are
             // read. Files that can't hold a caption are skipped, so they aren't asked about.
-            let urls = described.map(\.0.url)
-            let existing = await Task.detached(priority: .userInitiated) { urls.map { FileMetadata.read($0) } }.value
+            // Only those that can hold the fields are read: reading a GIF or RAW file only in the cloud would download
+            // it, without the question above, for nothing.
+            let urls = described.map { Self.holdsFields($0.0) ? $0.0.url : nil }
+            let read = self.readMetadata
+            let existing = await Task.detached(priority: .userInitiated) { urls.map { $0.map(read) ?? FileMetadata() } }.value
             let replacing = zip(described, existing).flatMap { pair, metadata -> [(name: String, field: String, current: String)] in
                 let (file, text) = pair
-                guard FileMetadataWriter.canWrite(name: file.name) else { return [] }
+                guard Self.holdsFields(file) else { return [] }
                 return FileFields.replaced(caption: metadata.caption, altText: metadata.altText,
                                            extendedDescription: metadata.extendedDescription, with: text)
                     .map { (file.name, $0.field, $0.current) }
@@ -1645,6 +1938,43 @@ final class LibraryModel {
 
     // MARK: - Writing into files (#31)
 
+    /// Whether a file's format can hold a caption and alt text. Those that can't are skipped when writing, never read.
+    static func holdsFields(_ file: MediaFile) -> Bool {
+        !file.isVideo && FileMetadataWriter.canWrite(name: file.name) && !MediaFiles.isRaw(file.name)
+    }
+
+    /// Before writing into files, asks when any of them is only in the cloud (iCloud Drive, or another cloud folder
+    /// such as OneDrive or Dropbox), since each would be downloaded to change it, as Windows asks about OneDrive's
+    /// online-only files (#197). Files whose format can't hold the fields aren't counted: they're skipped, not read.
+    /// True to go on.
+    private func mayDownload(_ files: [MediaFile], for action: String) async -> Bool {
+        let writable = files.filter(Self.holdsFields)
+        guard !writable.isEmpty else { return true }
+        let isOnThisMac = self.isOnThisMac
+        let urls = writable.map(\.url)
+        let away = await Task.detached(priority: .userInitiated) { urls.filter { !isOnThisMac($0) }.count }.value
+        guard let question = FileAvailability.writeQuestion(action: action, files: writable.count, onlyInCloud: away)
+        else { return true }
+        return confirmDownload(action, question)
+    }
+
+    /// The question before downloading files from the cloud to write into them. Cancel is the default, as on
+    /// Windows and in the Read-Only Mode question: Return alone never downloads, and Escape cancels too.
+    static func askToDownload(_ action: String, _ question: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = question
+        alert.window.title = action
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Continue")
+        let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 53 else { return event }
+            NSApp.stopModal(withCode: .alertFirstButtonReturn)
+            return nil
+        }
+        defer { if let escape { NSEvent.removeMonitor(escape) } }
+        return alert.runModal() == .alertSecondButtonReturn
+    }
+
     /// Writes into files in an added folder with the status bar showing `label`, then says what happened: `done` with
     /// how many were written, the files skipped because their format can't hold the fields, and the photos not yet
     /// described. Files that couldn't be changed are shown in an error.
@@ -1655,7 +1985,8 @@ final class LibraryModel {
             let outcome = await writeFiles(items)
             activity = nil
             let text = FileWriteSummary.text(done: outcome.written.isEmpty ? nil : done(outcome.written.count),
-                                             skipped: outcome.skipped, notDescribed: notDescribed)
+                                             skipped: outcome.skipped, secondPicture: outcome.secondPicture,
+                                             notDescribed: notDescribed)
             if !text.isEmpty { announce(text) }
             if let failure = outcome.failed.first {
                 errorMessage = outcome.failed.count == 1 ? "\(failure.name) couldn't be saved. \(failure.reason)"
@@ -1668,6 +1999,8 @@ final class LibraryModel {
     private struct FileWriteOutcome {
         var written: [MediaFile] = []
         var skipped: [(name: String, format: String)] = []
+        /// Photos holding a second picture (an HDR map) whose index couldn't be kept right (#90).
+        var secondPicture: [String] = []
         var failed: [(name: String, reason: String)] = []
     }
 
@@ -1704,7 +2037,7 @@ final class LibraryModel {
             case .failure(FileMetadataWriteError.unsupportedFormat(let format)):
                 outcome.skipped.append((file.name, format))
             case .failure(FileMetadataWriteError.multiPicture):
-                outcome.skipped.append((file.name, "Multi-picture JPEG"))
+                outcome.secondPicture.append(file.name)
             case .failure(let error):
                 Self.log.error("Couldn't write into \(file.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 DiagnosticLog.write("save", "Couldn't write into \(file.name): \(Self.describe(error))")
@@ -1714,7 +2047,7 @@ final class LibraryModel {
         return outcome
     }
 
-    /// A file Photo Finder just wrote into: its description moves to the file's new key, and its row shows the new
+    /// A file My Photo Library Described just wrote into: its description moves to the file's new key, and its row shows the new
     /// caption and alt text. The folder watcher lists the folder again shortly after, and finds all this in place.
     private func fileWritten(_ old: MediaFile, now: MediaFile, metadata: FileMetadata) {
         fileMetadata[now.descriptionKey] = metadata
@@ -1757,7 +2090,7 @@ final class LibraryModel {
             captionFileFromNewDescription(text, key: key, policy: policy)
             return
         }
-        guard canEditCaptions else { return }
+        guard canEditCaptions, photosAllowed else { return }
         let names = self.names
         Task.detached(priority: .utility) {
             // The caption as Photos has it now: never the list's copy, which is empty until its details load, so
@@ -1778,10 +2111,15 @@ final class LibraryModel {
               FileMetadataWriter.canWrite(name: file.name) else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let url = file.url
+        let isOnThisMac = self.isOnThisMac
         Task {
+            // Only in the cloud: left as it is, since changing it would download it, and this doesn't ask (#197).
+            // Windows leaves OneDrive's online-only files the same way.
+            guard await Task.detached(priority: .utility, operation: { isOnThisMac(url) }).value else { return }
             // The caption and alt text as the file has them now, never the list's copy, which is empty until its
             // details are read.
-            let existing = await Task.detached(priority: .utility) { FileMetadata.read(url) }.value
+            let read = self.readMetadata
+            let existing = await Task.detached(priority: .utility) { read(url) }.value
             var changes = FileMetadataChanges()
             if policy.shouldWrite(trimmed, over: existing.caption) { changes.caption = trimmed }
             // Only empty alt text is filled; what another app wrote is left alone, as a caption is.
@@ -1821,7 +2159,8 @@ final class LibraryModel {
     func setDescribeInBackground(_ on: Bool) {
         describeInBackground = on
         backgroundProblem = nil
-        allPhotosFetch = on ? PHAsset.fetchAssets(with: .image, options: nil) : nil
+        // Photos' own photos only with access to them; added folders either way (#47).
+        allPhotosFetch = on && photosAllowed ? PHAsset.fetchAssets(with: .image, options: nil) : nil
         guard on else {
             let left = stopBackgroundDescribing(announce: false)
             announce(left > 0 ? "Background describing off. Stopped with \(left == 1 ? "1 photo" : "\(left) photos") not described."
@@ -1837,14 +2176,17 @@ final class LibraryModel {
         describeLibraryBacklog(announce: true)
     }
 
-    /// Queues every photo not described yet: the Photos library's newest first, then the added folders' photos.
-    private func describeLibraryBacklog(announce: Bool) {
+    /// Queues every photo not described yet: the Photos library's newest first (with access to it), then the added
+    /// folders' photos (unless `includeFolders` is false: they're queued already).
+    private func describeLibraryBacklog(announce: Bool, includeFolders: Bool = true) {
         guard backgroundUnavailableReason == nil else { return }
-        let folderPaths = folderMediaPaths.keys.sorted().flatMap { folderMediaPaths[$0].map { Array($0).sorted() } ?? [] }
-        folderBacklogQueued.formUnion(folderMediaPaths.keys)
+        let folderPaths = includeFolders
+            ? folderMediaPaths.keys.sorted().flatMap { folderMediaPaths[$0].map { Array($0).sorted() } ?? [] } : []
+        if includeFolders { folderBacklogQueued.formUnion(folderMediaPaths.keys) }
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        let fetch = PHAsset.fetchAssets(with: .image, options: options)
+        // Nothing is asked of Photos without access to it (#47).
+        let fetch = photosAllowed ? PHAsset.fetchAssets(with: .image, options: options) : nil
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         guard #available(macOS 27, *) else { return }
         let describer = makeBackgroundDescriber()
@@ -1853,7 +2195,7 @@ final class LibraryModel {
         Task {
             // In batches, so a big library doesn't hold up the window.
             var index = 0
-            while index < fetch.count, describeInBackground, describer.generation == generation {
+            while let fetch, index < fetch.count, describeInBackground, describer.generation == generation {
                 let end = min(index + 500, fetch.count)
                 describer.enqueue(fetch.objects(at: IndexSet(integersIn: index..<end)), sayFinish: announce,
                                   since: generation)
@@ -1914,7 +2256,7 @@ final class LibraryModel {
     @available(macOS 27, *)
     private func makeBackgroundDescriber() -> BackgroundDescriber {
         if let describer = backgroundDescriber as? BackgroundDescriber { return describer }
-        let describer = BackgroundDescriber(cache: descriptions) { [weak self] text in
+        let describer = BackgroundDescriber(cache: descriptions, failures: BackgroundFailures(beside: descriptions)) { [weak self] text in
             self?.backgroundProgress = text
             if text != nil { self?.backgroundProblem = nil }
         }
@@ -2047,39 +2389,114 @@ final class LibraryModel {
         announce("Description saved")
     }
 
-    /// The Description panel's Copy.
-    func copyDescription(for id: String) {
-        guard let text = savedDescription(for: id) else { NSSound.beep(); return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        announce("Description copied")
-    }
-
     /// Whether rows need their descriptions: the Description column is showing, or the list is sorted by it (Sort By
     /// lists every column).
     private var showsDescriptionColumn: Bool { columnOrder.contains("description") || sortColumnID == "description" }
 
     /// Copies saved descriptions into the rows for the Description column, and re-sorts if that's the sort.
     private func fillDescriptions() {
-        fillingDescriptions = true
-        defer { fillingDescriptions = false }
+        fillingRows = true
+        defer { fillingRows = false }
         var filled = rows.map { row in row.withDescription(descriptionKey(for: row.id).flatMap(descriptions.description(forKey:)) ?? "") }
-        if sortColumnID == "description" { filled.sort(using: sortOrder) }
+        if sortColumnID == "description" { filled = ColumnOrder.sorted(filled, by: sortOrder) }
         if filled.map(\.descriptionText) != rows.map(\.descriptionText) { rows = filled }
+    }
+
+    // MARK: - Place Taken names (#172)
+
+    /// Whether rows show place names: Look Up Place Names is on, and Place Taken is a list column, a gallery label or
+    /// the list's sort, so the sort and what's read agree with what's shown.
+    private var showsPlaceNames: Bool {
+        lookUpPlaceNames
+            && (columnOrder.contains("location") || galleryLabels.contains(.location) || sortColumnID == "location")
+    }
+
+    /// Whether names are looked up for the photos showing: Look Up Place Names is on, and Place Taken is a column in
+    /// the list or a label in the gallery, whichever is showing.
+    var placeNamesShowing: Bool {
+        lookUpPlaceNames && (viewMode == .list ? columnOrder.contains("location") : galleryLabels.contains(.location))
+    }
+
+    /// Copies known place names into the rows in place, or clears them when they aren't shown. Never re-sorts: rows
+    /// mustn't move under the VoiceOver cursor as names arrive. Sorting, loading a folder and Refresh sort by them.
+    private func fillPlaceNames() {
+        guard showsPlaceNames || rowsHavePlaceNames else { return }
+        let filled = withPlaceNames(rows)
+        rowsHavePlaceNames = showsPlaceNames
+        guard filled != rows else { return }
+        fillingRows = true
+        defer { fillingRows = false }
+        rows = filled
+    }
+
+    /// Rows with the names known for them while they're shown, and none otherwise.
+    private func withPlaceNames(_ rows: [FileRow]) -> [FileRow] {
+        let shows = showsPlaceNames
+        let known = shows ? placeNames.snapshot() : [:]
+        guard !known.isEmpty || rows.contains(where: { !$0.placeName.isEmpty }) else { return rows }
+        return rows.map { row in
+            let name = row.placeKey.flatMap { known[$0] } ?? ""
+            return row.placeName == name ? row : row.withPlaceName(name)
+        }
+    }
+
+    /// One spot's name was found: the rows taken there show it, where they are.
+    private func fillPlaceName(for key: PlaceKey) {
+        guard showsPlaceNames, let name = placeNames.name(for: key), !name.isEmpty else { return }
+        var filled = rows
+        var changed = false
+        for index in filled.indices where filled[index].placeKey == key && filled[index].placeName != name {
+            filled[index] = filled[index].withPlaceName(name)
+            changed = true
+        }
+        guard changed else { return }
+        rowsHavePlaceNames = true
+        fillingRows = true
+        defer { fillingRows = false }
+        rows = filled
+    }
+
+    /// Place Taken was shown or hidden, or Look Up Place Names or the view changed: names are filled or cleared, and
+    /// what was waiting to be looked up starts again with the photo you're on.
+    private func placeNamesShownChanged() {
+        placeLookup.clear()
+        fillPlaceNames()
+        wantCurrentPlaceName()
+    }
+
+    /// The photo you're on goes ahead of the rest.
+    /// The photo you're on goes ahead of the rest, in place of the one you left, so photos passed in the gallery
+    /// aren't sent later.
+    private func wantCurrentPlaceName() {
+        guard placeNamesShowing else { return placeLookup.want(nil, first: true) }
+        let row = selection.count == 1 ? selection.first.flatMap { id in rows.first { $0.id == id } } : nil
+        placeLookup.want(row?.placeKey, first: true)
+    }
+
+    /// A row's Place Taken cell came into view, or Look Up Place Names was turned on while it was: its name is looked
+    /// up in turn.
+    func placeCellAppeared(_ row: FileRow) {
+        guard placeNamesShowing else { return }
+        placeLookup.want(row.placeKey)
+    }
+
+    /// A row's Place Taken cell scrolled away: its name isn't wanted now, unless it's the photo you're on.
+    func placeCellDisappeared(_ row: FileRow) {
+        guard !selection.contains(row.id) else { return }
+        placeLookup.unwant(row.placeKey)
     }
 
     // MARK: - Help
 
     /// A newer Mac release, found by the quiet check at launch or by Check for Updates.
     /// Remembered across restarts until it's installed (#104), so Help keeps saying "Update to X available…".
-    private(set) var availableUpdate: Updates.Release? = Updates.remembered(running: AppInfo.shortVersion,
-                                                                             in: .standard) {
-        didSet { Updates.remember(availableUpdate, in: .standard) }
+    private(set) var availableUpdate: Updates.Release? {
+        didSet { Updates.remember(availableUpdate, in: defaults) }
     }
 
     /// Once a day at most, a moment after launch: is there a newer release? Says nothing; the Help menu item changes.
     func checkForUpdatesQuietly() {
-        let defaults = UserDefaults.standard
+        let defaults = self.defaults
         if let last = defaults.object(forKey: "lastUpdateCheck") as? Date, Date().timeIntervalSince(last) < 86_400 { return }
         Task {
             try? await Task.sleep(for: .seconds(5))
@@ -2093,7 +2510,7 @@ final class LibraryModel {
     /// The first launch after an update: says so, with See What's New, as the apps' shared update experience asks
     /// (The-Idea-Place-Projects#12). Not on a first run or after going back to an older version.
     func sayIfJustUpdated() {
-        let defaults = UserDefaults.standard
+        let defaults = self.defaults
         let current = AppInfo.shortVersion
         let last = defaults.string(forKey: "lastRunVersion")
         defaults.set(current, forKey: "lastRunVersion")
@@ -2111,6 +2528,8 @@ final class LibraryModel {
         }
         defer { if let escape { NSEvent.removeMonitor(escape) } }
         if alert.runModal() == .alertSecondButtonReturn { NSWorkspace.shared.open(AppInfo.releaseNotesURL(current)) }
+        // The photo you're on, unspoken while the note was up, is described now.
+        autoDescriber.refocused(currentID: autoDescribeCandidate)
     }
 
     /// Help > Check for Updates…: says whether there's a newer version, and opens its download page if you want it.
@@ -2127,7 +2546,7 @@ final class LibraryModel {
                     errorMessage = "Couldn't check for updates. Check your internet connection and try again."
                 }
             case .some(.none):
-                UserDefaults.standard.set(Date(), forKey: "lastUpdateCheck")
+                defaults.set(Date(), forKey: "lastUpdateCheck")
                 availableUpdate = nil
                 let alert = NSAlert()
                 alert.messageText = "\(AppInfo.name) is up to date"
@@ -2143,7 +2562,7 @@ final class LibraryModel {
     private func offer(_ release: Updates.Release) {
         let alert = NSAlert()
         alert.messageText = "Version \(release.version) of \(AppInfo.name) is available"
-        alert.informativeText = "You have version \(AppInfo.shortVersion). The download page opens in your browser: open the disk image and drag \(AppInfo.name) to Applications, replacing the old one. Your descriptions and settings are kept."
+        alert.informativeText = "You have version \(AppInfo.shortVersion). The download page opens in your browser: open the disk image and move \(AppInfo.name) to your Applications folder, replacing the old one. Your descriptions and settings are kept."
         alert.addButton(withTitle: "Download")
         alert.addButton(withTitle: "Not Now")
         if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(release.page) }
@@ -2250,7 +2669,7 @@ final class LibraryModel {
             }
             let start = ContinuousClock.now
             do {
-                let text = try await PhotoDescriber.describe(data)
+                let text = try await PhotoDescriber.describe(data, prompt: DescriptionPrompt.current)
                 guard !Task.isCancelled else { return nil }
                 guard let text else {
                     return result(nil, took: PhotoDescriber.seconds(since: start), code: "decode_failed",
@@ -2281,28 +2700,70 @@ final class LibraryModel {
         }
     }
 
-    /// Help > Report a Bug…: a new GitHub issue with the system check filled in, and the same text on the clipboard
-    /// in case the page doesn't take it all. The app kit's relay replaces this once it's set up for the app (#33).
-    /// From Check AI Description, its whole result follows the system check.
-    func reportBug(aiCheck: AIDescriptionCheck? = nil) {
-        let systemText = systemCheck().reportText + (aiCheck.map { "\n\nCheck AI Description: \($0.reportText)" } ?? "")
-        let body = SystemCheck.bugReportTemplate(systemText: systemText)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(body, forType: .string)
-        var components = URLComponents(url: AppInfo.issuesURL, resolvingAgainstBaseURL: false)!
-        // GitHub only applies labels for people who can triage the repo, so the title says it's from the Mac too.
-        components.queryItems = [URLQueryItem(name: "title", value: "[Mac] "), URLQueryItem(name: "body", value: body),
-                                 URLQueryItem(name: "labels", value: "bug,user-reported,mac")]
-        if let url = components.url { NSWorkspace.shared.open(url) }
-        announce("Opening a new bug report in your browser. The details are also on the clipboard.")
+    /// The report Report a Bug's form starts from (#33): the system check, and Check AI Description's result or the
+    /// last crash when it came from there. Set just before the form opens.
+    private(set) var bugReportDraft = BugReport()
+    /// Bumped with each new draft, so a form that's already open takes the new details.
+    private(set) var bugReportRequest = 0
+    /// Bumped to have the main window open the form, for the crash offer, which isn't in a view.
+    private(set) var bugReportWindowRequest = 0
+
+    /// Help > Report a Bug…, and the Report a Bug… buttons in Check System and Check AI Description: a fresh draft
+    /// for the form. From Check AI Description, its whole result goes with it, as before.
+    func prepareBugReport(aiCheck: AIDescriptionCheck? = nil, attachments: [BugReport.Attachment] = [], title: String = "") {
+        var report = BugReport()
+        report.title = title
+        report.systemText = systemCheck().reportText
+        if let aiCheck { report.attachments.append(.init(name: "the AI description check", heading: "Check AI Description", text: aiCheck.reportText)) }
+        report.attachments += attachments
+        bugReportDraft = report
+        bugReportRequest += 1
+    }
+
+    /// Sends the report through the relay. When that can't be done (no key in this copy, or the relay refused or
+    /// couldn't be reached), opens the prefilled GitHub page instead, with the whole report on the clipboard in case
+    /// the page doesn't take it all.
+    func sendBugReport(_ report: BugReport) async -> BugReportRelay.Result {
+        let result = await BugReportRelay.send(report, key: AppInfo.relayKey)
+        if BugReportRelay.needsBrowser(result) {
+            // On the clipboard now; the page opens when the person chooses Open in Browser.
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(report.clipboardText, forType: .string)
+        } else if case .filed(let number, _) = result {
+            DiagnosticLog.write("report", "Filed as issue #\(number)")
+        }
+        return result
+    }
+
+    /// The prefilled GitHub issue page, for a report the relay didn't file.
+    func openBugReportPage(_ report: BugReport) {
+        NSWorkspace.shared.open(report.issuePageURL())
+    }
+
+    /// At launch, when the last run didn't quit cleanly (#33): asks once whether to report it. Report… opens the form
+    /// with the start of macOS's crash report and the end of today's log, for the person to read before sending.
+    func offerCrashReport() {
+        guard let since = CrashCheck.uncleanLaunch else { return }
+        CrashCheck.uncleanLaunch = nil
+        DiagnosticLog.write("start", "The last run didn't quit cleanly")
+        let alert = NSAlert()
+        alert.messageText = "\(AppInfo.name) quit unexpectedly last time. Report it?"
+        alert.informativeText = "The report opens in a form, where you can read and change it before it's sent. Reports are public."
+        alert.addButton(withTitle: "Report…")
+        // Escape answers Not Now, as it would Cancel.
+        alert.addButton(withTitle: "Not Now").keyEquivalent = "\u{1b}"
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            autoDescriber.refocused(currentID: autoDescribeCandidate)
+            return
+        }
+        prepareBugReport(attachments: CrashCheck.attachments(since: since), title: "Quit unexpectedly")
+        bugReportWindowRequest += 1
     }
 
     /// Why photos can't be described on this Mac right now, or nil when they can. Never sets anything up.
     var describeUnavailableReason: String? {
-#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
-        if #available(macOS 27, *) { return ImageConversation.unavailableReason }
-#endif
-        return "Describing photos needs Apple Intelligence on macOS 27 or later."
+        guard let photoDescribing else { return "Describing photos needs Apple Intelligence on macOS 27 or later." }
+        return photoDescribing.unavailableReason()
     }
 
     /// Describes the photo with Apple Intelligence and saves the description. Returns what to say: the description,
@@ -2318,44 +2779,53 @@ final class LibraryModel {
             describingIDs[id, default: 1] -= 1
             if describingIDs[id] == 0 { describingIDs[id] = nil }
         }
-#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
-        if #available(macOS 27, *) {
-            let key: String
-            let data: Data?
-            if let asset = assetsByID[id] {
-                key = asset.localIdentifier
-                let box = UncheckedBox(value: asset)
-                data = await PhotoData.request(box.value, allowNetwork: allowNetwork)?.data
-                if data == nil, !allowNetwork { return nil }
-            } else if let file = filesByID[id] {
-                key = file.descriptionKey
-                let url = file.url
-                data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url, options: .mappedIfSafe) }.value
-            } else {
+        guard let photoDescribing else {
+            guard descriptionKey(for: id) != nil else { return nil }
+            return "Describing photos needs Apple Intelligence on macOS 27 or later."
+        }
+        let key: String
+        let data: Data?
+        if let asset = assetsByID[id] {
+            key = asset.localIdentifier
+            let box = UncheckedBox(value: asset)
+            data = await PhotoData.request(box.value, allowNetwork: allowNetwork)?.data
+            if data == nil, !allowNetwork { return nil }
+        } else if let file = filesByID[id] {
+            key = file.descriptionKey
+            let url = file.url
+            // Only in the cloud: describing as you arrow, and ahead, leave it, as they leave iCloud Photos' photos
+            // and Windows leaves OneDrive's online-only files (#197). Describe Photo and Redescribe download it.
+            let isOnThisMac = self.isOnThisMac
+            if !allowNetwork, await !Task.detached(priority: .userInitiated, operation: { isOnThisMac(url) }).value {
                 return nil
             }
-            // Dropped while loading (describing ahead, and you landed elsewhere): stop before the model is asked.
-            guard !Task.isCancelled else { return nil }
-            guard let data else { return "This photo couldn't be loaded" }
-            do {
-                guard let text = try await PhotoDescriber.describe(data), !text.isEmpty else {
-                    return "Apple Intelligence returned an empty description"
-                }
-                // A newer Describe Photo replaced this one: its description is the one to keep.
-                guard !Task.isCancelled, keep() else { return nil }
-                // Corrected in the Description panel while this was being described: the person's words win.
-                guard DescriptionCache.mayReplace(edited: descriptions.isEdited(forKey: key),
-                                                  saved: descriptions.description(forKey: key), agreed: replacingEdit)
-                else { return nil }
-                descriptions.remember(text, forKey: key)
-                return text
-            } catch {
-                return ImageConversation.message(for: error)
-            }
+            data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url, options: .mappedIfSafe) }.value
+        } else {
+            return nil
         }
-#endif
-        guard descriptionKey(for: id) != nil else { return nil }
-        return "Describing photos needs Apple Intelligence on macOS 27 or later."
+        // Dropped while loading (describing ahead, and you landed elsewhere): stop before the model is asked.
+        guard !Task.isCancelled else { return nil }
+        guard let data else { return "This photo couldn't be loaded" }
+        // The prompt is read once, so the one asked is the one saved with the description (#199).
+        let prompt = DescriptionPrompt.current(in: defaults)
+        let start = ContinuousClock.now
+        do {
+            guard let text = try await photoDescribing.describe(data, prompt), !text.isEmpty else {
+                return "Apple Intelligence returned an empty description"
+            }
+            let took = start.duration(to: .now)
+            let seconds = Double(took.components.seconds) + Double(took.components.attoseconds) / 1e18
+            // A newer Describe Photo replaced this one: its description is the one to keep.
+            guard !Task.isCancelled, keep() else { return nil }
+            // Corrected in the Description panel while this was being described: the person's words win.
+            guard DescriptionCache.mayReplace(edited: descriptions.isEdited(forKey: key),
+                                              saved: descriptions.description(forKey: key), agreed: replacingEdit)
+            else { return nil }
+            descriptions.remember(text, forKey: key, provenance: .appleIntelligence(prompt: prompt, seconds: seconds))
+            return text
+        } catch {
+            return photoDescribing.failureMessage(error)
+        }
     }
 
     /// Spoken only if you're still on that photo and haven't asked about another since.
@@ -2380,13 +2850,19 @@ final class LibraryModel {
         return (index, rows.count)
     }
 
+    /// When the window opens: the first item selected, so focus lands on it and arrowing starts there.
+    func selectFirstItemIfNone() {
+        guard selection.isEmpty, let first = visibleRows.first else { return }
+        selection = [first.id]
+    }
+
     func ensureGallerySelection() {
         guard focusedRow == nil, let first = visibleRows.first else { return }
         selection = [first.id]
         cacheNeighbors(of: 0, in: visibleRows)
     }
 
-    /// Home and End in the gallery: the first or last item, whatever's selected now (even a photo Search hides).
+    /// Home and End in the gallery: the first or last item, whatever's selected now.
     func moveSelectionToEnd(last: Bool) {
         let rows = visibleRows
         guard !rows.isEmpty else { NSSound.beep(); return }
@@ -2414,8 +2890,8 @@ final class LibraryModel {
     /// Asks the list to scroll to a row chosen without it (Next Photo, Previous Photo).
     private(set) var scrollRequest = PaneScroll()
 
-    /// Whether Next Photo and Previous Photo apply: not while Get Info, a caption or Columns is in front.
-    var canStepPhotos: Bool { infoTarget == nil && captionTarget == nil && !columnsSheetShown }
+    /// Whether Next Photo and Previous Photo apply: not while Get Info, a caption or Labels is in front.
+    var canStepPhotos: Bool { infoTarget == nil && captionTarget == nil && !labelsSheetShown }
 
     func moveSelection(by delta: Int) {
         let rows = visibleRows
@@ -2429,7 +2905,14 @@ final class LibraryModel {
     private func select(at index: Int, in rows: [FileRow]) {
         selection = [rows[index].id]
         cacheNeighbors(of: index, in: rows)
-        announce("\(rows[index].name), \(index + 1) of \(rows.count)")
+        // The gallery says what View > Labels > Gallery chooses (#38); the list keeps its name and position.
+        announce(viewMode == .gallery ? galleryText(for: rows[index], at: index, of: rows.count)
+                                      : "\(rows[index].name), \(index + 1) of \(rows.count)")
+    }
+
+    /// The photo as the gallery reads it, from the items chosen in View > Labels > Gallery.
+    func galleryText(for row: FileRow, at index: Int, of count: Int) -> String {
+        GalleryLabels.text(for: row, position: (index + 1, count), items: galleryLabels)
     }
 
     /// Starts loading the images on either side so moving through the gallery feels instant. Only in the gallery:
@@ -2463,7 +2946,8 @@ final class LibraryModel {
     /// iCloud shows its small thumbnail instead.
     func previewImage(for id: String) async -> NSImage? {
         if let file = filesByID[id] {
-            guard await Task.detached(priority: .userInitiated, operation: { FileAvailability.isOnThisMac(file.url) }).value
+            let isOnThisMac = self.isOnThisMac
+            guard await Task.detached(priority: .userInitiated, operation: { isOnThisMac(file.url) }).value
             else { return nil }
             return await FileImages.image(file.url, maxPixels: 800)
         }
@@ -2484,7 +2968,13 @@ final class LibraryModel {
     }
 
     func thumbnail(for id: String) async -> NSImage? {
-        if let file = filesByID[id] { return await FileImages.thumbnail(file.url, size: 64) }
+        if let file = filesByID[id] {
+            // Only in the cloud: Quick Look might download the file to make its thumbnail, and that can't be ruled
+            // out for every cloud folder, so the row keeps its placeholder until the file is on this Mac (#197).
+            let isOnThisMac = self.isOnThisMac
+            guard await Task.detached(priority: .utility, operation: { isOnThisMac(file.url) }).value else { return nil }
+            return await FileImages.thumbnail(file.url, size: 64)
+        }
         guard let asset = assetsByID[id] else { return nil }
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat
@@ -2532,6 +3022,11 @@ final class LibraryModel {
     }
 
     private func announce(_ message: String, queued: Bool = false) {
+        announcer(message, queued)
+    }
+
+    /// Posts an announcement for VoiceOver.
+    static func postAnnouncement(_ message: String, queued: Bool) {
         guard queued else {
             AccessibilityNotification.Announcement(message).post()
             return
@@ -2552,6 +3047,28 @@ final class LibraryObserver: NSObject, PHPhotoLibraryChangeObserver, @unchecked 
 
     func photoLibraryDidChange(_ changeInstance: PHChange) {
         handler(UncheckedBox(value: changeInstance))
+    }
+}
+
+/// Apple Intelligence as Describe Photo, Redescribe and describing automatically use it: why it can't be used now,
+/// a photo's description from its data, and what to say when describing fails. The library model is given a
+/// stand-in in tests (#48), so describing can be tested without Apple Intelligence or the macOS 27 SDK.
+struct PhotoDescribing {
+    var unavailableReason: @MainActor () -> String?
+    /// The description of a photo's data, asked with the prompt given (the one saved with it, #199).
+    var describe: @MainActor (Data, String) async throws -> String?
+    var failureMessage: @MainActor (Error) -> String
+
+    /// Apple's on-device model, on macOS 27 or later; nil before.
+    static var appleIntelligence: PhotoDescribing? {
+#if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
+        if #available(macOS 27, *) {
+            return PhotoDescribing(unavailableReason: { ImageConversation.unavailableReason },
+                                   describe: { try await PhotoDescriber.describe($0, prompt: $1) },
+                                   failureMessage: { ImageConversation.message(for: $0) })
+        }
+#endif
+        return nil
     }
 }
 

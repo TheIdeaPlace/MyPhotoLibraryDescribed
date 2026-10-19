@@ -5,7 +5,7 @@ import XCTest
 final class SystemCheckTests: XCTestCase {
     private func facts(os: Int = 27, silicon: Bool = true, ai: String? = nil, photos: PHAuthorizationStatus = .authorized,
                        saved: Int = 0) -> SystemCheck.Facts {
-        .init(appName: "Photo Finder", appVersion: "0.1.0 (1)",
+        .init(appName: "My Photo Library Described", appVersion: "0.1.0 (1)",
               osVersion: OperatingSystemVersion(majorVersion: os, minorVersion: 1, patchVersion: 0),
               appleSilicon: silicon, aiUnavailableReason: ai, photosAccess: photos, savedDescriptions: saved,
               libraryCoverage: (described: saved, total: 2000),
@@ -17,7 +17,7 @@ final class SystemCheckTests: XCTestCase {
         XCTAssertEqual(check.summary, "Everything needed to describe photos is ready.")
         XCTAssertTrue(check.text.contains("Apple Intelligence: OK. Ready to describe photos, on this Mac."))
         XCTAssertTrue(check.text.contains("Saved descriptions: 61% described, 1,234 of 2,000 photos."))
-        XCTAssertTrue(check.text.contains("Photo Finder: Version 0.1.0 (1)."))
+        XCTAssertTrue(check.text.contains("My Photo Library Described: Version 0.1.0 (1)."))
     }
 
     func testEachProblemSaysWhatToDo() {
@@ -41,12 +41,6 @@ final class SystemCheckTests: XCTestCase {
 
     func testOneProblemIsSingular() {
         XCTAssertEqual(SystemCheck(facts(photos: .limited)).summary, "1 thing needs attention.")
-    }
-
-    func testTheBugReportIncludesTheSystemCheck() {
-        let body = SystemCheck.bugReportTemplate(systemText: "macOS: OK. macOS 27.1.")
-        XCTAssertTrue(body.contains("**What happened**"))
-        XCTAssertTrue(body.contains("macOS: OK. macOS 27.1."))
     }
 
     func testCoverageSaysHowMuchOfTheLibraryIsDescribed() {

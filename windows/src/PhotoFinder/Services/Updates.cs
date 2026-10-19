@@ -7,7 +7,7 @@ using Windows.Management.Deployment;
 namespace PhotoFinder.Services;
 
 /// <summary>
-/// Updates for My Photo Library Described as installed from PhotoFinder.appinstaller. Windows also checks in the background every
+/// Updates for My Photo Library Described as installed from its .appinstaller (AppInfo.InstallerFile). Windows also checks in the background every
 /// few hours and installs an update while My Photo Library Described isn't running; this is Help > Check for Updates, for now.
 /// (Checking at every launch, the .appinstaller's OnLaunch setting, stopped the AI helper's alias from starting, so
 /// the package doesn't use it.) Installing follows Microsoft's "Update non-Store published apps from your code".
@@ -40,7 +40,7 @@ public static class Updates
     public static string AppVersion =>
         PackageVersion ?? typeof(Updates).Assembly.GetName().Version?.ToString(3) ?? "unknown";
 
-    /// <summary>Installed from PhotoFinder.appinstaller, so Windows knows where its updates are.</summary>
+    /// <summary>Installed from the .appinstaller, so Windows knows where its updates are.</summary>
     public static bool UpdatesItself
     {
         get
@@ -101,14 +101,18 @@ public static class Updates
     public static async Task<string?> InstallAsync(Uri source)
     {
         RegisterApplicationRestart(null, 0);
+        // Windows may end the app to install without it quitting normally, which isn't a crash (#138).
+        CrashCheck.End();
         try
         {
             var result = await new PackageManager().AddPackageByAppInstallerFileAsync(
                 source, AddPackageByAppInstallerOptions.ForceTargetAppShutdown, null);
+            if (!result.IsRegistered) CrashCheck.Begin();
             return result.IsRegistered ? null : string.IsNullOrWhiteSpace(result.ErrorText) ? $"Error {result.ExtendedErrorCode?.HResult:X8}." : result.ErrorText;
         }
         catch (Exception ex)
         {
+            CrashCheck.Begin();
             return ex.Message;
         }
     }

@@ -81,13 +81,19 @@ struct BackgroundQueue {
 
     /// What to say when the run stops after too many failures in a row, with `reason`, the last failure.
     static func stoppedMessage(left: Int, reason: String) -> String {
-        "Background describing stopped: \(plural(failuresInARow)) in a row couldn't be described, so \(plural(left)) weren't tried. \(reason)"
+        let notTried = switch left {
+        case 0: ""
+        case 1: ", so 1 photo wasn't tried"
+        default: ", so \(plural(left)) weren't tried"
+        }
+        return "Background describing stopped: \(plural(failuresInARow)) in a row couldn't be described\(notTried). \(reason)"
     }
 
     /// What to say when the queue runs out, or nil when there's nothing worth saying.
     var summary: String? {
         guard described > 0 || notOnThisMac > 0 else { return nil }
-        var text = "Finished describing \(Self.plural(described)) in the background."
+        // With none described (every photo was only in iCloud), "Finished describing 0 photos" would mislead.
+        var text = described > 0 ? "Finished describing \(Self.plural(described)) in the background." : "Background describing finished."
         if notOnThisMac > 0 {
             text += notOnThisMac == 1
                 ? " 1 photo wasn't described because it's only in iCloud."

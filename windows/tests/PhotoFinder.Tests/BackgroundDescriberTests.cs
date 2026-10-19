@@ -32,7 +32,7 @@ public sealed class BackgroundDescriberTests : IDisposable
     private static readonly AIReadiness Ready = new(true, "Ready", null);
 
     private async Task<(LibraryModel Model, BackgroundDescriber Background, DescriptionStore Store)> StartAsync(
-        bool enabled, AIReadiness? readiness = null, Func<MediaItem, Task<string>>? describe = null, Func<AIReadiness>? check = null)
+        bool enabled, AIReadiness? readiness = null, Func<MediaItem, Task<string>>? describe = null, Func<AIReadiness>? check = null, string? failuresPath = null)
     {
         var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
         var settings = new Settings { DescribeInBackground = enabled };
@@ -45,7 +45,7 @@ public sealed class BackgroundDescriberTests : IDisposable
                 _described.Add(item.Name);
                 return describe is null ? $"About {item.Name}" : await describe(item);
             },
-            _ => Task.FromResult(check?.Invoke() ?? readiness ?? Ready), _ => Task.FromResult(Ready));
+            _ => Task.FromResult(check?.Invoke() ?? readiness ?? Ready), _ => Task.FromResult(Ready), failuresPath);
         return (model, background, store);
     }
 
@@ -407,6 +407,209 @@ public sealed class BackgroundDescriberTests : IDisposable
         }
     }
 
+    [WpfTheory]
+    [InlineData(6, "Background describing stopped: 5 photos in a row couldn't be described, so 1 photo wasn't tried. ")]
+    [InlineData(5, "Background describing stopped: 5 photos in a row couldn't be described. ")]
+    public async Task TheStopSaysHowManyWerentTried_InWords(int photos, string said)
+    {
+        // #158, as the Mac's #159: not "so 1 photo weren't tried" or "so 0 photos weren't tried".
+        // home.jpg is there already.
+        for (var i = 1; i < photos; i++) _lib.AddJpeg($"broken{i}.jpg");
+        var (model, background, _) = await StartAsync(enabled: false,
+            describe: _ => throw new DescriptionException("decode_failed", "The picture couldn't be read."));
+        using (model) using (background)
+        {
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Single(_announced, s => s.StartsWith(said, StringComparison.Ordinal));
+        }
+    }
+
+    [WpfFact]
+    public async Task PhotosTheContentFilterDeclines_DontStopTheRun_AndArentTriedAgainAfterARestart()
+    {
+        // Kelly, 13 Oct: the newest photos included some Windows' filter declines and some it couldn't describe, so every
+        // start stopped after the same five and never reached the rest.
+        for (var i = 0; i < 8; i++) _lib.AddJpeg($"filtered{i}.jpg");
+        _lib.AddJpeg("fine.jpg");
+        var failures = _lib.PathOf(@"data\BackgroundFailures.json");
+        Task<string> Describe(MediaItem item) => item.Name.StartsWith("filtered", StringComparison.Ordinal)
+            ? throw new DescriptionException("content_filtered", "Windows' content filter declined the text in this picture.")
+            : Task.FromResult($"About {item.Name}");
+        var (model, background, store) = await StartAsync(enabled: false, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Contains("fine.jpg", _described);
+            Assert.DoesNotContain(_announced, s => s.StartsWith("Background describing stopped:"));
+        }
+        // After a restart, the declined photos aren't tried again.
+        _described.Clear();
+        (model, background, store) = await StartAsync(enabled: true, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.DoesNotContain(_described, n => n.StartsWith("filtered", StringComparison.Ordinal));
+        }
+        // A new version of the app tries them once more.
+        File.WriteAllText(failures, File.ReadAllText(failures).Replace(Updates.AppVersion, "0.0.1"));
+        _described.Clear();
+        (model, background, store) = await StartAsync(enabled: true, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Contains(_described, n => n.StartsWith("filtered", StringComparison.Ordinal));
+        }
+    }
+
+    /// <summary>Photos whose names start with <paramref name="prefix"/> made the newest, so they're first in the queue.</summary>
+    private void MakeNewest(string prefix)
+    {
+        foreach (var f in Directory.GetFiles(_lib.Root, "*.jpg"))
+            File.SetLastWriteTime(f, Path.GetFileName(f).StartsWith(prefix, StringComparison.Ordinal) ? DateTime.Now.AddMinutes(-1) : DateTime.Now.AddYears(-1));
+    }
+
+    [WpfFact]
+    public async Task KellysLibrary_TwoFilteredThenThreeErrorsAtTheFront_IsDescribedPastThem_AndTheyreNotTriedAgain()
+    {
+        // Kelly, 13 Oct: every start stopped on the same five newest photos, so 5,794 were never tried.
+        _lib.AddJpeg("bad-filtered1.jpg");
+        _lib.AddJpeg("bad-filtered2.jpg");
+        _lib.AddJpeg("bad-error1.jpg");
+        _lib.AddJpeg("bad-error2.jpg");
+        _lib.AddJpeg("bad-error3.jpg");
+        for (var i = 0; i < 3; i++) _lib.AddJpeg($"good{i}.jpg");
+        MakeNewest("bad-");
+        var failures = _lib.PathOf(@"data\BackgroundFailures.json");
+        Task<string> Describe(MediaItem item) => item.Name.StartsWith("bad-filtered", StringComparison.Ordinal)
+            ? throw new DescriptionException("content_filtered", "Windows' content filter declined the text in this picture.")
+            : item.Name.StartsWith("bad-error", StringComparison.Ordinal)
+                ? throw new DescriptionException("internal_error", "Windows couldn't describe this picture (InternalError).")
+                : Task.FromResult($"About {item.Name}");
+        var (model, background, _) = await StartAsync(enabled: false, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Contains("good0.jpg", _described);
+            Assert.DoesNotContain(_announced, s => s.StartsWith("Background describing stopped:"));
+        }
+        _described.Clear();
+        (model, background, _) = await StartAsync(enabled: true, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            // A photo described after them proved describing works, so all five are remembered.
+            Assert.DoesNotContain(_described, n => n.StartsWith("bad-", StringComparison.Ordinal));
+        }
+    }
+
+    [WpfFact]
+    public async Task ARunThatStopsAfterFailuresInARow_DoesntKeepThem_SoTheyreTriedAgainOnceThingsWork()
+    {
+        // A problem with every photo (a missing codec, say): once it's fixed, nothing is left skipped.
+        for (var i = 0; i < 7; i++) _lib.AddJpeg($"photo{i}.jpg");
+        var failures = _lib.PathOf(@"data\BackgroundFailures.json");
+        var (model, background, _) = await StartAsync(enabled: false, failuresPath: failures,
+            describe: _ => throw new DescriptionException("decode_failed", "The picture couldn't be read."));
+        using (model) using (background)
+        {
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Single(_announced, s => s.StartsWith("Background describing stopped:"));
+        }
+        var failed = _described.ToList();
+        _described.Clear();
+        (model, background, _) = await StartAsync(enabled: true, failuresPath: failures);
+        using (model) using (background)
+        {
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Subset(_described.ToHashSet(), failed.ToHashSet());
+        }
+    }
+
+    [WpfTheory]
+    [InlineData("{\"Version\":\"VERSION\"}")]
+    [InlineData("{\"Version\":\"VERSION\",\"Keys\":null}")]
+    [InlineData("not json at all")]
+    [InlineData("")]
+    public async Task AFailuresFileItCantRead_IsIgnored_AndEverythingIsDescribed(string contents)
+    {
+        var failures = _lib.PathOf(@"data\BackgroundFailures.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(failures)!);
+        File.WriteAllText(failures, contents.Replace("VERSION", Updates.AppVersion));
+        var (model, background, _) = await StartAsync(enabled: true, failuresPath: failures);
+        using (model) using (background)
+        {
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Contains("home.jpg", _described);
+        }
+    }
+
+    [WpfFact]
+    public async Task TooMuchText_DoesntStopTheRun_ButATimeoutIsntRemembered()
+    {
+        for (var i = 0; i < 6; i++) _lib.AddJpeg($"text{i}.jpg");
+        _lib.AddJpeg("slow.jpg");
+        _lib.AddJpeg("ok.jpg");
+        MakeNewest("text");
+        File.SetLastWriteTime(_lib.PathOf("slow.jpg"), DateTime.Now.AddMinutes(-2));
+        var failures = _lib.PathOf(@"data\BackgroundFailures.json");
+        var slow = true;
+        Task<string> Describe(MediaItem item) => item.Name.StartsWith("text", StringComparison.Ordinal)
+            ? throw new DescriptionException("too_much_text", "There's too much text in this picture to describe.")
+            : item.Name == "slow.jpg" && slow ? throw new DescriptionException("timeout", "Windows took too long. Try again.")
+            : Task.FromResult("Fine");
+        var (model, background, _) = await StartAsync(enabled: false, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.DoesNotContain(_announced, s => s.StartsWith("Background describing stopped:"));
+            Assert.Contains("ok.jpg", _described);
+        }
+        // The timed-out photo is tried again at the next start; the ones with too much text aren't.
+        slow = false;
+        _described.Clear();
+        (model, background, _) = await StartAsync(enabled: true, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            await background.DescribeLibraryAsync();
+            await background.WhenIdleAsync();
+            Assert.Contains("slow.jpg", _described);
+            Assert.DoesNotContain(_described, n => n.StartsWith("text", StringComparison.Ordinal));
+        }
+    }
+
+    [WpfFact]
+    public async Task TurningItOnAgain_TriesThePhotosThatCouldntBeDescribed()
+    {
+        _lib.AddJpeg("declined.jpg");
+        var failures = _lib.PathOf(@"data\BackgroundFailures.json");
+        var declines = true;
+        Task<string> Describe(MediaItem item) => declines && item.Name == "declined.jpg"
+            ? throw new DescriptionException("content_filtered", "No.")
+            : Task.FromResult("Fine");
+        var (model, background, _) = await StartAsync(enabled: false, describe: Describe, failuresPath: failures);
+        using (model) using (background)
+        {
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            declines = false;
+            _described.Clear();
+            background.Enabled = false;
+            background.Enabled = true;
+            await background.WhenIdleAsync();
+            Assert.Contains("declined.jpg", _described);
+        }
+    }
+
     [WpfFact]
     public async Task ManyPhotosFailingInARow_StopsTheRun_AndSaysWhyOnce()
     {
@@ -420,7 +623,8 @@ public sealed class BackgroundDescriberTests : IDisposable
             Assert.Equal(BackgroundDescriber.FailuresInARow, _described.Count);
             Assert.Single(_announced, s => s.StartsWith("Background describing stopped:") && s.Contains("The picture couldn't be read."));
             Assert.Null(model.BackgroundProgress);
-            // The ones that failed aren't tried again this session: the next run starts with the photos not tried.
+            // The ones that failed aren't tried again this session (and, once describing has worked, not after a restart
+            // either): the next run starts with the photos not tried.
             var tried = _described.ToList();
             _described.Clear();
             await background.DescribeLibraryAsync();
@@ -525,7 +729,7 @@ public sealed class BackgroundDescriberTests : IDisposable
     }
 
     [WpfFact]
-    public async Task AtAStart_WindowsAINeverAnswering_GivesUp_AndTheStatusBarSaysSo_UntilTurnedOff()
+    public async Task AtAStart_WindowsAINotAnswering_TheStatusBarSaysItsWaiting_WithoutABusyIndicator_UntilTurnedOff()
     {
         var asked = 0;
         var (model, background, _) = await StartAsync(enabled: true,
@@ -534,10 +738,9 @@ public sealed class BackgroundDescriberTests : IDisposable
         {
             background.ResumeRetries = [TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(10)];
             background.Resume();
-            await WaitUntil(() => model.BackgroundProgress is not null);
-            await background.WhenIdleAsync();
-            Assert.Equal(3, asked);
-            Assert.Equal("Background describing couldn't start: Windows AI didn't answer. Turn it off and on to try again.", model.BackgroundProgress);
+            // Said from the first try that fails, and asked again meanwhile.
+            await WaitUntil(() => asked >= 3);
+            Assert.Equal(BackgroundDescriber.WaitingText, model.BackgroundProgress);
             // Nothing's going on, so no busy indicator.
             Assert.False(model.IsBusy);
             Assert.Empty(_described);
@@ -583,7 +786,7 @@ public sealed class BackgroundDescriberTests : IDisposable
     }
 
     [WpfFact]
-    public async Task AtAStart_TheModelNotReady_IsntDownloadedQuietly_AndTheStatusBarSaysHowToGetIt()
+    public async Task AtAStart_TheModelNotReady_IsGotReady_SayingSo_AndDescribingStarts()
     {
         var prepared = 0;
         var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions.json"));
@@ -591,15 +794,112 @@ public sealed class BackgroundDescriberTests : IDisposable
         using var model = new LibraryModel(settings, _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
             () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1)) { Descriptions = store };
         await model.StartAsync();
-        using var background = new BackgroundDescriber(model, store, (item, _, _) => { _described.Add(item.Name); return Task.FromResult("x"); },
-            _ => Task.FromResult(new AIReadiness(true, "NotReady", null)), _ => { prepared++; return Task.FromResult(Ready); });
+        var release = new TaskCompletionSource<AIReadiness>();
+        using var background = new BackgroundDescriber(model, store, (item, _, _) => { _described.Add(item.Name); return Task.FromResult<Described>("x"); },
+            _ => Task.FromResult(new AIReadiness(true, "NotReady", null)), _ => { prepared++; return release.Task; });
         background.ResumeRetries = [TimeSpan.FromMilliseconds(10)];
         background.Resume();
+        await WaitUntil(() => prepared == 1);
+        // Nothing for the person to do: the status bar says what's happening.
+        Assert.Equal("Getting Windows' image description model ready for background describing", model.BackgroundProgress);
+        release.SetResult(Ready);
+        await WaitUntil(() => _described.Count == 1);
         await background.WhenIdleAsync();
-        Assert.Equal(0, prepared);
-        Assert.Empty(_described);
-        Assert.StartsWith("Background describing is waiting for Windows' image description model.", model.BackgroundProgress);
+        Assert.Equal(["home.jpg"], _described);
+        Assert.Null(model.BackgroundProgress);
         Assert.Empty(_announced);
+    }
+
+    [WpfFact]
+    public async Task WaitingForWindowsAI_StartsByItself_WhenADescriptionWorks()
+    {
+        var working = false;
+        var checks = 0;
+        var (model, background, _) = await StartAsync(enabled: true,
+            check: () => { checks++; return working ? Ready : new AIReadiness(false, "Error", "No answer."); });
+        using (model) using (background)
+        {
+            background.ResumeRetries = [];
+            background.Resume();
+            await WaitUntil(() => model.BackgroundProgress is not null);
+            await background.WhenIdleAsync();
+            Assert.Equal(BackgroundDescriber.WaitingText, model.BackgroundProgress);
+            Assert.DoesNotContain("off and on", model.BackgroundProgress);
+
+            // Describe Photo works: background describing starts, and the message goes.
+            working = true;
+            background.WindowsAIWorked();
+            await WaitUntil(() => _described.Count == 1);
+            await background.WhenIdleAsync();
+            Assert.Equal(["home.jpg"], _described);
+            Assert.Null(model.BackgroundProgress);
+
+            // A later description doesn't start it again: Windows AI isn't even asked.
+            var asked = checks;
+            background.WindowsAIWorked();
+            await background.WhenIdleAsync();
+            Assert.Equal(asked, checks);
+        }
+    }
+
+    [WpfFact]
+    public async Task StopWhileWaitingForWindowsAI_MeansStop_EvenWhenADescriptionThenWorks()
+    {
+        var checks = 0;
+        var (model, background, _) = await StartAsync(enabled: true, check: () => { checks++; return new AIReadiness(false, "Error", "No answer."); });
+        using (model) using (background)
+        {
+            background.ResumeRetries = [TimeSpan.FromMilliseconds(10)];
+            background.ResumePoll = TimeSpan.FromMilliseconds(10);
+            background.Resume();
+            await WaitUntil(() => model.BackgroundProgress == BackgroundDescriber.WaitingText);
+            background.Stop();
+            Assert.Null(model.BackgroundProgress);
+            var asked = checks;
+            background.WindowsAIWorked();
+            await Task.Delay(200);
+            Assert.Equal(asked, checks);
+            Assert.Empty(_described);
+        }
+    }
+
+    [WpfFact]
+    public async Task WaitingForWindowsAI_KeepsAsking_AndStartsWhenItAnswers()
+    {
+        var checks = 0;
+        var (model, background, _) = await StartAsync(enabled: true, check: () => ++checks < 6 ? new AIReadiness(false, "Error", "No answer.") : Ready);
+        using (model) using (background)
+        {
+            background.ResumeRetries = [TimeSpan.FromMilliseconds(10)];
+            background.ResumePoll = TimeSpan.FromMilliseconds(10);
+            background.Resume();
+            // Past the quick retries, it goes on asking, saying it's waiting meanwhile.
+            await WaitUntil(() => _described.Count == 1);
+            Assert.True(checks >= 6);
+            Assert.Equal(["home.jpg"], _described);
+        }
+    }
+
+    [Fact]
+    public async Task AFinishedDescription_IsAnnounced_OnlyWhenItWorked_AndAListenerCantMakeItFail()
+    {
+        var raised = 0;
+        void Count() { raised++; throw new InvalidOperationException("A listener that fails"); }
+        WindowsAI.DescribedOne += Count;
+        try
+        {
+            var stats = new DescribeStats();
+            Assert.Equal("Fine", await WindowsAI.CountedAsync(stats, () => Task.FromResult(("Fine", TimeSpan.FromSeconds(1))), default, default));
+            Assert.Equal(1, raised);
+            Assert.Empty(stats.RecentFailures());
+            await Assert.ThrowsAsync<DescriptionException>(() => WindowsAI.CountedAsync(stats,
+                () => throw new DescriptionException("internal_error", "No."), default, default));
+            Assert.Equal(1, raised);
+        }
+        finally
+        {
+            WindowsAI.DescribedOne -= Count;
+        }
     }
 
     [WpfFact]

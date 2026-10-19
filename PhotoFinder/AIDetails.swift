@@ -142,7 +142,7 @@ struct AIDescriptionCheck: Equatable {
     /// so a miss is said, never counted as a failure.
     static let expected: [(thing: String, words: [String])] = [
         ("the mug", ["mug", "cup"]),
-        ("the table", ["table", "desk"]),
+        ("the table", ["table", "desk", "surface", "counter", "tabletop", "countertop"]),
         ("the OPEN sign", ["open"]),
     ]
 

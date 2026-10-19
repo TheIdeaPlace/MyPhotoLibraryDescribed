@@ -55,8 +55,8 @@ struct FileMetadataChanges: Equatable, Sendable {
 enum FileMetadataWriteError: LocalizedError, Equatable {
     /// GIF, WebP, RAW and other formats ImageIO can't change without re-encoding, or at all. The format's name.
     case unsupportedFormat(String)
-    /// A JPEG holding more than one picture (Ultra HDR's gain map, some cameras' multi-picture files), found by its
-    /// MPF segment: not changed until a writer is proven to keep them (#79).
+    /// A JPEG holding more than one picture (Ultra HDR's gain map, Apple's HDR photos, MPO) whose Multi-Picture index
+    /// can't be followed, or that has two, so it couldn't be kept right if the file's size changed (#79, #90).
     case multiPicture
     case unreadable
     case notWritten(String)
@@ -64,7 +64,7 @@ enum FileMetadataWriteError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat(let format): "\(format) files can't hold captions or descriptions."
-        case .multiPicture: "This JPEG holds more than one picture (HDR photos and some cameras' files do), which can't be changed safely yet."
+        case .multiPicture: "It holds a second picture, such as an HDR map, laid out in a way that can't be updated safely."
         case .unreadable: "The file couldn't be read as a photo."
         case .notWritten(let reason): "The file couldn't be changed. \(reason)"
         }
@@ -112,7 +112,28 @@ enum FileMetadataWriter {
         guard PhotoChanges.allowed else { throw PhotoChanges.ReadOnly() }
         let name = url.lastPathComponent
         guard canWrite(name: name), !MediaFiles.isRaw(name) else { throw FileMetadataWriteError.unsupportedFormat(formatName(of: name)) }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+
+        // Saved dates, to the nanosecond, before anything changes. They also tell whether the file changed while it
+        // was being saved (#111).
+        var info = stat()
+        guard stat(url.path, &info) == 0 else { throw FileMetadataWriteError.unreadable }
+        let created = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+        // The file is read once (#111): its format, its title, its layout and the bytes rewritten all come from these
+        // bytes, so nothing is decided from one version of the file and written from another. Read whole rather than
+        // mapped, so another app writing into the file can't change them underneath; the dates compared just before
+        // the original is replaced catch a change made after this.
+        guard var data = try? Data(contentsOf: url) else { throw FileMetadataWriteError.unreadable }
+        // Reading can itself change the dates, as when iCloud Drive or another cloud folder downloads the file to read
+        // it. Then it's read again, and the dates from then on are the ones compared; if they move again, it's left.
+        var afterRead = stat()
+        guard stat(url.path, &afterRead) == 0 else { throw FileMetadataWriteError.unreadable }
+        if !sameFile(afterRead, info) {
+            info = afterRead
+            guard let again = try? Data(contentsOf: url) else { throw FileMetadataWriteError.unreadable }
+            data = again
+            guard stat(url.path, &afterRead) == 0, sameFile(afterRead, info) else { throw changedWhileSaving }
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               let type = CGImageSourceGetType(source), CGImageSourceGetCount(source) > 0 else {
             throw FileMetadataWriteError.unreadable
         }
@@ -126,13 +147,13 @@ enum FileMetadataWriter {
         var expected: [String: String?] = [:]
         if let caption = changes.caption?.trimmingCharacters(in: .whitespacesAndNewlines) {
             expected[captionPath] = caption.isEmpty ? nil : caption
-            // dc:title is what Windows' File Explorer shows as the title, and what Photo Finder on Windows used as the
+            // dc:title is what Windows' File Explorer shows as the title, and what the Windows app used as the
             // caption. It's kept in step when it's empty or still the caption being replaced, never over a real title.
             // A PNG's or JPEG's own XMP counts too: ImageIO reads an EXIF description as the caption ahead of it.
             let current = CGImageSourceCopyMetadataAtIndex(source, 0, nil)
             let own: CGImageMetadata? = switch type as String {
-            case UTType.png.identifier: (try? Data(contentsOf: url)).flatMap(PNGMetadata.xmp(of:))
-            case UTType.jpeg.identifier: (try? Data(contentsOf: url, options: .mappedIfSafe)).flatMap(JPEGMetadata.xmp(of:))
+            case UTType.png.identifier: PNGMetadata.xmp(of: data)
+            case UTType.jpeg.identifier: JPEGMetadata.xmp(of: data)
             default: nil
             }
             func text(_ metadata: CGImageMetadata?, _ path: String) -> String {
@@ -151,44 +172,50 @@ enum FileMetadataWriter {
         }
         guard !expected.isEmpty else { return FileMetadata.read(url) }
 
-        // Saved dates, to the nanosecond, before anything changes.
-        var info = stat()
-        guard stat(url.path, &info) == 0 else { throw FileMetadataWriteError.unreadable }
-        let created = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
-
         // Hidden, so the folder's listing never shows it, and in the same folder, so swapping it in is a rename.
         let temp = url.deletingLastPathComponent()
             .appendingPathComponent(".\(url.deletingPathExtension().lastPathComponent).\(UUID().uuidString).\(url.pathExtension)")
         defer { try? FileManager.default.removeItem(at: temp) }
-        // A JPEG's data after its picture, a motion photo's video for one, must come through exactly (#79); a JPEG with
-        // a second picture (Ultra HDR) isn't touched at all.
-        var jpegTail: Data?
-        if type as String == UTType.jpeg.identifier {
-            let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
-            if JPEGLayout.hasMultiPicture(bytes) { throw FileMetadataWriteError.multiPicture }
-            // Its layout couldn't be followed (cut short, say): refused rather than written unchecked.
-            guard let tail = JPEGLayout.trailingData(bytes) else {
-                throw FileMetadataWriteError.notWritten("Its JPEG layout couldn't be read.")
-            }
-            jpegTail = tail
-        }
         if type as String == UTType.png.identifier || type as String == UTType.jpeg.identifier {
             // A PNG's chunks (#61) and a JPEG's segments (#81) are edited directly, every byte but the XMP and the EXIF
             // description copied as it was. ImageIO's copy of a JPEG can drop its comment and most of its EXIF, the
             // embedded thumbnail included.
-            try writeEdited(from: url, to: temp) { data in
+            let rewritten = try rewrite(data) { data in
                 if type as String == UTType.png.identifier {
                     return try PNGMetadata.rewrite(data, setting: expected,
                                                    removingEXIFDescription: expected.keys.contains(captionPath))
                 }
-                // The bytes being rewritten are the ones checked (#111): a file replaced since the check above isn't
-                // written.
-                guard !JPEGLayout.hasMultiPicture(data), JPEGLayout.trailingData(data) == jpegTail else {
-                    throw PNGMetadata.Failure.malformed("It changed while it was being saved.")
+                // A JPEG's data after its picture, a motion photo's video or an Ultra HDR photo's gain map, must come
+                // through exactly (#79, #90); JPEGMetadata keeps a Multi-Picture index pointing at it. Its layout
+                // couldn't be followed (cut short, say): refused rather than written unchecked.
+                guard let tail = JPEGLayout.trailingData(data) else {
+                    throw PNGMetadata.Failure.malformed("Its JPEG layout couldn't be read.")
                 }
-                return try JPEGMetadata.rewrite(data, setting: expected)
+                let result = try JPEGMetadata.rewrite(data, setting: expected)
+                guard result.count >= tail.count, result.suffix(tail.count) == tail else {
+                    throw PNGMetadata.Failure.malformed(
+                        "The data after the picture, a motion photo's video or an HDR map say, wasn't kept.")
+                }
+                return result
             }
-            guard readsBack(temp, expected) else { throw FileMetadataWriteError.notWritten("The new metadata didn't read back.") }
+            do {
+                try rewritten.write(to: temp, options: .withoutOverwriting)
+            } catch {
+                throw FileMetadataWriteError.notWritten("A new copy couldn't be made in its folder.")
+            }
+            // What's on disk is exactly what was checked.
+            guard (try? Data(contentsOf: temp)) == rewritten else {
+                throw FileMetadataWriteError.notWritten("A new copy couldn't be made in its folder.")
+            }
+            guard readsBack(temp, expected) else {
+                // Photoshop's IPTC, changed since its digest was written: readers take its old caption ahead of the
+                // new one. The IPTC isn't rewritten, so the file is left alone and says why (#111, Kelly 13 Oct).
+                if type as String == UTType.jpeg.identifier, let segments = try? JPEGMetadata.segments(of: data).segments,
+                   olderCaptionStillRead(temp, expected, source: source, segments: segments) {
+                    throw olderCaptionWins
+                }
+                throw FileMetadataWriteError.notWritten("The new metadata didn't read back.")
+            }
         } else {
             // Merged into what's there first, which leaves everything else exactly as it was. A HEIC file whose caption
             // is only in its EXIF (TIFF) description keeps reading the old one that way, so then the file's whole XMP
@@ -202,12 +229,12 @@ enum FileMetadataWriter {
         }
         // The same pictures, the same size, before the original is touched: a guard against ImageIO ever dropping one.
         guard samePictures(source, temp) else { throw FileMetadataWriteError.notWritten("The pictures in the new file didn't match.") }
-        if let jpegTail, !jpegTail.isEmpty {
-            let written = try Data(contentsOf: temp, options: .mappedIfSafe)
-            guard written.count >= jpegTail.count, written.suffix(jpegTail.count) == jpegTail else {
-                throw FileMetadataWriteError.notWritten("The data after the picture, a motion photo's video say, wasn't kept.")
-            }
-        }
+
+        // Changed or replaced by another app since it was read (#111): left as that app left it, since the new copy was
+        // made from the old bytes.
+        beforeReplacing?(url)
+        var now = stat()
+        guard stat(url.path, &now) == 0, sameFile(now, info) else { throw changedWhileSaving }
 
         do {
             _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
@@ -233,19 +260,29 @@ enum FileMetadataWriter {
         return a == b
     }
 
-    /// The file as `rewrite` changes it, written to `temp`. Rewriting refuses anything it can't follow.
-    private static func writeEdited(from url: URL, to temp: URL, _ rewrite: (Data) throws -> Data) throws {
-        guard let data = try? Data(contentsOf: url) else { throw FileMetadataWriteError.unreadable }
-        let rewritten: Data
+    /// The same file, unchanged: the same volume and file number, size and modified time.
+    private static func sameFile(_ a: stat, _ b: stat) -> Bool {
+        a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_size == b.st_size
+            && a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec && a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec
+    }
+
+    /// An older caption, in IPTC that Photoshop or a similar app changed, would still be read ahead of a new one.
+    static let olderCaptionWins = FileMetadataWriteError.notWritten(
+        "An older caption saved in it by Photoshop or a similar app would still be read instead of the new one, so it was left as it is.")
+
+    /// Windows' words for the same refusal.
+    static let changedWhileSaving = FileMetadataWriteError.notWritten(
+        "It changed while it was being saved (iCloud bringing a newer version, say), so it was left as it is. Try again.")
+
+    /// Called by tests just before the original is replaced, to change it as another app might (#111).
+    nonisolated(unsafe) static var beforeReplacing: ((URL) -> Void)?
+
+    /// The file's bytes as `change` rewrites them, its refusals given as the reason the file wasn't written.
+    private static func rewrite(_ data: Data, _ change: (Data) throws -> Data) throws -> Data {
         do {
-            rewritten = try rewrite(data)
+            return try change(data)
         } catch PNGMetadata.Failure.malformed(let reason) {
             throw FileMetadataWriteError.notWritten(reason)
-        }
-        do {
-            try rewritten.write(to: temp, options: .withoutOverwriting)
-        } catch {
-            throw FileMetadataWriteError.notWritten("A new copy couldn't be made in its folder.")
         }
     }
 
@@ -272,7 +309,7 @@ enum FileMetadataWriter {
                 _ = CGImageMetadataRemoveTagWithPath(metadata, nil, path as CFString)
             } else {
                 // Merging doesn't remove a field set to null in TIFF and HEIC files, so an empty text takes its place,
-                // which readers (Photo Finder's too) treat as none, and which also empties the IPTC and TIFF copies of
+                // which readers (ours too) treat as none, and which also empties the IPTC and TIFF copies of
                 // the caption that ImageIO keeps in step with it.
                 _ = CGImageMetadataSetValueWithPath(metadata, nil, "\(path)[x-default]" as CFString, "" as CFString)
             }
@@ -289,12 +326,29 @@ enum FileMetadataWriter {
     }
 
     /// Whether the new copy reads as intended, field by field (an empty field counts as none).
-    private static func readsBack(_ url: URL, _ values: [String: String?]) -> Bool {
-        guard let written = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(written) > 0 else { return false }
+    private static func readsBack(_ url: URL, _ values: [String: String?]) -> Bool { failing(url, values)?.isEmpty == true }
+
+    /// The fields that don't read back as `values` says, or nil when the file can't be read at all.
+    private static func failing(_ url: URL, _ values: [String: String?]) -> Set<String>? {
+        guard let written = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(written) > 0 else { return nil }
         let metadata = CGImageSourceCopyMetadataAtIndex(written, 0, nil)
-        return values.allSatisfy { path, value in
-            metadata.flatMap { FileMetadata.xmpString($0, path) }.flatMap { $0.isEmpty ? nil : $0 } == value
-        }
+        return Set(values.filter { path, value in readBack(metadata, path) != value }.keys)
+    }
+
+    private static func readBack(_ metadata: CGImageMetadata?, _ path: String) -> String? {
+        metadata.flatMap { FileMetadata.xmpString($0, path) }.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// Whether the new copy failed only because the old caption still wins: the caption (and perhaps the title kept
+    /// in step with it) is what didn't read back, and what reads instead is the caption the file already had, from a
+    /// Photoshop IPTC block (#111).
+    private static func olderCaptionStillRead(_ temp: URL, _ values: [String: String?], source: CGImageSource,
+                                              segments: [JPEGMetadata.Segment]) -> Bool {
+        guard JPEGMetadata.hasIPTC(segments), let failed = failing(temp, values), failed.contains(captionPath),
+              failed.isSubset(of: [captionPath, titlePath]),
+              let old = readBack(CGImageSourceCopyMetadataAtIndex(source, 0, nil), captionPath),
+              let written = CGImageSourceCreateWithURL(temp as CFURL, nil) else { return false }
+        return readBack(CGImageSourceCopyMetadataAtIndex(written, 0, nil), captionPath) == old
     }
 }
 
@@ -316,11 +370,23 @@ enum FileWriteSummary {
         return "\(what): \(list) files can't hold captions or descriptions"
     }
 
+    /// The photos holding a second picture whose index couldn't be kept right (#90), worded as Windows says it: "hdr.jpg
+    /// holds a second picture, such as an HDR map, laid out in a way that can't be updated safely, so it was left as
+    /// it is".
+    static func secondPictureText(_ names: [String]) -> String? {
+        guard let first = names.first else { return nil }
+        let what = names.count == 1 ? "\(first) holds" : "\(names.count) files hold"
+        let left = names.count == 1 ? "it was left as it is" : "they were left as they are"
+        return "\(what) a second picture, such as an HDR map, laid out in a way that can't be updated safely, so \(left)"
+    }
+
     /// `done` (nil when nothing was written), then what was skipped and what wasn't described.
-    static func text(done: String?, skipped: [(name: String, format: String)], notDescribed: Int) -> String {
+    static func text(done: String?, skipped: [(name: String, format: String)], secondPicture: [String] = [],
+                     notDescribed: Int) -> String {
         var parts: [String] = []
         if let done { parts.append(done) }
         if let text = skippedText(skipped) { parts.append(text) }
+        if let text = secondPictureText(secondPicture) { parts.append(text) }
         if notDescribed > 0 {
             parts.append(notDescribed == 1 ? "1 photo hasn't been described yet" : "\(notDescribed) photos haven't been described yet")
         }

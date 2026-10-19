@@ -247,7 +247,8 @@ public sealed class LibraryModelTests : IDisposable
         model.MoveSelection(1);
         Assert.Equal(model.Rows[1], model.FocusedRow);
         Assert.Equal((1, 4), model.GalleryPosition);
-        Assert.Contains($"{model.Rows[1].Name}, 2 of 4", _announced);
+        // The gallery says its labels: Position by default (#38).
+        Assert.Contains("2 of 4", _announced);
     }
 
     [WpfFact]

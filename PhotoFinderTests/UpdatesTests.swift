@@ -12,14 +12,31 @@ final class UpdatesTests: XCTestCase {
 
     private func release(_ tag: String, draft: Bool = false, prerelease: Bool = false) -> [String: Any] {
         ["tag_name": tag, "draft": draft, "prerelease": prerelease,
-         "html_url": "https://github.com/kellylford/PhotoFinder/releases/tag/\(tag)"]
+         "html_url": "https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/tag/\(tag)"]
     }
 
-    func testTheNewestMacReleaseIsFoundAndOthersAreIgnored() {
-        let list = [release("mac-v0.2.0"), release("mac-v0.3.0", draft: true), release("mac-v0.4.0", prerelease: true),
-                    release("v0.9.0"), release("mac-v0.2.5"), release("mac-v0.1.0")]
-        XCTAssertEqual(Updates.newer(than: "0.1.0", in: list)?.version, "0.2.5")
-        XCTAssertNil(Updates.newer(than: "0.2.5", in: list), "up to date")
+    func testTheNewestReleaseIsFound_FromBothTheSharedTagsAndTheMacsEarlierOnes() {
+        let list = [release("mac-v0.1.1"), release("v0.3.0", draft: true), release("v0.4.0", prerelease: true),
+                    release("v0.2.0"), release("windows-v0.9.0"), release("mac-v0.1.0"), release("vNext")]
+        XCTAssertEqual(Updates.newer(than: "0.1.0", in: list)?.version, "0.2.0")
+        XCTAssertNil(Updates.newer(than: "0.2.0", in: list), "up to date")
+        XCTAssertEqual(Updates.version(fromTag: "mac-v0.1.1"), "0.1.1")
+        XCTAssertEqual(Updates.version(fromTag: "v0.2.0"), "0.2.0")
+        XCTAssertNil(Updates.version(fromTag: "windows-v0.2.0"))
+        XCTAssertNil(Updates.version(fromTag: "vNext"))
+    }
+
+    func testCopiesOnTheEarlierMacTagsFindTheSharedOne_OnceItsPublished() {
+        // 0.2.0 is the first release under the shared `v` tag: a copy running 0.1.x must find it, but not while it's
+        // the draft that the Windows installer and the Mac's disk image are being attached to.
+        let draft = [release("v0.2.0", draft: true), release("mac-v0.1.1"), release("mac-v0.1.0")]
+        XCTAssertNil(Updates.newer(than: "0.1.1", in: draft))
+        let published = [release("v0.2.0"), release("mac-v0.1.1"), release("mac-v0.1.0")]
+        for running in ["0.1.0", "0.1.1"] {
+            let found = Updates.newer(than: running, in: published)
+            XCTAssertEqual(found?.version, "0.2.0")
+            XCTAssertEqual(found?.page.lastPathComponent, "v0.2.0")
+        }
     }
 
     func testTheMenuAlwaysSaysWhatsRunning() {
@@ -37,13 +54,13 @@ final class UpdatesTests: XCTestCase {
     func testTheRepositoryIsNamedOnce() {
         XCTAssertTrue(Updates.releasesAPI.absoluteString.contains(AppInfo.repository))
         XCTAssertTrue(AppInfo.issuesURL.absoluteString.contains(AppInfo.repository))
-        XCTAssertEqual(AppInfo.releaseNotesURL("0.1.1").lastPathComponent, "mac-v0.1.1")
+        XCTAssertEqual(AppInfo.releaseNotesURL("0.2.0").lastPathComponent, "v0.2.0")
     }
 
     func testAFoundUpdateIsRememberedUntilItsInstalled() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "UpdatesTests.found"))
         defaults.removePersistentDomain(forName: "UpdatesTests.found")
-        let page = URL(string: "https://github.com/kellylford/PhotoFinder/releases/tag/mac-v0.2.0")!
+        let page = URL(string: "https://github.com/TheIdeaPlace/MyPhotoLibraryDescribed/releases/tag/mac-v0.2.0")!
         Updates.remember(.init(version: "0.2.0", page: page), in: defaults)
         XCTAssertEqual(Updates.remembered(running: "0.1.1", in: defaults)?.version, "0.2.0")
         XCTAssertNil(Updates.remembered(running: "0.2.0", in: defaults), "installed: forgotten")

@@ -9,9 +9,9 @@ struct ContentView: View {
         case .unknown:
             ProgressView("Asking for access to your photo library…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .denied:
-            AccessDeniedView()
-        case .authorized:
+        case .denied, .authorized:
+            // Without Photos access the browser still opens, for added folders; the sidebar's "Photos library: no
+            // access" row says how to give it (#47).
             BrowserView()
         }
     }
@@ -23,6 +23,57 @@ struct BrowserView: View {
     @FocusState private var pane: Pane?
     /// Where F6 is taking you in the status bar, while its sections become focusable.
     @State private var pendingStatusFocus: Pane?
+    /// Whether focus has been put on the photos since the window opened (or given up on).
+    @State private var startedOnPhotos = false
+    /// The place showing, and how many pane moves there had been, when the window appeared: if you've moved since
+    /// (F6, or another place chosen in the sidebar) while the first place was loading, focus isn't pulled away from
+    /// where you went. Focus itself isn't compared: SwiftUI puts it in the sidebar on its own.
+    @State private var placeAtAppear: String?
+    @State private var paneMovesAtAppear = 0
+
+    /// When the window opens, focus goes to the list or gallery, on its first item, once the place it opens on has
+    /// settled, so arrowing works at once without tabbing (Kelly, 14 Oct; Windows does the same).
+    private func startOnPhotos() {
+        guard !startedOnPhotos, model.launchPlaceSettled else { return }
+        startedOnPhotos = true
+        // Without Photos access the window opens on the no-access row and moves to the first added folder itself:
+        // that isn't you moving, but choosing another place meanwhile is.
+        let movedPlace = placeAtAppear != nil && model.selectedSourceID != placeAtAppear
+            && model.selectedSourceID != model.launchFolderID
+        guard !searchFocused, !movedPlace, model.paneRequest.serial == paneMovesAtAppear else { return }
+        model.selectFirstItemIfNone()
+        pane = .content
+        // The list may only just be appearing, and SwiftUI otherwise starts in the sidebar: tried again a moment
+        // later, checked after waiting, until it takes.
+        Task { @MainActor in
+            for _ in 0..<5 {
+                try? await Task.sleep(for: .milliseconds(80))
+                guard pane != .content, !searchFocused, model.paneRequest.serial == paneMovesAtAppear else { return }
+                pane = .content
+            }
+        }
+    }
+
+    /// Focus to the list or gallery, tried a few times a moment apart while the new view appears.
+    private func focusPhotosAgain() {
+        // Only when focus was on the photos (or went with the view that was replaced): reading in the Description
+        // panel or moving in the sidebar or Search stays where it is.
+        guard !searchFocused, pane == nil || pane == .content, !model.showingPhotosNoAccess else { return }
+        startedOnPhotos = true
+        model.selectFirstItemIfNone()
+        // Cleared first: focus may still read .content from the view that's gone, and setting the same value again
+        // would do nothing.
+        pane = nil
+        let serial = model.paneRequest.serial
+        Task { @MainActor in
+            for _ in 0..<6 {
+                try? await Task.sleep(for: .milliseconds(60))
+                guard !searchFocused, model.paneRequest.serial == serial else { return }
+                if pane == .content { return }
+                pane = .content
+            }
+        }
+    }
 
     /// Moves focus into the status bar once its sections can take it: a few tries, a moment apart, stopping as soon
     /// as focus is there or another move (F6 again, a click) replaced this one.
@@ -52,9 +103,13 @@ struct BrowserView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 230)
         } detail: {
             Group {
-                switch model.viewMode {
-                case .list: FileListView(pane: $pane)
-                case .gallery: GalleryView(pane: $pane)
+                if model.showingPhotosNoAccess {
+                    PhotosAccessView(pane: $pane)
+                } else {
+                    switch model.viewMode {
+                    case .list: FileListView(pane: $pane)
+                    case .gallery: GalleryView(pane: $pane)
+                    }
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar(pane: $pane) }
@@ -64,10 +119,21 @@ struct BrowserView: View {
             }
         }
         .navigationTitle(model.windowTitle)
+        // Kept although the status bar says the same: with a subtitle the title is drawn smaller, and without it the
+        // mode ("Read-Only Mode") was cut off (#35's look).
         .navigationSubtitle(model.statusText)
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search names, kinds and dates")
         .searchFocused($searchFocused)
         .onChange(of: model.searchFocusRequest) { searchFocused = true }
+        .onAppear {
+            placeAtAppear = model.selectedSourceID
+            paneMovesAtAppear = model.paneRequest.serial
+            startOnPhotos()
+        }
+        .onChange(of: model.launchPlaceSettled) { startOnPhotos() }
+        // View > as List or as Gallery replaces the view focus was in: it goes to the new one, on the photo you were
+        // on, so the arrows keep working (Kelly, 14 Oct: a release blocker).
+        .onChange(of: model.viewMode) { focusPhotosAgain() }
         // Go > Next Pane (F6) and Previous Pane (Shift-F6): sidebar, list or gallery, Description, Search, status bar,
         // and round.
         .onChange(of: model.paneRequest) {
@@ -108,7 +174,7 @@ struct BrowserView: View {
         .quickLookPreview($model.previewURL, in: model.previewURLs)
         .sheet(item: $model.infoTarget) { InfoView(target: $0) }
         .sheet(item: $model.captionTarget) { CaptionEditor(target: $0, model: model) }
-        .sheet(isPresented: $model.columnsSheetShown) { ColumnsSheet(model: model) }
+        .sheet(isPresented: $model.labelsSheetShown) { LabelsSheet(model: model) }
         .alert("Something went wrong", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
@@ -134,6 +200,16 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Return or a double-click on "Photos library: no access" opens Privacy Settings (#47); other rows are
+        // unchanged.
+        // `String?`, the rows' tag type (the selection is optional): a plain `String` never matches them (#142's review).
+        .contextMenu(forSelectionType: String?.self) { ids in
+            if ids.contains(SidebarID.photosNoAccess) {
+                Button("Open Privacy Settings") { model.openPhotosPrivacySettings() }
+            }
+        } primaryAction: { ids in
+            if ids.contains(SidebarID.photosNoAccess) { model.openPhotosPrivacySettings() }
+        }
         // Delete on an added folder removes it from the library (after asking), as on Windows (#36).
         .onDeleteCommand { model.deleteInSidebar() }
         .focused(pane, equals: .sidebar)
@@ -159,16 +235,22 @@ private struct SidebarNode: View {
 
     private var label: some View {
         // Not .badge(): VoiceOver reads a badge as the row's value, so the sidebar sounds like a list of numbers.
-        HStack {
+        // The no-access row has no count: it's read as its name only.
+        let noAccess = item.kind == .photosNoAccess
+        return HStack {
             Label(item.title, systemImage: item.systemImage)
             Spacer()
-            Text(item.count.formatted())
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
+            if !noAccess {
+                Text(item.count.formatted())
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.title), \(item.count == 1 ? "1 item" : "\(item.count.formatted()) items")")
+        .accessibilityLabel(noAccess ? item.title
+                            : "\(item.title), \(item.count == 1 ? "1 item" : "\(item.count.formatted()) items")")
         .accessibilityAddTraits(.isStaticText)
+        .accessibilityHint(noAccess ? "Return opens Privacy Settings" : "")
         .tag(item.id as String?)
     }
 
@@ -188,7 +270,7 @@ struct FileListView: View {
 
     var body: some View {
         @Bindable var model = model
-        // Built from the chosen columns, in the chosen order (View > Columns), which is also the order
+        // Built from the chosen columns, in the chosen order (View > Labels, List tab), which is also the order
         // VoiceOver reads a row's cells in.
         ScrollViewReader { proxy in
             Table(of: FileRow.self, selection: $model.selection, sortOrder: $model.sortOrder) {
@@ -212,6 +294,7 @@ struct FileListView: View {
                     Button("Edit Caption…") { model.editCaption(ids) }
                     Divider()
                     Button("Copy") { model.copySelection(ids) }
+                    Button("Copy Description") { model.copyDescription(ids) }
                     Button("Export…") { model.exportSelection(ids) }
                     Divider()
                     Button("Toggle Favorite") { model.toggleFavorite(ids) }
@@ -233,12 +316,26 @@ struct FileListView: View {
             .overlay { emptyState }
             // Next Photo and Previous Photo change the selection without the list: it's scrolled into view.
             .onChange(of: model.scrollRequest) { if let id = model.scrollRequest.id { proxy.scrollTo(id) } }
+            // Back from the gallery: the photo you were on is scrolled to, once the table is there.
+            .onAppear {
+                guard let id = model.focusedRow?.id else { return }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(50))
+                    proxy.scrollTo(id)
+                }
+            }
         }
     }
 
     @ViewBuilder private func cell(_ column: String, _ row: FileRow) -> some View {
         if column == ColumnOrder.name {
             NameCell(row: row, model: model)
+        } else if column == "location" {
+            // Place Taken looks up the names of the places showing (#172), as their cells come into view, and when
+            // Look Up Place Names is turned on with them in view.
+            Text(row.text(for: column))
+                .task(id: model.placeNamesShowing ? row.placeKey : nil) { model.placeCellAppeared(row) }
+                .onDisappear { model.placeCellDisappeared(row) }
         } else {
             Text(row.text(for: column))
         }
@@ -331,10 +428,8 @@ struct GalleryView: View {
         .onKeyPress(.space) { model.quickLook(); return .handled }
         .onKeyPress(.return) { model.open(); return .handled }
         .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
-        .onAppear {
-            model.ensureGallerySelection()
-            pane.wrappedValue = .content
-        }
+        // Focus comes from BrowserView: at launch, and on switching views, only when it was on the photos.
+        .onAppear { model.ensureGallerySelection() }
     }
 }
 
@@ -343,6 +438,11 @@ private struct GalleryImage: View {
     let model: LibraryModel
     @State private var image: NSImage?
     @State private var loadedID: String?
+
+    private var label: String {
+        guard let position = model.galleryPosition else { return row.name }
+        return model.galleryText(for: row, at: position.index, of: position.count)
+    }
 
     var body: some View {
         Group {
@@ -360,10 +460,13 @@ private struct GalleryImage: View {
                 ProgressView("Loading image…")
             }
         }
-        // One image element named just for the photo, so arrowing says which photo and its description follows,
-        // and VoiceOver's image descriptions (VO-Shift-L) look at the full-size picture. The rest is in the footer.
+        // One image element, so VoiceOver's image descriptions (VO-Shift-L) look at the full-size picture. It's named
+        // with the same words the move announcement says, the items chosen in View > Labels > Gallery (#38), and
+        // nothing more. Arrowing keeps focus where it is, and VoiceOver doesn't read a label again when it changes
+        // under it, so a move is heard once, as the announcement. Landing on the image afresh (F6, VO-arrows) reads
+        // the same chosen words, never a name that wasn't chosen. The rest is in the footer.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(row.name)
+        .accessibilityLabel(label)
         .accessibilityAddTraits(.isImage)
         .task(id: row.id) {
             guard !row.isContainer else { return }
@@ -383,8 +486,16 @@ private struct GalleryFooter: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.name)
                     .font(.headline)
-                Text([row.kind, row.dateText, row.dimensions].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .foregroundStyle(.secondary)
+                // Kind and size on one line, the date on its own, so a long date doesn't break mid-phrase (#35's look).
+                let details = [row.kind, row.dimensions].filter { !$0.isEmpty }.joined(separator: " · ")
+                if !details.isEmpty {
+                    Text(details)
+                        .foregroundStyle(.secondary)
+                }
+                if !row.dateText.isEmpty {
+                    Text(row.dateText)
+                        .foregroundStyle(.secondary)
+                }
                 if !row.caption.isEmpty {
                     Text(row.caption)
                 }
@@ -397,6 +508,8 @@ private struct GalleryFooter: View {
                 }
             }
             .textSelection(.enabled)
+            // The name and details get the room before the buttons do.
+            .layoutPriority(1)
             Spacer()
             let position = model.galleryPosition
             Button("Previous", systemImage: "chevron.left") { model.moveSelection(by: -1) }
@@ -531,18 +644,30 @@ private struct StatusBar: View {
     }
 }
 
-struct AccessDeniedView: View {
+/// Shown in place of the list or gallery while the sidebar's "Photos library: no access" row is chosen (#47): the
+/// explanation and Open Privacy Settings that used to block the whole window. It's the F6 loop's list-or-gallery stop:
+/// Return or Space opens Privacy Settings, and VoiceOver can read the explanation and the button inside it.
+struct PhotosAccessView: View {
+    @Environment(LibraryModel.self) private var model
+    var pane: FocusState<Pane?>.Binding
+
+    static let explanation = "\(AppInfo.name) needs permission to read your Photos library. Turn it on in System Settings, Privacy & Security, Photos. Folders you add with File > Add Folder to Library work without it."
+
     var body: some View {
         ContentUnavailableView {
             Label("No Access to Photos", systemImage: "photo.badge.exclamationmark")
         } description: {
-            Text("\(AppInfo.name) needs permission to read your photo library. Turn it on in System Settings, Privacy & Security, Photos, then reopen \(AppInfo.name).")
+            Text(Self.explanation)
         } actions: {
-            Button("Open Privacy Settings") {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos") {
-                    NSWorkspace.shared.open(url)
-                }
-            }
+            Button("Open Privacy Settings") { model.openPhotosPrivacySettings() }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .focusable()
+        .focused(pane, equals: .content)
+        .onKeyPress(.return) { model.openPhotosPrivacySettings(); return .handled }
+        .onKeyPress(.space) { model.openPhotosPrivacySettings(); return .handled }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("No access to Photos")
+        .accessibilityHint("Return opens Privacy Settings")
     }
 }

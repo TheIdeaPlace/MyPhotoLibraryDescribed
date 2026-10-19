@@ -8,6 +8,7 @@ struct PhotoFinderApp: App {
     var body: some Scene {
         Window(AppInfo.name, id: "main") {
             ContentView()
+                .modifier(OpensBugReportWindow())
                 .environment(model)
                 .frame(minWidth: 720, minHeight: 420)
                 .task {
@@ -16,6 +17,7 @@ struct PhotoFinderApp: App {
                     await model.start()
                     model.checkForUpdatesQuietly()
                     model.sayIfJustUpdated()
+                    model.offerCrashReport()
                 }
         }
         .commands { PhotoCommands(model: model) }
@@ -36,11 +38,62 @@ struct PhotoFinderApp: App {
                 .environment(model)
         }
         .windowResizability(.contentSize)
+
+        // Help > Report a Bug… (#33). Not reopened at launch: a form left open last time would be empty.
+        Window("Report a Bug", id: BugReportView.windowID) {
+            BugReportView()
+                .environment(model)
+        }
+        .windowResizability(.contentSize)
+        .restorationBehavior(.disabled)
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Unit tests run inside the app and end without quitting it, so they'd look like a crash every time.
+    /// Under unit tests or SwiftUI previews: no crash check or offer.
+    private var testing: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil || environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    // The crash check (#33): a flag written now and removed on a normal quit; still there next time means the app
+    // didn't quit cleanly, and the main window offers once to report it.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !testing else { return }
+        CrashCheck.uncleanLaunch = CrashCheck.begin()
+        // A restart or shut-down may end the app without applicationWillTerminate: clear the flag as the Mac powers
+        // off, so it isn't taken for a crash (#146's review). The boot-time check covers power loss.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willPowerOffNotification, object: nil,
+                                                          queue: .main) { _ in CrashCheck.end() }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        guard !testing else { return }
+        CrashCheck.end()
+    }
+}
+
+/// The app menu's About (#33, as the app kit asks): what the app is for, and links to the repo, the user guide and
+/// the privacy policy. The standard panel gives the name, version and icon.
+enum AboutPanel {
+    static func show() {
+        let centred = NSMutableParagraphStyle()
+        centred.alignment = .center
+        let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        let credits = NSMutableAttributedString(
+            string: "Describes your photos on your own Mac, and works well with VoiceOver.\n",
+            attributes: [.font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: centred])
+        for (title, url) in [("Source code on GitHub", AppInfo.repositoryURL), ("User Guide", AppInfo.userGuideURL),
+                             ("Privacy Policy", AppInfo.privacyPolicyURL)] {
+            credits.append(NSAttributedString(string: "\n"))
+            credits.append(NSAttributedString(string: title, attributes: [.font: font, .link: url, .paragraphStyle: centred]))
+        }
+        NSApplication.shared.orderFrontStandardAboutPanel(options: [.credits: credits])
+        NSApplication.shared.activate()
+    }
 }
 
 struct PhotoCommands: Commands {
@@ -50,6 +103,9 @@ struct PhotoCommands: Commands {
     private static let f9 = KeyEquivalent(Character(UnicodeScalar(NSF9FunctionKey)!))
 
     var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About \(AppInfo.name)") { AboutPanel.show() }
+        }
         CommandGroup(after: .newItem) {
             // Read-only (#84): checked at every launch; unchecking asks first.
             // "Mode", so a screen reader doesn't sound as if something on screen is read-only (Kelly, 13 Oct).
@@ -72,6 +128,11 @@ struct PhotoCommands: Commands {
             Button("Export…") { model.exportSelection() }
                 .keyboardShortcut("e")
         }
+        CommandGroup(after: .pasteboard) {
+            // Copy copies the photos; this copies what's said about them, as text (Kelly, 13 Oct).
+            Button("Copy Description") { model.copyDescription() }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+        }
         CommandGroup(after: .textEditing) {
             Button("Find") { model.searchFocusRequest += 1 }
                 .keyboardShortcut("f")
@@ -87,7 +148,7 @@ struct PhotoCommands: Commands {
                 set: { _ in model.viewMode = .gallery }
             ))
             .keyboardShortcut("4")
-            Button("Columns…") { model.columnsSheetShown = true }
+            Button("Labels…") { model.labelsSheetShown = true }
             // The Description panel (#50); Option-Command-I, as Finder's Show Inspector.
             Toggle("Show Description", isOn: Binding(
                 get: { model.showDescriptionPanel },
@@ -117,7 +178,10 @@ struct PhotoCommands: Commands {
             Button(Updates.menuTitle(running: AppInfo.shortVersion, available: model.availableUpdate?.version)) {
                 model.checkForUpdates()
             }
-            Button("Report a Bug…") { model.reportBug() }
+            Button("Report a Bug…") {
+                model.prepareBugReport()
+                openWindow(id: BugReportView.windowID)
+            }
             Button("Check System…") {
                 model.systemCheckRequest += 1
                 openWindow(id: "systemCheck")
@@ -141,6 +205,8 @@ struct PhotoCommands: Commands {
             Divider()
             Button("All Photos") { model.navigate(to: SidebarID.allPhotos) }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
+                // Without Photos access there's no All Photos to go to (#142's review).
+                .disabled(!model.photosAllowed)
             Divider()
             // From anywhere, focus staying where it is: the Description panel follows the photo (Kelly, 13 Oct).
             Button("Next Photo") { model.stepPhoto(by: 1) }
@@ -200,7 +266,7 @@ struct PhotoCommands: Commands {
                 get: { model.describeInBackground },
                 set: { model.setDescribeInBackground($0) }
             ))
-            // Always enabled (it says when nothing is running), like the Columns sheet's buttons.
+            // Always enabled (it says when nothing is running), like the Labels sheet's buttons.
             Button("Stop Background Describing") { model.stopBackgroundDescribing() }
         }
     }

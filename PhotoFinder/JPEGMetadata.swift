@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import ImageIO
 
@@ -5,7 +6,7 @@ import ImageIO
 /// which can drop a JPEG's comment segment and most of its EXIF, the embedded thumbnail included.
 ///
 /// Only the XMP segment (APP1 "http://ns.adobe.com/xap/1.0/") is replaced, where it was or, when there was none, after
-/// the JFIF and EXIF segments at the start. It's written with about 2 KB of padding, as Photo Finder on Windows writes
+/// the JFIF and EXIF segments at the start. It's written with about 2 KB of padding, as the Windows app writes
 /// it (#89), so other tools can change it in place. When the caption changes, the EXIF description (IFD0's
 /// ImageDescription) is taken out within its segment, which keeps its size and every offset in it, because ImageIO
 /// reads it as the caption ahead of the XMP. Every other segment (the rest of the EXIF with its thumbnail and maker
@@ -16,8 +17,16 @@ import ImageIO
 /// following the Metadata Working Group's guidance take the XMP's caption ahead of the IPTC's, so the new caption is
 /// the one read; when the digest doesn't match, the IPTC wins, the caption doesn't read back, and the write is refused.
 ///
-/// Refused, leaving the file alone: anything that doesn't parse, XMP spread over several segments (Extended XMP) or in
-/// more than one segment, XMP that isn't valid UTF-8 or XML, and XMP too large for one segment.
+/// A file with a Multi-Picture index (Ultra HDR, Apple's HDR photos, MPO) has the index patched to match (#90): see
+/// `MultiPictureIndex`.
+///
+/// XMP that continues in Extended XMP segments (many Pixel photos: Ultra HDR, portrait and depth, #149) has those
+/// segments kept byte for byte. The main XMP names the extension by `xmpNote:HasExtendedXMP`, the MD5 of the
+/// extension's whole packet, which is kept as it was, so the extension still belongs to it: see `ExtendedXMP`.
+///
+/// Refused, leaving the file alone: anything that doesn't parse, Extended XMP that can't be followed (see
+/// `ExtendedXMP`), XMP in more than one segment, XMP that isn't valid UTF-8 or XML, XMP too large for one segment, and
+/// a change of size to a file with two Multi-Picture indexes or one that can't be followed.
 enum JPEGMetadata {
     typealias Failure = PNGMetadata.Failure
 
@@ -25,6 +34,7 @@ enum JPEGMetadata {
     static let extendedXMPHeader = Array("http://ns.adobe.com/xmp/extension/".utf8) + [0]
     static let exifHeader = Array("Exif".utf8) + [0, 0]
     static let photoshopHeader = Array("Photoshop 3.0".utf8) + [0]
+    static let hasExtendedXMPPath = "xmpNote:HasExtendedXMP"
     /// The most a segment's body can hold: its two length bytes count themselves.
     static let maxBody = 0xFFFF - 2
     /// Room left in the XMP for the next change, as XMP writers leave it.
@@ -120,8 +130,18 @@ enum JPEGMetadata {
     /// description taken out. Every other segment, and everything from the picture data on, is copied byte for byte.
     static func rewrite(_ data: Data, setting values: [String: String?]) throws -> Data {
         let (segments, picture) = try segments(of: data)
-        if segments.contains(where: isExtendedXMP) {
-            throw Failure.malformed("Its XMP is spread over several segments (Extended XMP), which isn't changed.")
+        let extended = try ExtendedXMP(in: segments)
+        if let extended {
+            // Each property is in one or the other: one written into the main XMP that's also in the extension would
+            // leave readers to choose between them.
+            guard let packet = PNGMetadata.parseXMP(extended.packet) else { throw ExtendedXMP.refused }
+            // In Windows' order, so both name the caption first when it's among them.
+            let order = [FileMetadataWriter.captionPath, FileMetadataWriter.titlePath, FileMetadataWriter.altTextPath,
+                         FileMetadataWriter.extendedDescriptionPath]
+            let paths = order.filter(values.keys.contains) + values.keys.filter { !order.contains($0) }.sorted()
+            for path in paths where CGImageMetadataCopyTagWithPath(packet, nil, path as CFString) != nil {
+                throw ExtendedXMP.heldInExtension(path)
+            }
         }
         let xmpIndices = segments.indices.filter { isXMP(segments[$0]) }
         guard xmpIndices.count <= 1 else { throw Failure.malformed("It has more than one XMP segment.") }
@@ -147,6 +167,7 @@ enum JPEGMetadata {
             }
         }
         PNGMetadata.set(values, in: metadata)
+        if let extended, ExtendedXMP.guid(in: metadata) != extended.guid { throw ExtendedXMP.refused }
 
         // No XMP left (a caption cleared from a file whose only XMP was that): no XMP segment.
         let tags = (CGImageMetadataCopyTags(metadata) as? [CGImageMetadataTag]) ?? []
@@ -175,11 +196,34 @@ enum JPEGMetadata {
             output.insert(xmpSegment, at: output.firstIndex { !($0.marker == 0xE0 || isEXIF($0)) } ?? output.count)
         }
 
-        var result = Data([0xFF, 0xD8])
+        var result: [UInt8] = [0xFF, 0xD8]
         for segment in output { result.append(contentsOf: segment.raw) }
         result.append(contentsOf: picture)
-        try check(result, against: segments, picture)
-        return result
+        try keepMultiPictureIndex(in: &result, from: data, before: segments, after: output)
+        try check(Data(result), against: segments, picture)
+        return Data(result)
+    }
+
+    /// A file with a Multi-Picture index (Ultra HDR, Apple's HDR photos, MPO) whose size changed has the index patched
+    /// (#90): it records the first picture's size, and where the others start counted from the index itself. A file
+    /// with two indexes, or one that can't be followed, is refused unless it keeps its size.
+    private static func keepMultiPictureIndex(in result: inout [UInt8], from data: Data, before: [Segment],
+                                              after: [Segment]) throws {
+        let indexes = before.indices.filter { MultiPictureIndex.isIndex(before[$0]) }
+        guard let first = indexes.first, result.count != data.count else { return }
+        guard indexes.count == 1, let moved = after.firstIndex(where: MultiPictureIndex.isIndex) else {
+            throw FileMetadataWriteError.multiPicture
+        }
+        // Where the index's segment is in each file, and its TIFF header just after "MPF\0".
+        func start(of index: Int, in list: [Segment]) -> Int { 2 + list[..<index].reduce(0) { $0 + $1.raw.count } }
+        let old = start(of: first, in: before), new = start(of: moved, in: after)
+        let delta = result.count - data.count
+        // The change is either before the index, which moved with it, or after it, which stayed put.
+        guard new == old || new == old + delta else { throw FileMetadataWriteError.multiPicture }
+        let segment = before[first]
+        let header = old + segment.bodyStart + MultiPictureIndex.signature.count
+        let index = try MultiPictureIndex.read([UInt8](data), header: header, segmentEnd: old + segment.raw.count)
+        try index.patch(&result, delta: delta, moved: new != old)
     }
 
     /// The XMP segment's body: its header, then the packet in XMP's wrapper with room to grow, as much as fits.
@@ -194,14 +238,102 @@ enum JPEGMetadata {
         return xmpHeader + head + xmp + [UInt8(ascii: "\n")] + spaces + tail
     }
 
-    /// A last look before the file is written: the same segments in the same order but the XMP, the EXIF the same
-    /// size, everything else byte for byte, and the picture data and what follows it exactly as they were.
-    private static func check(_ result: Data, against before: [Segment], _ picture: [UInt8]) throws {
+    /// A last look before the file is written: the same segments in the same order but the XMP, the EXIF changed only
+    /// by its description being taken out (#111), the Multi-Picture index the same size, everything else byte for
+    /// byte, and the picture data and what follows it exactly as they were.
+    static func check(_ result: Data, against before: [Segment], _ picture: [UInt8]) throws {
         let (after, newPicture) = try segments(of: result)
         func others(_ list: [Segment]) -> [Segment] { list.filter { !isXMP($0) } }
+        func inPlace(_ old: Segment, _ new: Segment) -> Bool {
+            guard old.raw.count == new.raw.count else { return false }
+            if isEXIF(old), isEXIF(new) {
+                // The fill bytes, marker, length and "Exif\0\0" as they were; in the TIFF data after them, only IFD0's
+                // table and the old description's bytes.
+                let head = old.bodyStart + exifHeader.count
+                return new.bodyStart == old.bodyStart && old.raw[..<head] == new.raw[..<head]
+                    && PNGMetadata.onlyImageDescriptionRemoved(from: Array(old.raw[head...]), to: Array(new.raw[head...]))
+            }
+            return MultiPictureIndex.isIndex(old) && MultiPictureIndex.isIndex(new)
+        }
+        // Extended XMP segments are among the others, so they're byte for byte; the new main XMP must still name them
+        // by the same GUID, which must still be the MD5 of what they hold.
+        func extensionKept() -> Bool {
+            do { return try ExtendedXMP(in: before) == ExtendedXMP(in: after) } catch { return false }
+        }
         let a = others(before), b = others(after)
         guard newPicture == picture, a.count == b.count, after.filter(isXMP).count <= 1,
-              zip(a, b).allSatisfy({ old, new in old == new || (isEXIF(old) && isEXIF(new) && old.raw.count == new.raw.count) })
+              zip(a, b).allSatisfy({ old, new in old == new || inPlace(old, new) }), extensionKept()
         else { throw Failure.malformed("The new copy didn't keep the rest of the file as it was.") }
+    }
+
+    /// XMP continued in Extended XMP segments (APP1 "http://ns.adobe.com/xmp/extension/", XMP Specification Part 3,
+    /// 1.1.3.1), where Pixel photos keep their HDR+ maker note, depth map or portrait's original (#149). Each segment
+    /// holds the GUID, the whole packet's length, where this part goes in it, then the part. The main XMP names the
+    /// extension with `xmpNote:HasExtendedXMP`, whose value is the GUID: the MD5 of the whole packet in uppercase hex.
+    ///
+    /// None of that records a place in the file, so when only the main XMP changes, keeping that property and every
+    /// extension segment as it was keeps the extension valid. Anything that doesn't add up exactly is refused: no main
+    /// XMP or no GUID in it, parts with another GUID or length, parts missing or overlapping, or a packet whose MD5
+    /// isn't the GUID.
+    struct ExtendedXMP: Equatable {
+        static let refused = Failure.malformed(
+            "Its metadata is spread over several parts (Extended XMP) that don't add up.")
+        /// The parts add up, but a field being written is in the extension, not the main XMP. Named, as Windows does,
+        /// so it's clear what can't be changed: "…and its caption is kept in another part."
+        static func heldInExtension(_ path: String) -> Failure {
+            let field = switch path {
+            case FileMetadataWriter.captionPath: "caption"
+            case FileMetadataWriter.titlePath: "title"
+            case FileMetadataWriter.altTextPath: "alt text"
+            case FileMetadataWriter.extendedDescriptionPath: "extended description"
+            default: "metadata"
+            }
+            return .malformed("Its metadata is spread over several parts (Extended XMP), and its \(field) is kept in another part.")
+        }
+        let guid: String
+        let packet: [UInt8]
+
+        /// Nil when the file has no Extended XMP segments.
+        init?(in segments: [Segment]) throws {
+            let parts = segments.filter(JPEGMetadata.isExtendedXMP)
+            guard !parts.isEmpty else { return nil }
+            let mains = segments.filter(JPEGMetadata.isXMP)
+            guard mains.count == 1,
+                  let main = PNGMetadata.parseXMP(Array(mains[0].body.dropFirst(JPEGMetadata.xmpHeader.count))),
+                  let guid = Self.guid(in: main), guid.utf8.count == 32,
+                  guid.utf8.allSatisfy({ (0x30...0x39).contains($0) || (0x41...0x46).contains($0) })
+            else { throw Self.refused }
+
+            let head = JPEGMetadata.extendedXMPHeader.count
+            var total: Int?
+            var pieces: [(offset: Int, bytes: ArraySlice<UInt8>)] = []
+            for part in parts {
+                let body = part.body
+                guard body.count > head + 40 else { throw Self.refused }
+                let start = body.startIndex + head
+                func u32(_ at: Int) -> Int { body[(start + at)..<(start + at + 4)].reduce(0) { $0 << 8 | Int($1) } }
+                guard Array(body[start..<(start + 32)]) == Array(guid.utf8) else { throw Self.refused }
+                let length = u32(32), offset = u32(36)
+                guard total == nil || total == length else { throw Self.refused }
+                total = length
+                pieces.append((offset, body[(start + 40)...]))
+            }
+            // In order of where they go, exactly covering the packet.
+            var packet: [UInt8] = []
+            for piece in pieces.sorted(by: { $0.offset < $1.offset }) {
+                guard piece.offset == packet.count else { throw Self.refused }
+                packet += piece.bytes
+            }
+            guard packet.count == total else { throw Self.refused }
+            let digest = Insecure.MD5.hash(data: packet).map { String(format: "%02X", $0) }.joined()
+            guard digest == guid else { throw Self.refused }
+            self.guid = guid
+            self.packet = packet
+        }
+
+        static func guid(in metadata: CGImageMetadata) -> String? {
+            CGImageMetadataCopyTagWithPath(metadata, nil, JPEGMetadata.hasExtendedXMPPath as CFString)
+                .flatMap { CGImageMetadataTagCopyValue($0) as? String }
+        }
     }
 }

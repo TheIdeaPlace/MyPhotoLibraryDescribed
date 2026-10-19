@@ -30,6 +30,38 @@ final class FolderFollowUpTests: XCTestCase {
                                                isListed: { _ in false }))
     }
 
+    // MARK: - Where to go instead, with and without Photos access
+
+    func testAVanishedSubfolderGoesToItsParentWithOrWithoutPhotosAccess() {
+        let listed: Set<String> = ["/Users/k/Pictures"]
+        for allowed in [true, false] {
+            XCTAssertEqual(FolderRoots.fallbackPlace(previousPath: "/Users/k/Pictures/Trips", roots: ["/Users/k/Pictures"],
+                                                     photosAllowed: allowed, isListed: listed.contains),
+                           FolderID.folder("/Users/k/Pictures"))
+        }
+    }
+
+    func testWithPhotosAccessNothingAboveGoesToAllPhotos() {
+        XCTAssertEqual(FolderRoots.fallbackPlace(previousPath: nil, roots: ["/Volumes/Photos"], photosAllowed: true,
+                                                 isListed: { _ in true }),
+                       SidebarID.allPhotos)
+    }
+
+    func testWithoutPhotosAccessGoesToTheFirstAddedFolderStillListed() {
+        let place = FolderRoots.fallbackPlace(previousPath: "/Users/k/Pictures/Trips",
+                                              roots: ["/Volumes/Gone", "/Users/k/Desktop"], photosAllowed: false,
+                                              isListed: { $0 == "/Users/k/Desktop" })
+        XCTAssertEqual(place, FolderID.folder("/Users/k/Desktop"))
+    }
+
+    func testWithoutPhotosAccessOrFoldersGoesToTheNoAccessRow() {
+        XCTAssertEqual(FolderRoots.fallbackPlace(previousPath: nil, roots: [], photosAllowed: false, isListed: { _ in true }),
+                       SidebarID.photosNoAccess)
+        XCTAssertEqual(FolderRoots.fallbackPlace(previousPath: "/Users/k/Pictures/Trips", roots: ["/Users/k/Pictures"],
+                                                 photosAllowed: false, isListed: { _ in false }),
+                       SidebarID.photosNoAccess)
+    }
+
     // MARK: - Which photos to describe in the background
 
     func testTheFirstScanAfterLaunchDescribesNothing() {

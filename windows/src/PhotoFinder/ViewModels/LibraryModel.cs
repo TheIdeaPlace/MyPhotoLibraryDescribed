@@ -88,6 +88,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         set
         {
             if (_searchText == value) return;
+            _startedOn = null;
             var keep = SelectedIds();
             _searchText = value;
             OnPropertyChanged();
@@ -110,7 +111,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             _settings.ViewMode = value;
             SaveSettings();
             OnPropertyChanged();
-            if (value == ViewMode.Gallery) EnsureGallerySelection();
+            if (value == ViewMode.Gallery) SelectFirstIfNone();
         }
     }
 
@@ -121,6 +122,9 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         set
         {
             _selectedRows = value;
+            // Moving to another photo clears it. An empty selection doesn't: WPF empties the list's selection for a moment
+            // whenever its rows are replaced.
+            if (_startedOn is not null && value.Count > 0 && !(value.Count == 1 && value[0].Id == _startedOn)) _startedOn = null;
             UpdateFocusedRow();
             OnPropertyChanged();
             OnPropertyChanged(nameof(FocusedRow));
@@ -342,16 +346,22 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         {
             if (!cancel.IsCancellationRequested) DetailProgress = null;
         }
+        // The launch's photo counts only for this first read of details: nothing later moves you.
+        var startedOn = _startedOn;
+        _startedOn = null;
         if (cancel.IsCancellationRequested) return;
         Debug.WriteLine($"Read details for {done} items in {started.Elapsed.TotalSeconds:0.0}s");
         _cache.KeepOnly(_items);
         SaveCacheInBackground();
         if (anyRead)
         {
+            var stillOnIt = startedOn is not null && SelectedRows is [var only] && only.Id == startedOn;
             // Dates, favorites and the other smart albums depend on the details.
             RebuildSidebar();
             if (CurrentSource is { HasChildren: false }) ReloadCurrent(keepSelection: true);
             else ApplyView(SelectedIds(), focus: false);
+            // Still on the photo the app started on, and the list re-sorted now dates are known: the first photo still.
+            if (stillOnIt && Rows.Count > 0 && FocusedRow != Rows[0]) SelectionRequested?.Invoke([Rows[0].Id], false);
         }
     }
 
@@ -364,6 +374,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     public void Navigate(string id, string? selectChildId = null, bool announce = true)
     {
         if (!ItemsById.TryGetValue(id, out var item)) return;
+        _startedOn = null;
         for (var parent = item.ParentId; parent is not null && ItemsById.TryGetValue(parent, out var p); parent = p.ParentId)
             p.IsExpanded = true;
         var old = CurrentSource;
@@ -401,7 +412,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         _rowsByPath = _allRows.Where(r => r.Item is not null).ToDictionary(r => r.Id, StringComparer.OrdinalIgnoreCase);
         FillDescriptions(_allRows);
         ApplyView(select, focus);
-        if (ViewMode == ViewMode.Gallery) EnsureGallerySelection();
+        if (ViewMode == ViewMode.Gallery) SelectFirstIfNone();
         // Read the new list's details first.
         if (_items.Any(NeedsDetails) && _fillTask.IsCompleted) StartDetailFill();
     }
@@ -438,6 +449,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     public void SortBy(string column)
     {
+        _startedOn = null;
         if (_settings.SortColumn == column) _settings.SortDescending = !_settings.SortDescending;
         else
         {
@@ -531,6 +543,63 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         Announcer.Announce(files.Count == 1 ? $"Copied {files[0].Name}" : $"Copied {files.Count} items");
     }
 
+    /// <summary>Edit > Copy Description (#175, as the Mac's #176): the photos' saved descriptions, as text. One photo's
+    /// is copied as it is; several each come under the photo's name, a blank line apart, in the list's order. In the
+    /// gallery, the photo you're on. Videos and folders are left out. A correction in the Description panel that isn't
+    /// saved yet (<paramref name="draft"/>) is what's copied for its photo, without saving it, as on the Mac. Says what was
+    /// copied, and what wasn't described yet.</summary>
+    public void CopyDescriptions(IReadOnlyList<FileRow>? rows = null, (FileRow Row, string Text)? draft = null)
+    {
+        var chosen = rows?.ToList()
+                     ?? (ViewMode == ViewMode.Gallery ? (FocusedRow is { } on ? [on] : []) : InListOrder(SelectedRows, Rows));
+        var (text, said) = DescriptionsToCopy(chosen, WithDraft(SavedDescription, draft));
+        if (text is not null)
+        {
+            try
+            {
+                System.Windows.Clipboard.SetText(ClipboardText(text));
+            }
+            catch (System.Runtime.InteropServices.ExternalException)
+            {
+                Announcer.Announce("The clipboard is busy. Try again.");
+                return;
+            }
+        }
+        Announcer.Announce(said);
+    }
+
+    /// <summary>The saved descriptions, but the panel's unsaved correction for its photo (unless it's been emptied).</summary>
+    internal static Func<FileRow, string?, string?> WithDraft(Func<FileRow, string?, string?> saved, (FileRow Row, string Text)? draft) =>
+        (row, kind) => draft is { } d && d.Row == row && !string.IsNullOrWhiteSpace(d.Text) ? d.Text : saved(row, kind);
+
+    /// <summary>The rows chosen, in the order the list shows them: a selection keeps the order rows were picked in.</summary>
+    internal static List<FileRow> InListOrder(IEnumerable<FileRow> chosen, IReadOnlyList<FileRow> rows)
+    {
+        var set = chosen.ToHashSet();
+        return rows.Where(set.Contains).ToList();
+    }
+
+    /// <summary>Text as Windows apps paste it: every line ending a CRLF.</summary>
+    internal static string ClipboardText(string text) => text.Replace("\r\n", "\n").Replace("\n", "\r\n");
+
+    /// <summary>What Copy Description copies (null for nothing) and says, for <paramref name="rows"/>, in their order.
+    /// With more than one photo chosen, each description comes under its photo's name, even when only one is
+    /// described, so the paste says whose it is.</summary>
+    internal static (string? Text, string Said) DescriptionsToCopy(IReadOnlyList<FileRow> rows, Func<FileRow, string?, string?> saved)
+    {
+        if (rows.Count == 0) return (null, "Select a photo to copy its description");
+        var photos = rows.Where(r => r.Item is { IsVideo: false }).ToList();
+        if (photos.Count == 0) return (null, "Videos and folders aren't described");
+        var described = photos.Select(r => (Row: r, Text: saved(r, null))).Where(p => !string.IsNullOrWhiteSpace(p.Text)).ToList();
+        if (described.Count == 0)
+            return (null, photos.Count == 1 ? $"{photos[0].Name} hasn't been described yet" : "None of these photos has been described yet");
+        var text = photos.Count == 1 ? described[0].Text! : string.Join("\n\n", described.Select(p => $"{p.Row.Name}\n{p.Text}"));
+        var missing = photos.Count - described.Count;
+        var said = (described.Count == 1 ? "Copied the description" : $"Copied {described.Count:N0} descriptions")
+                   + missing switch { 0 => "", 1 => ". 1 photo hasn't been described yet", _ => $". {missing:N0} photos haven't been described yet" };
+        return (text, said);
+    }
+
     public async Task ExportAsync(IReadOnlyList<FileRow> rows, string folder)
     {
         var files = Files(rows);
@@ -582,7 +651,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         var saved = alreadyCaptioned;
         if (captions.Count > 0)
         {
-            // The caption, and for JPEG, PNG and TIFF files the accessibility fields too: choosing the command is the permission.
+            // The caption, and for JPEG, PNG, TIFF and HEIC files the accessibility fields too: choosing the command is the permission.
             var changes = captions.Select(c => MetadataWriter.FieldChanges.Replacing(c.Item, c.Caption)).ToList();
             var result = await WriteAsync("Saving caption…", captions.Select(c => c.Item).ToList(), _ => MetadataWriter.SetFieldsAsync(changes));
             saved += result.Succeeded;
@@ -1073,9 +1142,24 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     public (int Index, int Count)? GalleryPosition => FocusedRow is null ? null : (FocusedIndex, Rows.Count);
 
-    public void EnsureGallerySelection()
+    /// <summary>Selects the first photo when none is: the gallery always shows one.</summary>
+    public void SelectFirstIfNone()
     {
         if (FocusedRow is null && Rows.Count > 0) SelectionRequested?.Invoke([Rows[0].Id], false);
+    }
+
+    /// <summary>The photo the app started on, while the first read of photos' details is still going: when it ends and
+    /// the list re-sorts by the dates it found, you're put on the new first photo, unless you've moved, sorted, searched or
+    /// gone elsewhere meanwhile.</summary>
+    private string? _startedOn;
+
+    /// <summary>At launch: on the first photo, selected, so you can arrow straight away (Kelly, 14 Oct, as on the Mac).
+    /// In the gallery, the first photo is already chosen.</summary>
+    public void StartOnFirst()
+    {
+        if (Rows.Count == 0 || (FocusedRow is not null && !(SelectedRows is [var only] && only == Rows[0]))) return;
+        if (FocusedRow is null) SelectionRequested?.Invoke([Rows[0].Id], false);
+        if (!_fillTask.IsCompleted) _startedOn = Rows[0].Id;
     }
 
     public void MoveSelection(int delta)
@@ -1085,8 +1169,24 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         var next = current < 0 ? 0 : current + delta;
         if (next < 0 || next >= Rows.Count) { Beep(); return; }
         SelectionRequested?.Invoke([Rows[next].Id], false);
-        Announcer.Announce($"{Rows[next].Name}, {next + 1} of {Rows.Count}");
+        Announcer.Announce(MoveText(next));
     }
+
+    /// <summary>View > Labels > Gallery (#38): what the gallery says when you move to a photo, in order.</summary>
+    public IReadOnlyList<string> GalleryLabelOrder => Models.GalleryLabels.Clean(_settings.GalleryLabels);
+
+    public void SetGalleryLabels(IEnumerable<string> ids)
+    {
+        _settings.GalleryLabels = Models.GalleryLabels.Clean(ids);
+        SaveSettings();
+        OnPropertyChanged(nameof(GalleryLabelOrder));
+    }
+
+    /// <summary>The photo at <paramref name="index"/> as moving to it says it: the gallery's labels in the gallery
+    /// ("12 of 400" by default), and "name, n of N" in the list.</summary>
+    public string MoveText(int index) => ViewMode == ViewMode.Gallery
+        ? Models.GalleryLabels.Text(Rows[index], index + 1, Rows.Count, GalleryLabelOrder)
+        : $"{Rows[index].Name}, {index + 1} of {Rows.Count}";
 
     /// <summary>How much of the library is described (#119): its photos (not videos), and how many have a saved description
     /// of the Description Type in use. Null while the library is still loading. In memory, so quick even for a large
@@ -1103,7 +1203,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
     /// and videos (either would take the Description panel's text box away, and focus with it), without moving focus. So
     /// you can stay in the description box (reading with a braille display, say) and step from photo to photo: the box
     /// shows each one's description, to read there (automatic describing speaks only from the list or gallery). Says
-    /// "name, n of N", or "No next photo" at the end, as on the Mac.</summary>
+    /// "name, n of N" in the list and the gallery's labels in the gallery (#38), or "No next photo" at the end, as on the Mac.</summary>
     /// <param name="announce">False when focus is on the list, which says the new row itself.</param>
     public void StepPhoto(int direction, bool announce = true)
     {
@@ -1116,7 +1216,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             return;
         }
         SelectionRequested?.Invoke([Rows[index].Id], false);
-        if (announce) Announcer.Announce($"{Rows[index].Name}, {index + 1} of {Rows.Count}");
+        if (announce) Announcer.Announce(MoveText(index));
     }
 
     // MARK: Helpers

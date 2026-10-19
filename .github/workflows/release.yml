@@ -1,0 +1,174 @@
+name: Release
+
+# One tag releases both apps (Kelly, 13 Oct): pushing v<version> on main makes a draft GitHub release.
+#
+# - Windows is built, signed with Azure Artifact Signing and attached here: the .appinstaller, the bundle and the Windows
+#   App Runtime packages, all at the top level, since the .appinstaller finds them (and later updates) at
+#   https://github.com/<repo>/releases/latest/download/.
+# - The Mac is built by hand on Kelly's Mac, which has Xcode 27 (GitHub's runners don't, and without it the Mac app has
+#   no Apple Intelligence): scripts/release-mac.sh signs, notarizes and staples the DMG and attaches it to this draft,
+#   once the Windows files are on it.
+#
+# The draft is published when Kelly says go, once both are attached. On a pull request that changes this workflow, the
+# Windows installer is built unsigned, with no signing access at all, to check the release build.
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths: ['.github/workflows/release.yml', 'windows/scripts/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      name: ${{ steps.read.outputs.name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: read
+        name: The tag, windows/VERSION and the Mac's MARKETING_VERSION agree, and the tag is on main
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          windows=$(tr -d '[:space:]' < windows/VERSION)
+          mac=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9.]*\)"\{0,1\}.*/\1/p' project.yml | head -1)
+          name=$(sed -n 's/.*const string Name = "\([^"]*\)".*/\1/p' windows/src/PhotoFinder/AppInfo.cs | head -1)
+          echo "windows/VERSION: $windows; project.yml MARKETING_VERSION: $mac; name: $name"
+          if [ "$windows" != "$mac" ]; then echo "::error::windows/VERSION ($windows) and the Mac's MARKETING_VERSION ($mac) differ."; exit 1; fi
+          if [ "$REF_TYPE" = "tag" ]; then
+            if [ "$REF_NAME" != "v$windows" ]; then echo "::error::The tag $REF_NAME doesn't match the version $windows (expected v$windows)."; exit 1; fi
+            git fetch -q origin main
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$REF_NAME isn't on main. Tag a commit that's been merged."; exit 1; }
+          fi
+          echo "version=$windows" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+  # A pull request: built unsigned, with no environment, no Azure and nothing written.
+  windows-check:
+    name: Windows installer (unsigned check)
+    if: github.ref_type != 'tag'
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet restore PhotoFinder.sln
+      - name: Build the installer, unsigned
+        run: |
+          .\scripts\build-msix.ps1 -Flat -BaseUri "https://github.com/${{ github.repository }}/releases/latest/download" -Destination "$env:RUNNER_TEMP\release"
+          Get-ChildItem "$env:RUNNER_TEMP\release" | Format-Table Name, Length
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-unsigned
+          path: ${{ runner.temp }}/release
+
+  # A tag on main: built, signed and attached to the draft. Only this job can reach the signing environment, whose
+  # deployment policy allows v* tags alone.
+  windows-release:
+    name: Windows installer (signed)
+    if: github.ref_type == 'tag'
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 45
+    environment: azure-signing
+    permissions:
+      contents: write
+      id-token: write
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The installer's fourth version number counts commits.
+          fetch-depth: 0
+
+      - name: The release isn't already published
+        run: |
+          $draft = gh release view $env:TAG --json isDraft --jq .isDraft 2>$null
+          if ($LASTEXITCODE -eq 0 -and $draft -ne 'true') { throw "$env:TAG is already published. Raise the version (windows/VERSION and project.yml) and tag again." }
+          $global:LASTEXITCODE = 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet restore PhotoFinder.sln
+
+      - name: Get the Artifact Signing add-on
+        run: |
+          nuget install Microsoft.ArtifactSigning.Client -Version 1.0.146 -OutputDirectory "$env:RUNNER_TEMP\signing" -ExcludeVersion -NonInteractive
+          $dlib = Get-ChildItem "$env:RUNNER_TEMP\signing" -Recurse -Filter Azure.CodeSigning.Dlib.dll | Where-Object { $_.Directory.Name -eq 'x64' } | Select-Object -First 1
+          if (-not $dlib) { throw "The Artifact Signing add-on wasn't in the NuGet package." }
+          "ARTIFACT_SIGNING_DLIB=$($dlib.FullName)" >> $env:GITHUB_ENV
+
+      # Last before signing: GitHub's token behind this sign-in lasts only minutes, so the signing service's own token
+      # is fetched at once and cached for signtool.
+      - name: Sign in to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Get the signing service's token
+        run: az account get-access-token --resource https://codesigning.azure.net --query expiresOn -o tsv
+
+      - name: Build and sign the installer
+        env:
+          # Report a Bug's relay key (#138), put in the app's folder.
+          APPKIT_RELAY_KEY: ${{ secrets.APPKIT_RELAY_KEY }}
+        run: |
+          .\scripts\build-msix.ps1 -Sign -Flat -BaseUri "https://github.com/${{ github.repository }}/releases/latest/download" -Destination "$env:RUNNER_TEMP\release"
+          Get-ChildItem "$env:RUNNER_TEMP\release" | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer
+          path: ${{ runner.temp }}/release
+
+      - name: Attach to the draft release
+        env:
+          TITLE: ${{ needs.version.outputs.name }} ${{ needs.version.outputs.version }}
+        run: |
+          gh release view $env:TAG 2>$null | Out-Null
+          # The notes Kelly edits (docs/release-notes/<tag>.md), or GitHub's list of changes when there are none.
+          # From the repository's root: this job runs in windows/.
+          $notes = Join-Path $env:GITHUB_WORKSPACE "docs/release-notes/$env:TAG.md"
+          if ($LASTEXITCODE -ne 0) {
+            if (Test-Path $notes) {
+              Write-Host "Release notes: $notes"
+              gh release create $env:TAG --draft --verify-tag --title $env:TITLE --notes-file $notes
+            } else {
+              Write-Host "::warning::No docs/release-notes/$env:TAG.md, so the draft gets GitHub's list of changes."
+              gh release create $env:TAG --draft --verify-tag --title $env:TITLE --generate-notes
+            }
+            if ($LASTEXITCODE -ne 0) { throw "Couldn't make the draft release $env:TAG." }
+          } elseif (Test-Path $notes) {
+            # A draft already there (the tag pushed again): its notes become the reviewed ones too.
+            gh release edit $env:TAG --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { throw "Couldn't update the notes of the draft $env:TAG." }
+          }
+          gh release upload $env:TAG (Get-ChildItem "$env:RUNNER_TEMP\release" -File).FullName --clobber

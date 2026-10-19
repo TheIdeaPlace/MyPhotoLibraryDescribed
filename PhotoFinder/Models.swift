@@ -5,6 +5,9 @@ import UniformTypeIdentifiers
 
 enum SidebarID {
     static let allPhotos = "library:all"
+    /// The one row standing in for Photos' sections while Photos access isn't given (#47).
+    static let photosNoAccess = "library:noaccess"
+    static let photosNoAccessTitle = "Photos library: no access"
 }
 
 /// Where the rows in the file list come from.
@@ -16,6 +19,8 @@ enum SourceKind: Hashable {
     case month(year: Int, month: Int)
     /// A folder added to the library from outside Photos, or a folder inside one (#36).
     case directory(String)
+    /// The "Photos library: no access" row, shown instead of Photos' sections without access (#47). Lists nothing.
+    case photosNoAccess
 }
 
 /// A place in the sidebar. Items with `children` behave like folders: selecting one lists its children.
@@ -79,7 +84,22 @@ struct FileRow: Identifiable, Hashable, Sendable {
     let rating: Int
     let ratingText: String
     let locationText: String
+    /// Where the photo was taken, to about a metre, for looking up and remembering the place's name (#172). Nil
+    /// without coordinates.
+    let placeKey: PlaceKey?
+    /// The place's name when it's known and Look Up Place Names is on (#172): filled by the library model only while
+    /// Place Taken is showing, as descriptions are. Empty otherwise.
+    private(set) var placeName = ""
     let source: String
+
+    /// What Place Taken shows and sorts by: the place's name when it's known, otherwise the coordinates.
+    var placeTakenText: String { placeName.isEmpty ? locationText : placeName }
+
+    func withPlaceName(_ name: String) -> FileRow {
+        var copy = self
+        copy.placeName = name
+        return copy
+    }
 
     var isContainer: Bool { payload == .container }
 
@@ -123,8 +143,10 @@ struct FileRow: Identifiable, Hashable, Sendable {
         isFavorite = asset.isFavorite
         if let c = asset.location?.coordinate {
             locationText = String(format: "%.4f, %.4f", c.latitude, c.longitude)
+            placeKey = PlaceKey(latitude: c.latitude, longitude: c.longitude)
         } else {
             locationText = ""
+            placeKey = nil
         }
         source = switch asset.sourceType {
         case .typeCloudShared: "Shared Album"
@@ -189,8 +211,10 @@ struct FileRow: Identifiable, Hashable, Sendable {
         ratingText = rating == 0 ? "" : rating == 1 ? "1 star" : "\(rating) stars"
         if let lat = metadata?.latitude, let lon = metadata?.longitude {
             locationText = String(format: "%.4f, %.4f", lat, lon)
+            placeKey = PlaceKey(latitude: lat, longitude: lon)
         } else {
             locationText = ""
+            placeKey = nil
         }
         source = FolderRoots.displayName(file.folder)
     }
@@ -227,6 +251,7 @@ struct FileRow: Identifiable, Hashable, Sendable {
         rating = 0
         ratingText = ""
         locationText = ""
+        placeKey = nil
         source = ""
     }
 
@@ -302,8 +327,7 @@ final class NameCache: @unchecked Sendable {
     private let fileURL: URL
 
     init() {
-        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PhotoFinder", isDirectory: true)
+        let folder = AppInfo.dataFolder
         fileURL = folder.appendingPathComponent("FileNames.plist")
         if let data = try? Data(contentsOf: fileURL),
            let saved = try? PropertyListDecoder().decode([String: String].self, from: data) {

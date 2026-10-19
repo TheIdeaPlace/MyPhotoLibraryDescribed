@@ -99,6 +99,20 @@ enum ColumnOrder {
         defaults.set(order.first?.order == .reverse, forKey: sortDescendingKey)
     }
 
+    /// Rows in the list's order, as Windows sorts them: folders first whichever way it's sorted, then the column,
+    /// with ties A to Z by name, so folders without dates don't list backwards when the list is newest first.
+    static func sorted(_ rows: [FileRow], by order: [KeyPathComparator<FileRow>]) -> [FileRow] {
+        let byName = sortColumn(of: order) == "name"
+        return rows.sorted { a, b in
+            if a.isContainer != b.isContainer { return a.isContainer }
+            for comparator in order {
+                let result = comparator.compare(a, b)
+                if result != .orderedSame { return result == .orderedAscending }
+            }
+            return !byName && a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+    }
+
     /// The column a sort order is by, or nil if it isn't one of the columns.
     static func sortColumn(of order: [KeyPathComparator<FileRow>]) -> String? {
         guard var first = order.first else { return nil }
@@ -120,7 +134,7 @@ enum ColumnOrder {
         case "fileType": KeyPathComparator(\FileRow.fileType)
         case "orientation": KeyPathComparator(\FileRow.orientation)
         case "megapixels": KeyPathComparator(\FileRow.megapixels)
-        case "location": KeyPathComparator(\FileRow.locationText)
+        case "location": KeyPathComparator(\FileRow.placeTakenText)
         case "source": KeyPathComparator(\FileRow.source)
         case "description": KeyPathComparator(\FileRow.descriptionText)
         default: KeyPathComparator(\FileRow.name)
@@ -166,14 +180,14 @@ extension FileRow {
         case "fileType": fileType
         case "orientation": orientation
         case "megapixels": megapixelsText
-        case "location": locationText
+        case "location": placeTakenText
         case "source": source
         case "description": descriptionText
         default: ""
         }
     }
 
-    /// The row as VoiceOver reads it with these columns in this order: the Columns sheet's preview.
+    /// The row as VoiceOver reads it with these columns in this order: the preview in View > Labels, List tab.
     func line(for columns: [String]) -> String {
         let parts = columns.compactMap { id -> String? in
             let value = text(for: id)

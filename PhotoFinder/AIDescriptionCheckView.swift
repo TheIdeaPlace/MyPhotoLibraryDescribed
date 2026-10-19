@@ -7,6 +7,7 @@ import SwiftUI
 struct AIDescriptionCheckView: View {
     @Environment(LibraryModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
     @State private var result: AIDescriptionCheck?
     @State private var running: Task<Void, Never>?
     @State private var selected: SystemCheck.Item.ID?
@@ -34,7 +35,10 @@ struct AIDescriptionCheckView: View {
                         NSPasteboard.general.setString(result.text, forType: .string)
                         AccessibilityNotification.Announcement("Copied").post()
                     }
-                    Button("Report a Bug…") { model.reportBug(aiCheck: result) }
+                    Button("Report a Bug…") {
+                        model.prepareBugReport(aiCheck: result)
+                        openWindow(id: BugReportView.windowID)
+                    }
                 }
             } else {
                 ProgressView("Describing the sample photo…")

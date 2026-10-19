@@ -3,8 +3,10 @@ namespace PhotoFinder;
 /// <summary>
 /// The app's name, in one place. "My Photo Library Described" is a working name (#34): everything the app says or shows uses
 /// <see cref="Name"/>, and scripts\build-msix.ps1 reads it from here for the package's display names. Identifiers that
-/// are costly to change are kept separate on purpose: the package identity (TheIdeaPlace.PhotoFinder), the data folder
-/// (<see cref="DataFolderName"/>), the helper's photofinder-ai.exe alias and the announcement activity IDs.
+/// are costly to change after a release are kept separate on purpose: the package identity
+/// (TheIdeaPlace.MyPhotoLibraryDescribed), the data folder (<see cref="DataFolderName"/>), the installer's file names
+/// (<see cref="InstallerFile"/>), the helper's photofinder-ai.exe alias and the announcement activity IDs. Before 0.2.0 they
+/// moved from the old name, Photo Finder, without moving anyone's data (Kelly, 14 Oct: never released).
 /// Also compiled into the AI helper.
 /// </summary>
 internal static class AppInfo
@@ -14,9 +16,12 @@ internal static class AppInfo
     /// <summary>The Windows AI helper's name, as people see it.</summary>
     public const string HelperName = Name + " AI helper";
 
-    /// <summary>The folder under %LOCALAPPDATA%. Not the display name: renaming the app mustn't lose saved settings
-    /// and descriptions.</summary>
-    public const string DataFolderName = "PhotoFinder";
+    /// <summary>The folder under %LOCALAPPDATA%. It matches today's name, but it mustn't follow <see cref="Name"/> if the
+    /// app is renamed after a release: that would lose saved settings and descriptions.</summary>
+    public const string DataFolderName = "My Photo Library Described";
+
+    /// <summary>The installer people open, and where every copy looks for updates (the latest release's).</summary>
+    public const string InstallerFile = "MyPhotoLibraryDescribed.appinstaller";
 
     /// <summary>Follow-up questions in Get Info (#24). Off until Microsoft grants this app Phi Silica, a Limited Access
     /// Feature; Windows refuses it without that token.</summary>
@@ -28,8 +33,8 @@ internal static class AppInfo
     /// <summary>Where Report a Bug files issues.</summary>
     public const string IssuesUrl = $"https://github.com/{Repository}/issues/new";
 
-    /// <summary>Windows releases are tagged windows-v&lt;version&gt;, as the Mac's are mac-v&lt;version&gt;.</summary>
-    public const string ReleaseTagPrefix = "windows-v";
+    /// <summary>One tag releases both apps (Kelly, 13 Oct): v&lt;version&gt;.</summary>
+    public const string ReleaseTagPrefix = "v";
 
     /// <summary>The user guide and privacy policy, shared by both apps (#105).</summary>
     public const string UserGuideUrl = $"https://github.com/{Repository}/blob/main/docs/user-guide.md";

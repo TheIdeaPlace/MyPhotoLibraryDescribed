@@ -1,6 +1,6 @@
 # My Photo Library Described
 
-A screen-reader-first, Finder-style browser for photos, built as two separate apps that should **work the same wherever the platform allows**. "My Photo Library Described" is the name for now (Kelly, 13 Oct; it was "Photo Finder", and the repo moved to TheIdeaPlace/MyPhotoLibraryDescribed). It may change again, so don't build the name into anything that's hard to change (#34): identifiers keep the old name on purpose: the package and bundle IDs, the data folders, the `PhotoFinder` code namespaces, folders and projects, the photofinder-ai alias, the `PhotoFinder.appinstaller` and `PhotoFinder_<version>.msixbundle` file names, and the `CN=Photo Finder Development` publisher of unsigned builds. Leave them out of any find-and-replace.
+A screen-reader-friendly photo library app, built as two separate apps that should **work the same wherever the platform allows**. "My Photo Library Described" is the name for now (Kelly, 13 Oct; it was "Photo Finder", and the repo moved to TheIdeaPlace/MyPhotoLibraryDescribed). It may change again, so the display name lives in one place per app (#34). Before 0.2.0, the identifiers people can see move to the current name too, without moving anyone's data (Kelly, 14 Oct: never released; Windows in #187, the Mac's asked for in #13): the package ID `TheIdeaPlace.MyPhotoLibraryDescribed`, the bundle ID `net.theideaplace.MyPhotoLibraryDescribed`, the data folders (`%LOCALAPPDATA%\My Photo Library Described`, `~/Library/Application Support/My Photo Library Described`), the `MyPhotoLibraryDescribed.appinstaller` and `MyPhotoLibraryDescribed_<version>.msixbundle` file names, and the `CN=My Photo Library Described Development` publisher of unsigned builds. After a release, changing any of these needs a migration. Code names keep `PhotoFinder` on purpose: the namespaces, folders, projects, executables and the photofinder-ai alias. Leave those out of any find-and-replace.
 
 - **Mac:** `PhotoFinder/` (SwiftUI, PhotoKit, Apple Intelligence), tests in `PhotoFinderTests/`, project generated from `project.yml` by XcodeGen.
 - **Windows:** `windows/` (WPF, .NET, Windows AI through the packaged `PhotoFinderAI` helper). See `windows/README.md`.
@@ -19,6 +19,7 @@ Work is usually split between a Claude Code session on Kelly's Mac (the **Mac se
 4. **One change, both apps.** When a change to one app should also happen in the other, either do both in the same PR, or open an issue for the other side (`parity` plus its platform label) and link it from your PR.
 5. **Remote Control messages are only for pings** ("posted on #13, please look"). Acknowledge one with a short reply starting `ACK`. Never rely on a message alone for anything that matters.
 6. **When Kelly is needed** (a decision, a VoiceOver/JAWS/NVDA check, a credential), add `needs-kelly` to the issue and say exactly what's needed in a comment.
+7. **Anything we might do in a later version, feature or known bug, gets the `v-next` label** (Kelly, 14 Oct), so a release can point people to what's already on the radar: `gh issue list --label v-next`.
 
 ## Branches, PRs and merging
 
@@ -45,6 +46,15 @@ dotnet test --solution PhotoFinder.sln
 ```
 
 Windows AI only works from the packaged helper on a Copilot+ PC, so tests use fakes for it.
+
+## Releasing
+
+One tag releases both apps (Kelly, 13 Oct). Both carry one version: `windows/VERSION` and `MARKETING_VERSION` in `project.yml` must match.
+
+1. Raise both versions in a PR and merge it. The first public release is 0.2.0.
+2. Push the tag `v<version>` on a commit on main. `.github/workflows/release.yml` checks the versions match the tag, then builds the Windows installer, signs it with Azure Artifact Signing and attaches it to a **draft** GitHub release: `MyPhotoLibraryDescribed.appinstaller`, the bundle and the Windows App Runtime packages, at the top level. The draft's notes are `docs/release-notes/v<version>.md`, so edit that file, not the draft. Windows installs and updates from `releases/latest/download/`.
+3. On Kelly's Mac (Xcode 27, which GitHub's runners don't have), check out the tag and run `scripts/release-mac.sh --publish`. It builds, signs, notarizes and staples the DMG, and attaches it to the same draft. It refuses unless the tag is checked out and the draft already has the Windows files.
+4. Kelly says go, and the draft is published. Never publish a release without `MyPhotoLibraryDescribed.appinstaller`: the latest release is where every Windows copy looks for its updates. The signing environment `azure-signing` only accepts `v*` tags.
 
 ## Accessibility is the product
 

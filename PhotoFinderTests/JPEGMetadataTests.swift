@@ -1,3 +1,4 @@
+import CoreVideo
 import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
@@ -445,7 +446,7 @@ final class JPEGMetadataTests: XCTestCase {
         let untitled = try makeJPEG("untitled.jpg")
         try FileMetadataWriter.write(.init(caption: "Two dogs"), to: untitled)
         XCTAssertEqual(xmpValue(untitled, "dc:title"), "Two dogs")
-        // A title that was the caption (as Photo Finder on Windows wrote) keeps following it.
+        // A title that was the caption (as the Windows app wrote) keeps following it.
         let windows = try makeJPEG("windows.jpg", description: nil, xmp: exifToolXMP(caption: "Rex", title: "Rex"),
                                    iptc: standardIPTC(caption: "Rex", title: "Rex"))
         let read = try FileMetadataWriter.write(.init(caption: "Rex on the beach"), to: windows)
@@ -498,6 +499,9 @@ final class JPEGMetadataTests: XCTestCase {
         bytes.replaceSubrange(at..<(at + old.count), with: new)
         try Data(bytes).write(to: url)
         try assertRefused(.init(caption: short), url)
+        XCTAssertThrowsError(try FileMetadataWriter.write(.init(caption: short), to: url)) {
+            XCTAssertEqual($0 as? FileMetadataWriteError, FileMetadataWriter.olderCaptionWins, "says why")
+        }
         XCTAssertEqual(try FileMetadataWriter.write(.init(accessibilityDescription: short), to: url).altText, short)
     }
 
@@ -565,7 +569,7 @@ final class JPEGMetadataTests: XCTestCase {
 
     // MARK: - Refusing
 
-    func testExtendedXMPIsRefusedAndLeftAlone() throws {
+    func testExtendedXMPTheMainXMPDoesntNameIsRefusedAndLeftAlone() throws {
         let extended = segment(0xE1, JPEGMetadata.extendedXMPHeader + [UInt8](repeating: 0x41, count: 40))
         try assertRefused(.init(caption: short), try makeJPEG(extra: [extended]))
     }
@@ -622,7 +626,8 @@ final class JPEGMetadataTests: XCTestCase {
         try assertRefused(.init(caption: short), cut)
     }
 
-    func testAMultiPictureJPEGIsStillRefused() throws {
+    func testAMultiPictureJPEGWhoseIndexCantBeFollowedIsRefused() throws {
+        // An MPF segment with an empty directory: there's no MP Entry to patch, so the file mustn't change size.
         let body: [UInt8] = Array("MPF".utf8) + [0] + [0x4D, 0x4D, 0, 42, 0, 0, 0, 8, 0, 0]
         let url = try makeJPEG(extra: [segment(0xE2, body)])
         let before = try Data(contentsOf: url)
@@ -630,5 +635,551 @@ final class JPEGMetadataTests: XCTestCase {
             XCTAssertEqual(error as? FileMetadataWriteError, .multiPicture)
         }
         XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+
+    // MARK: - Multi-picture files (#90)
+
+    /// A multi-picture file as Ultra HDR and MPO cameras write it: `main` with an MPF index (CIPA DC-007) after `count`
+    /// of its segments, then `second`. Its two MP Entries give the main picture's size and where the second starts,
+    /// counted from the index's TIFF header. The same layout as the Windows app's tests (#150): "MPF\0" at 0 of the
+    /// segment's body, the header at 4, the IFD at 8 from the header, the MP Entries at 50 from it.
+    private func multiPicture(_ main: [UInt8], second: [UInt8], big: Bool, after count: Int) throws -> [UInt8] {
+        var tiff: [UInt8] = (big ? [0x4D, 0x4D, 0, 0x2A] : [0x49, 0x49, 0x2A, 0]) + u32(8, big) + u16(3, big)
+        tiff += entry(0xB000, 7, 4, Array("0100".utf8), big)  // MPFVersion
+        tiff += entry(0xB001, 4, 1, u32(2, big), big)  // NumberOfImages
+        tiff += entry(0xB002, 7, 32, u32(50, big), big)  // MPEntry: 32 bytes at 50
+        tiff += u32(0, big) + [UInt8](repeating: 0, count: 32)
+        let segments = try JPEGMetadata.segments(of: Data(main)).segments
+        let at = 2 + segments.prefix(count).reduce(0) { $0 + $1.raw.count }
+        var bytes = Array(main[..<at]) + segment(0xE2, MultiPictureIndex.signature + tiff) + Array(main[at...])
+        let header = at + 8, entries = header + 50
+        func put(_ offset: Int, _ value: Int) { bytes.replaceSubrange(offset..<(offset + 4), with: u32(value, big)) }
+        put(entries, 0x030000)  // the main picture: baseline, representative
+        put(entries + 4, bytes.count)
+        put(entries + 8, 0)
+        put(entries + 16 + 4, second.count)
+        put(entries + 16 + 8, bytes.count - header)
+        return bytes + second
+    }
+
+    /// The main picture's size and where the second starts in the file, from a file's MP Entries, read here
+    /// independently of MultiPictureIndex.
+    private func index(_ bytes: [UInt8]) throws -> (size: Int, second: Int) {
+        let header = try XCTUnwrap(offset(of: 0xE2, in: bytes)) + 8
+        let big = bytes[header] == 0x4D
+        func u32(_ at: Int) -> Int {
+            let b = bytes[at..<(at + 4)].map(Int.init)
+            return big ? b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3] : b[3] << 24 | b[2] << 16 | b[1] << 8 | b[0]
+        }
+        return (u32(header + 50 + 4), header + u32(header + 50 + 16 + 8))
+    }
+
+    /// A gain map: a small JPEG of its own.
+    private func gainMap() throws -> [UInt8] { try encoded(width: 8, height: 4) }
+
+    func testAnUltraHDRPhotoIsCaptionedWithItsIndexStillPointingAtBothPictures() throws {
+        // Apple's layout: JFIF, EXIF, then the index, and no XMP, so the new XMP goes in before the index, which moves
+        // with it; only the main picture's size changes.
+        for big in [false, true] {
+            let second = try gainMap()
+            let url = try makeJPEG("hdr-\(big).jpg", xmp: .none)
+            let before = try multiPicture([UInt8](Data(contentsOf: url)), second: second, big: big, after: 2)
+            try Data(before).write(to: url)
+            XCTAssertEqual(try index(before).size, before.count - second.count)
+
+            let read = try FileMetadataWriter.write(.init(caption: short, accessibilityDescription: short), to: url)
+            XCTAssertEqual(read.caption, short)
+            XCTAssertEqual(read.altText, short)
+            let after = [UInt8](try Data(contentsOf: url))
+            XCTAssertGreaterThan(after.count, before.count)
+            let (size, start) = try index(after)
+            XCTAssertEqual(size, after.count - second.count, "big-endian: \(big)")
+            XCTAssertEqual(Array(after[(size - 2)..<size]), [0xFF, 0xD9])
+            XCTAssertEqual(Array(after[start...]), second, "the gain map is byte for byte where the index says")
+            // The order kept: EXIF, the new XMP, then the index.
+            let markers = try segments(url).map { JPEGMetadata.isXMP($0) ? "XMP" : JPEGMetadata.isEXIF($0) ? "EXIF"
+                : MultiPictureIndex.isIndex($0) ? "MPF" : String(format: "%02X", $0.marker) }
+            XCTAssertEqual(Array(markers.prefix(4)), ["E0", "EXIF", "XMP", "MPF"])
+            // Only the size field in the index changed.
+            let old = try XCTUnwrap(JPEGMetadata.segments(of: Data(before)).segments.first(where: MultiPictureIndex.isIndex))
+            let new = try XCTUnwrap(segments(url).first(where: MultiPictureIndex.isIndex))
+            XCTAssertEqual(old.raw.count, new.raw.count)
+            XCTAssertLessThanOrEqual(zip(old.raw, new.raw).filter { $0 != $1 }.count, 4)
+        }
+    }
+
+    func testAnIndexBeforeTheXMPHasTheSecondPicturesStartMovedToo() throws {
+        // The index right after the start of the file, ahead of an XMP that grows: the index stays put, so the second
+        // picture moves away from it.
+        for big in [false, true] {
+            let second = try gainMap()
+            let main = [UInt8](try Data(contentsOf: makeJPEG("main-\(big).jpg")))
+            let jpeg = try multiPicture(main, second: second, big: big, after: 0)
+            let before = try index(jpeg)
+
+            let changed = [UInt8](try JPEGMetadata.rewrite(Data(jpeg), setting: [FileMetadataWriter.captionPath: short]))
+            let delta = changed.count - jpeg.count
+            XCTAssertGreaterThan(delta, 0)
+            let after = try index(changed)
+            XCTAssertEqual(after.size, before.size + delta)
+            XCTAssertEqual(after.second, before.second + delta)
+            XCTAssertEqual(Array(changed[after.second...]), second)
+        }
+    }
+
+    func testAnXMPThatShrinksAfterTheIndexMovesTheSecondPictureBack() throws {
+        // An XMP with a lot of padding, after the index, is written smaller: everything moves the other way.
+        let padded = exifToolXMP().replacingOccurrences(of: "<?xpacket end", with: String(repeating: " ", count: 8000) + "<?xpacket end")
+        let main = [UInt8](try Data(contentsOf: makeJPEG(xmp: .some(padded))))
+        let second = try gainMap()
+        let jpeg = try multiPicture(main, second: second, big: true, after: 0)
+        let before = try index(jpeg)
+        let changed = [UInt8](try JPEGMetadata.rewrite(Data(jpeg), setting: [FileMetadataWriter.captionPath: short]))
+        let delta = changed.count - jpeg.count
+        XCTAssertLessThan(delta, 0)
+        let after = try index(changed)
+        XCTAssertEqual(after.size, before.size + delta)
+        XCTAssertEqual(Array(changed[after.second...]), second)
+    }
+
+    func testAMainSizeRecordedLongOrShortIsKeptInStep() throws {
+        // libultrahdr's Apple sample records the main picture 70 bytes long, into the gain map; Pixel's photos record
+        // it about 300 bytes short. Where the gain map starts is exact, which is what readers use, so these are captioned
+        // and the size is kept in step.
+        for (big, off) in [(true, 70), (false, -256)] {
+            let second = try gainMap()
+            let main = [UInt8](try Data(contentsOf: makeJPEG("off-\(off).jpg", xmp: .none)))
+            var jpeg = try multiPicture(main, second: second, big: big, after: 2)
+            let sizeAt = try XCTUnwrap(offset(of: 0xE2, in: jpeg)) + 8 + 50 + 4
+            jpeg.replaceSubrange(sizeAt..<(sizeAt + 4), with: u32(try index(jpeg).size + off, big))
+            let before = try index(jpeg)
+
+            let changed = [UInt8](try JPEGMetadata.rewrite(Data(jpeg), setting: [FileMetadataWriter.captionPath: short]))
+            let after = try index(changed)
+            XCTAssertEqual(after.size, before.size + changed.count - jpeg.count)
+            XCTAssertEqual(Array(changed[after.second...]), second)
+        }
+    }
+
+    func testAnIndexThatCantBeFollowedIsRefusedWhenTheFileWouldGrow() throws {
+        // Offsets within the MPF segment's body ("MPF\0" at 0, the header at 4), little-endian, as multiPicture writes
+        // it; the same cases as the Windows app's tests (#150).
+        let cases: [(String, Int, [UInt8])] = [
+            ("type", 40, [4, 0]),
+            ("count of none", 42, [0, 0, 0, 0]),
+            ("count not a whole entry", 42, [33, 0, 0, 0]),
+            ("count too many", 42, [0, 8, 0, 0]),
+            ("entries past the segment", 46, [0, 1, 0, 0]),
+            ("IFD past the segment", 8, [0, 1, 0, 0]),
+            ("no MP Entry tag", 38, [0x05, 0xB0]),
+            ("main picture not at the start", 62, [1, 0, 0, 0]),
+            ("main size past the file", 58, [0xFF, 0xFF, 0xFF, 0x7F]),
+            ("second picture's start missing", 78, [0, 0, 0, 0]),
+            ("second picture's start one byte out", 78, []),
+            ("not a byte order", 4, [0x58, 0x58]),
+        ]
+        let second = try gainMap()
+        let main = [UInt8](try Data(contentsOf: makeJPEG(xmp: .none)))
+        let good = try multiPicture(main, second: second, big: false, after: 2)
+        XCTAssertNoThrow(try JPEGMetadata.rewrite(Data(good), setting: [FileMetadataWriter.captionPath: short]))
+        let body = try XCTUnwrap(offset(of: 0xE2, in: good)) + 4
+        for (what, at, value) in cases {
+            var jpeg = good
+            if value.isEmpty { jpeg[body + at] &+= 1 } else { jpeg.replaceSubrange((body + at)..<(body + at + value.count), with: value) }
+            XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(jpeg), setting: [FileMetadataWriter.captionPath: short]), what) { error in
+                XCTAssertEqual(error as? FileMetadataWriteError, .multiPicture, what)
+            }
+        }
+    }
+
+    func testAFileWithTwoIndexesIsntGrown() throws {
+        let main = [UInt8](try Data(contentsOf: makeJPEG(xmp: .none)))
+        let jpeg = try multiPicture(main, second: try gainMap(), big: false, after: 2)
+        let segment = try XCTUnwrap(JPEGMetadata.segments(of: Data(jpeg)).segments.first(where: MultiPictureIndex.isIndex))
+        let at = try XCTUnwrap(offset(of: 0xE2, in: jpeg))
+        let twice = Array(jpeg[..<at]) + segment.raw + Array(jpeg[at...])
+        XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(twice), setting: [FileMetadataWriter.captionPath: short])) { error in
+            XCTAssertEqual(error as? FileMetadataWriteError, .multiPicture)
+        }
+    }
+
+    func testAnIndexThatCantBeFollowedIsStillChangedWhenTheSizeStaysTheSame() throws {
+        // Written once, the XMP has the same size when the same caption is written again, so the index needn't change.
+        let url = try makeJPEG()
+        try FileMetadataWriter.write(.init(caption: short), to: url)
+        var bytes = [UInt8](try Data(contentsOf: url))
+        let body: [UInt8] = Array("MPF".utf8) + [0] + [0x4D, 0x4D, 0, 42, 0, 0, 0, 8, 0, 0]
+        bytes.insert(contentsOf: segment(0xE2, body), at: 2)
+        let changed = try JPEGMetadata.rewrite(Data(bytes), setting: [FileMetadataWriter.captionPath: short])
+        XCTAssertEqual(changed.count, bytes.count)
+    }
+
+    func testAnHDRPhotoImageIOWroteKeepsAGainMapImageIOStillFinds() throws {
+        // A JPEG with a gain map as the Mac writes one (its HDR photos' layout), captioned, then read back by ImageIO.
+        let url = temp.appendingPathComponent("apple-hdr.jpg")
+        let context = try XCTUnwrap(CGContext(data: nil, width: 64, height: 32, bitsPerComponent: 8, bytesPerRow: 0,
+                                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(red: 0.2, green: 0.5, blue: 0.8, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 64, height: 32))
+        let gain = (0..<(32 * 16)).map { UInt8($0 % 256) }
+        let description: [CFString: Any] = [kCGImagePropertyWidth: 32, kCGImagePropertyHeight: 16, kCGImagePropertyBytesPerRow: 32,
+                                            kCGImagePropertyPixelFormat: kCVPixelFormatType_OneComponent8]
+        let metadata = CGImageMetadataCreateMutable()
+        _ = CGImageMetadataRegisterNamespaceForPrefix(metadata, "http://ns.apple.com/HDRGainMap/1.0/" as CFString,
+                                                      "HDRGainMap" as CFString, nil)
+        _ = CGImageMetadataSetValueWithPath(metadata, nil, "HDRGainMap:HDRGainMapVersion" as CFString, 65536 as CFNumber)
+        let info: [CFString: Any] = [kCGImageAuxiliaryDataInfoData: Data(gain),
+                                     kCGImageAuxiliaryDataInfoDataDescription: description,
+                                     kCGImageAuxiliaryDataInfoMetadata: metadata]
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), nil)
+        CGImageDestinationAddAuxiliaryDataInfo(destination, kCGImageAuxiliaryDataTypeHDRGainMap, info as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        func gainMap() -> Data? {
+            CGImageSourceCreateWithURL(url as CFURL, nil)
+                .flatMap { CGImageSourceCopyAuxiliaryDataInfoAtIndex($0, 0, kCGImageAuxiliaryDataTypeHDRGainMap) as? [CFString: Any] }
+                .flatMap { $0[kCGImageAuxiliaryDataInfoData] as? Data }
+        }
+        let before = try Data(contentsOf: url)
+        guard JPEGLayout.hasMultiPicture(before), let map = gainMap() else {
+            throw XCTSkip("This macOS didn't write the gain map with a Multi-Picture index.")
+        }
+
+        let read = try FileMetadataWriter.write(.init(caption: short, accessibilityDescription: short), to: url)
+        XCTAssertEqual(read.caption, short)
+        XCTAssertGreaterThan(try Data(contentsOf: url).count, before.count)
+        XCTAssertEqual(gainMap(), map, "ImageIO still finds the same gain map through the patched index")
+        XCTAssertEqual(JPEGLayout.trailingData(try Data(contentsOf: url)), JPEGLayout.trailingData(before))
+
+        // The index's sizes and starts, before and after: the main picture grew by what the file did, and the gain map
+        // starts where it did relative to the picture's end.
+        func layout(_ bytes: Data) throws -> (index: MultiPictureIndex, end: Int) {
+            let list = try JPEGMetadata.segments(of: bytes).segments
+            let position = list.firstIndex(where: MultiPictureIndex.isIndex)!
+            let start = 2 + list[..<position].reduce(0) { $0 + $1.raw.count }
+            let header = start + list[position].bodyStart + MultiPictureIndex.signature.count
+            let index = try MultiPictureIndex.read([UInt8](bytes), header: header, segmentEnd: start + list[position].raw.count)
+            return (index, try XCTUnwrap(JPEGLayout.endOfPicture(bytes)))
+        }
+        let after = try Data(contentsOf: url)
+        let (old, oldEnd) = try layout(before), (new, newEnd) = try layout(after)
+        XCTAssertEqual(new.sizes[0] - old.sizes[0], after.count - before.count)
+        XCTAssertEqual(new.header + new.offsets[1] - newEnd, old.header + old.offsets[1] - oldEnd)
+    }
+
+    func testAnIndexThatDoesntPointAtTheSecondPictureIsLeftAlone() throws {
+        let url = try makeJPEG(xmp: .none)
+        var jpeg = try multiPicture([UInt8](Data(contentsOf: url)), second: try gainMap(), big: false, after: 2)
+        // The second picture's start, one byte out.
+        jpeg[try XCTUnwrap(offset(of: 0xE2, in: jpeg)) + 8 + 50 + 16 + 8] &+= 1
+        try Data(jpeg).write(to: url)
+        try assertRefused(.init(caption: short), url)
+        XCTAssertEqual(FileMetadataWriteError.multiPicture.errorDescription,
+                       "It holds a second picture, such as an HDR map, laid out in a way that can't be updated safely.")
+    }
+
+    // MARK: - The last look at the EXIF (#111)
+
+    /// A same-sized EXIF used to pass the last look whatever had changed in it. Now only IFD0's table and the old
+    /// description's bytes may differ, so a mistake that zeroed the maker note or the thumbnail is caught.
+    func testTheLastLookRefusesAnEXIFChangedAnywhereButItsDescription() throws {
+        for big in [true, false] {
+            let label = big ? "big-endian" : "little-endian"
+            let data = try Data(contentsOf: makeJPEG("check-\(label).jpg", big: big))
+            let (before, picture) = try JPEGMetadata.segments(of: data)
+            let good = [UInt8](try JPEGMetadata.rewrite(data, setting: [FileMetadataWriter.captionPath: short]))
+            XCTAssertNoThrow(try JPEGMetadata.check(Data(good), against: before, picture), label)
+
+            // Where the EXIF's TIFF data is in the new file, and how long it is.
+            let exifAt = try XCTUnwrap(offset(of: 0xE1, in: good))
+            let tiff = exifAt + 4 + JPEGMetadata.exifHeader.count
+            let tiffLength = (Int(good[exifAt + 2]) << 8 | Int(good[exifAt + 3])) - 2 - JPEGMetadata.exifHeader.count
+            let note = tiff + (try XCTUnwrap(Data(good[tiff...]).range(of: Data(Self.makerNote))).lowerBound)
+            let make = tiff + (try XCTUnwrap(Data(good[tiff...]).range(of: Data(Self.make.utf8))).lowerBound)
+
+            func refused(_ change: (inout [UInt8]) -> Void, _ what: String) {
+                var bad = good
+                change(&bad)
+                XCTAssertNotEqual(bad, good, "\(label): \(what)")
+                XCTAssertThrowsError(try JPEGMetadata.check(Data(bad), against: before, picture), "\(label): \(what)")
+            }
+            refused({ $0[note + 100] = 0 }, "a maker note byte zeroed")
+            refused({ $0[tiff + tiffLength - 1] ^= 0xFF }, "the thumbnail's last byte changed")
+            refused({ $0[make] = 0 }, "the camera make's text zeroed")
+            // IFD0's table, but not as taking out the description leaves it: Orientation changed.
+            let orientation = tiff + 8 + 2 + 12 + 8  // the second entry left, its value
+            refused({ $0[orientation + (big ? 1 : 0)] = 6 }, "Orientation in IFD0's table changed")
+            // The old text's bytes, not zeroed but changed.
+            let oldText = 8 + 2 + 4 * 12 + 4
+            refused({ $0[tiff + oldText] = UInt8(ascii: "X") }, "the old description's bytes changed to something else")
+            // Nothing changed in the EXIF but its header.
+            refused({ $0[exifAt + 4] = UInt8(ascii: "e") }, "the EXIF header changed")
+        }
+    }
+
+    func testTakingOutTheDescriptionIsRecognisedAndAnythingElseIsnt() throws {
+        thumbnail = try encoded(width: 8, height: 4)
+        for big in [true, false] {
+            let old = exif(big: big, description: "Camera caption", thumbnail: thumbnail)
+            let new = try XCTUnwrap(PNGMetadata.removingImageDescription(fromEXIF: old))
+            XCTAssertTrue(PNGMetadata.onlyImageDescriptionRemoved(from: old, to: new))
+            XCTAssertFalse(PNGMetadata.onlyImageDescriptionRemoved(from: old, to: old), "unchanged isn't a removal")
+            XCTAssertFalse(PNGMetadata.onlyImageDescriptionRemoved(from: old, to: new.dropLast()), "a different size")
+            var zeroedThumbnail = new
+            for i in (new.count - thumbnail.count)..<new.count { zeroedThumbnail[i] = 0 }
+            XCTAssertFalse(PNGMetadata.onlyImageDescriptionRemoved(from: old, to: zeroedThumbnail), "the thumbnail zeroed")
+            let none = exif(big: big, description: nil, thumbnail: thumbnail)
+            XCTAssertFalse(PNGMetadata.onlyImageDescriptionRemoved(from: none, to: none), "no description to take out")
+        }
+    }
+
+    // MARK: - Extended XMP (#149)
+
+    private func md5(_ bytes: [UInt8]) -> String {
+        Insecure.MD5.hash(data: bytes).map { String(format: "%02X", $0) }.joined()
+    }
+
+    /// A Pixel Ultra HDR photo's main XMP: the gain map's version, the container's directory, and the GUID naming the
+    /// extension, laid out as Pixel's Adobe XMP Core writes it.
+    private func pixelMainXMP(guid: String?) -> String {
+        """
+        <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc003">
+          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description rdf:about=""
+                xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/"
+                xmlns:xmpNote="http://ns.adobe.com/xmp/note/"
+                xmlns:Container="http://ns.google.com/photos/1.0/container/"
+                xmlns:Item="http://ns.google.com/photos/1.0/container/item/"
+              hdrgm:Version="1.0"\(guid.map { "\n      xmpNote:HasExtendedXMP=\"\($0)\"" } ?? "")>
+              <Container:Directory>
+                <rdf:Seq>
+                  <rdf:li rdf:parseType="Resource">
+                    <Container:Item Item:Mime="image/jpeg" Item:Semantic="Primary"/>
+                  </rdf:li>
+                  <rdf:li rdf:parseType="Resource">
+                    <Container:Item Item:Mime="image/jpeg" Item:Length="62570" Item:Semantic="GainMap"/>
+                  </rdf:li>
+                </rdf:Seq>
+              </Container:Directory>
+            </rdf:Description>
+          </rdf:RDF>
+        </x:xmpmeta>
+        """
+    }
+
+    /// The HDR+ maker note Pixel keeps in the extension: long enough to need two segments.
+    private static let makerNoteText = Data((0..<75_000).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) }).base64EncodedString()
+
+    /// The extension's packet, with a caption of its own when `caption`.
+    private func extensionPacket(caption: String? = nil, altText: String? = nil) -> [UInt8] {
+        let alt = altText.map { """
+              <Iptc4xmpCore:AltTextAccessibility><rdf:Alt><rdf:li xml:lang="x-default">\($0)</rdf:li></rdf:Alt></Iptc4xmpCore:AltTextAccessibility>
+            """ } ?? ""
+        let dc = caption.map { """
+             xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:Iptc4xmpCore="http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/">
+              <dc:description><rdf:Alt><rdf:li xml:lang="x-default">\($0)</rdf:li></rdf:Alt></dc:description>
+            \(alt)
+            </rdf:Description>
+            """ } ?? "/>"
+        return Array("""
+        <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc003">
+          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description rdf:about=""
+                xmlns:GCamera="http://ns.google.com/photos/1.0/camera/"
+              GCamera:HdrPlusMakernote="\(Self.makerNoteText)"\(dc)
+          </rdf:RDF>
+        </x:xmpmeta>
+        """.utf8)
+    }
+
+    /// The extension's segments: GUID, the packet's whole length, where the part goes, then the part.
+    private func extensionSegments(_ packet: [UInt8], guid: String, chunk: Int = 65_000) -> [[UInt8]] {
+        stride(from: 0, to: packet.count, by: chunk).map { start in
+            segment(0xE1, JPEGMetadata.extendedXMPHeader + Array(guid.utf8) + u32(packet.count, true) + u32(start, true)
+                    + Array(packet[start..<min(start + chunk, packet.count)]))
+        }
+    }
+
+    /// A photo laid out as a Pixel's Ultra HDR (EXIF, XMP, its extension, then the Multi-Picture index and the gain map
+    /// after the picture), with the camera's other segments too.
+    private func pixelPhoto(_ name: String, main: String?, extensions: [[UInt8]], second: [UInt8]) throws -> URL {
+        let xmp: String?? = main == nil ? .none : .some(main)
+        let url = try makeJPEG(name, xmp: xmp, extra: extensions)
+        let count = try segments(url).filter { (0xE0...0xEF).contains($0.marker) || $0.marker == 0xFE }.count
+        try Data(multiPicture([UInt8](Data(contentsOf: url)), second: second, big: true, after: count)).write(to: url)
+        return url
+    }
+
+    private func extensions(_ url: URL) throws -> [[UInt8]] {
+        try segments(url).filter(JPEGMetadata.isExtendedXMP).map(\.raw)
+    }
+
+    func testAPixelPhotoWithExtendedXMPIsCaptionedAndKeepsItsExtensionAndGainMap() throws {
+        let packet = extensionPacket(), guid = md5(packet)
+        let parts = extensionSegments(packet, guid: guid)
+        XCTAssertEqual(parts.count, 2)
+        let second = try gainMap()
+        let url = try pixelPhoto("pixel.jpg", main: pixelMainXMP(guid: guid), extensions: parts, second: second)
+        let before = [UInt8](try Data(contentsOf: url))
+        let pixelsBefore = try XCTUnwrap(pixels(url))
+        XCTAssertEqual(xmpValue(url, "GCamera:HdrPlusMakernote"), Self.makerNoteText, "ImageIO merges the extension")
+
+        for caption in [short, "A second caption, written over the first."] {
+            let read = try FileMetadataWriter.write(.init(caption: caption, accessibilityDescription: caption), to: url)
+            XCTAssertEqual(read.caption, caption)
+            XCTAssertEqual(read.altText, caption)
+            let after = [UInt8](try Data(contentsOf: url))
+
+            XCTAssertEqual(try extensions(url), parts, "the extension is byte for byte")
+            let main = try XCTUnwrap(JPEGMetadata.xmp(of: Data(after)))
+            XCTAssertEqual(JPEGMetadata.ExtendedXMP.guid(in: main), guid, "the main XMP still names the extension")
+            XCTAssertEqual(FileMetadata.xmpString(main, "hdrgm:Version"), "1.0")
+            XCTAssertEqual(xmpValue(url, "GCamera:HdrPlusMakernote"), Self.makerNoteText, "ImageIO still merges the extension")
+            // The XMP still comes ahead of its extension.
+            let order = try segments(url).map { JPEGMetadata.isXMP($0) ? "XMP" : JPEGMetadata.isExtendedXMP($0) ? "Ext"
+                : MultiPictureIndex.isIndex($0) ? "MPF" : "" }.filter { !$0.isEmpty }
+            XCTAssertEqual(order, ["XMP", "Ext", "Ext", "MPF"])
+            // The index, after the XMP, has the gain map's start moved by what the XMP grew.
+            let (size, start) = try index(after)
+            XCTAssertEqual(size, after.count - second.count)
+            XCTAssertEqual(Array(after[start...]), second)
+            XCTAssertEqual(pixels(url), pixelsBefore)
+            XCTAssertEqual(try untouchedSegments(url).filter { !MultiPictureIndex.isIndex($0) },
+                           try JPEGMetadata.segments(of: Data(before)).segments
+                            .filter { !JPEGMetadata.isXMP($0) && !JPEGMetadata.isEXIF($0) && !MultiPictureIndex.isIndex($0) })
+        }
+    }
+
+    func testExtendedXMPThatDoesntAddUpIsRefusedAndLeftAlone() throws {
+        let packet = extensionPacket(), guid = md5(packet)
+        let parts = extensionSegments(packet, guid: guid)
+        let wrong = md5(packet + [0x20])
+        func renumbered(_ part: [UInt8], at field: Int, _ value: Int) -> [UInt8] {
+            let at = 4 + JPEGMetadata.extendedXMPHeader.count + 32 + field
+            var part = part
+            part.replaceSubrange(at..<(at + 4), with: u32(value, true))
+            return part
+        }
+        let main = pixelMainXMP(guid: guid), lower = guid.lowercased(), other = Array("<x/>".utf8)
+        let empty = segment(0xE1, JPEGMetadata.extendedXMPHeader + Array(guid.utf8) + u32(packet.count, true)
+                            + u32(packet.count, true))
+        let cases: [(String, main: String?, extensions: [[UInt8]])] = [
+            ("the GUID isn't the packet's MD5", pixelMainXMP(guid: wrong), extensionSegments(packet, guid: wrong)),
+            ("the GUID in lowercase", pixelMainXMP(guid: lower), extensionSegments(packet, guid: lower)),
+            ("a part missing", main, [parts[0]]),
+            ("the first part missing", main, [parts[1]]),
+            ("a part twice", main, parts + [parts[1]]),
+            ("parts overlapping", main, [parts[0], renumbered(parts[1], at: 4, 64_999)]),
+            ("a part with another length", main, [parts[0], renumbered(parts[1], at: 0, packet.count + 1)]),
+            ("a part of another extension", main, parts + extensionSegments(other, guid: md5(other))),
+            ("a part with no packet", main, parts + [empty]),
+            ("the main XMP doesn't name it", pixelMainXMP(guid: nil), parts),
+            ("no main XMP", nil, parts),
+        ]
+        for (index, (what, main, extensions)) in cases.enumerated() {
+            let url = try pixelPhoto("bad-\(index).jpg", main: main, extensions: extensions, second: try gainMap())
+            XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(contentsOf: url), setting: [FileMetadataWriter.captionPath: short]),
+                                 what) { error in
+                XCTAssertEqual(error as? PNGMetadata.Failure, JPEGMetadata.ExtendedXMP.refused, what)
+            }
+            try assertRefused(.init(caption: short, accessibilityDescription: short), url)
+        }
+        // The refusal says what it is, as Windows' does.
+        XCTAssertEqual(JPEGMetadata.ExtendedXMP.refused,
+                       .malformed("Its metadata is spread over several parts (Extended XMP) that don't add up."))
+    }
+
+    func testTheCaptionIsNamedFirstWhenSeveralFieldsAreInTheExtension() throws {
+        // Use Description as Caption writes the caption and alt text together; the caption is named, as on Windows.
+        let packet = extensionPacket(caption: "Their caption", altText: "Their alt text"), guid = md5(packet)
+        let url = try pixelPhoto("both-in-extension.jpg", main: pixelMainXMP(guid: guid),
+                                 extensions: extensionSegments(packet, guid: guid), second: try gainMap())
+        XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(contentsOf: url),
+                                                      setting: ["dc:description": short, "Iptc4xmpCore:AltTextAccessibility": short])) {
+            XCTAssertEqual($0 as? PNGMetadata.Failure, .malformed("Its metadata is spread over several parts (Extended XMP), and its caption is kept in another part."))
+        }
+    }
+
+    func testAnExtensionHoldingACaptionIsRefusedForTheCaptionButNotForOtherFields() throws {
+        let packet = extensionPacket(caption: "The extension's caption"), guid = md5(packet)
+        let url = try pixelPhoto("caption-in-extension.jpg", main: pixelMainXMP(guid: guid),
+                                 extensions: extensionSegments(packet, guid: guid), second: try gainMap())
+        try assertRefused(.init(caption: short), url)
+        XCTAssertThrowsError(try JPEGMetadata.rewrite(Data(contentsOf: url), setting: ["dc:description": short])) {
+            XCTAssertEqual($0 as? PNGMetadata.Failure, JPEGMetadata.ExtendedXMP.heldInExtension("dc:description"))
+        }
+        // The alt text isn't in the extension, so it can go in the main XMP.
+        let read = try FileMetadataWriter.write(.init(accessibilityDescription: short), to: url)
+        XCTAssertEqual(read.altText, short)
+    }
+
+    func testTheLastLookRefusesAMainXMPThatNoLongerNamesItsExtension() throws {
+        let packet = extensionPacket(), guid = md5(packet)
+        let url = try pixelPhoto("last-look.jpg", main: pixelMainXMP(guid: guid),
+                                 extensions: extensionSegments(packet, guid: guid), second: try gainMap())
+        let data = try Data(contentsOf: url)
+        let (before, picture) = try JPEGMetadata.segments(of: data)
+        let good = [UInt8](try JPEGMetadata.rewrite(data, setting: [FileMetadataWriter.captionPath: short]))
+        XCTAssertNoThrow(try JPEGMetadata.check(Data(good), against: before, picture))
+        // The GUID's last hex digit changed in the new main XMP: the extension no longer belongs to it.
+        let at = try XCTUnwrap(Data(good).range(of: Data(guid.utf8))).lowerBound + 31
+        var bad = good
+        bad[at] = bad[at] == UInt8(ascii: "0") ? UInt8(ascii: "1") : UInt8(ascii: "0")
+        XCTAssertThrowsError(try JPEGMetadata.check(Data(bad), against: before, picture))
+    }
+
+    /// Real photos, when PF_JPEG_SAMPLES names a folder of them (pass TEST_RUNNER_PF_JPEG_SAMPLES to xcodebuild), such
+    /// as the Pixel Ultra HDR originals in github.com/MishaalRahmanGH/Ultra_HDR_Samples. Each is copied, captioned, and
+    /// checked: the caption reads back, ImageIO still finds the same gain map and depth, the picture decodes the same,
+    /// and only the XMP and the index's numbers changed.
+    func testRealPhotosFromAFolderAreCaptionedAndKeepWhatTheyCarry() throws {
+        guard let folder = ProcessInfo.processInfo.environment["PF_JPEG_SAMPLES"] else {
+            throw XCTSkip("Set PF_JPEG_SAMPLES to a folder of JPEGs to try them.")
+        }
+        let names = try FileManager.default.contentsOfDirectory(atPath: folder)
+            .filter { $0.lowercased().hasSuffix(".jpg") }.sorted()
+        XCTAssertFalse(names.isEmpty)
+        func auxiliary(_ url: URL) -> [String: Data] {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return [:] }
+            var found: [String: Data] = [:]
+            for type in [kCGImageAuxiliaryDataTypeHDRGainMap, kCGImageAuxiliaryDataTypeISOGainMap, kCGImageAuxiliaryDataTypeDepth,
+                         kCGImageAuxiliaryDataTypeDisparity, kCGImageAuxiliaryDataTypePortraitEffectsMatte] {
+                if let info = CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, type) as? [CFString: Any],
+                   let data = info[kCGImageAuxiliaryDataInfoData] as? Data { found[type as String] = data }
+            }
+            return found
+        }
+        /// Every text ImageIO reads from the file (EXIF, the XMP with its extension merged in), but the caption,
+        /// title and accessibility fields.
+        func texts(_ url: URL) -> [String: String] {
+            guard let metadata = CGImageSourceCreateWithURL(url as CFURL, nil).flatMap({ CGImageSourceCopyMetadataAtIndex($0, 0, nil) })
+            else { return [:] }
+            var found: [String: String] = [:]
+            for tag in (CGImageMetadataCopyTags(metadata) as? [CGImageMetadataTag]) ?? [] {
+                let name = "\(CGImageMetadataTagCopyPrefix(tag) as String? ?? ""):\(CGImageMetadataTagCopyName(tag) as String? ?? "")"
+                if let text = CGImageMetadataTagCopyValue(tag) as? String, !["dc", "Iptc4xmpCore"].contains(name.prefix { $0 != ":" }) {
+                    found[name] = text
+                }
+            }
+            return found
+        }
+        for name in names {
+            let url = temp.appendingPathComponent(name)
+            try FileManager.default.copyItem(at: URL(fileURLWithPath: folder).appendingPathComponent(name), to: url)
+            let before = try Data(contentsOf: url)
+            let maps = auxiliary(url), pixelsBefore = pixels(url), textsBefore = texts(url)
+            let extensionBefore = try extensions(url)
+            let read = try FileMetadataWriter.write(.init(caption: short, accessibilityDescription: short), to: url)
+            XCTAssertEqual(read.caption, short, name)
+            XCTAssertEqual(read.altText, short, name)
+            XCTAssertEqual(try extensions(url), extensionBefore, name)
+            XCTAssertEqual(auxiliary(url), maps, "\(name): \(maps.keys.sorted())")
+            XCTAssertEqual(pixels(url), pixelsBefore, name)
+            XCTAssertEqual(texts(url), textsBefore, name)
+            XCTAssertEqual(JPEGLayout.trailingData(try Data(contentsOf: url)), JPEGLayout.trailingData(before), name)
+            print("Sample \(name): \(before.count) to \(try Data(contentsOf: url).count) bytes,",
+                  "\(extensionBefore.count) Extended XMP segment(s), \(textsBefore.count) texts, kept \(maps.keys.sorted())")
+        }
     }
 }

@@ -15,67 +15,70 @@ struct DescriptionPanel: View {
     private var isDirty: Bool { DescriptionDraft.isChanged(draft, from: loadedText) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let row = model.focusedRow, !row.isContainer, model.isDescribable(row.id) {
-                // The photo itself, in list view, as Finder's and File Explorer's preview panes show it (Kelly, 13 Oct).
-                // The gallery already shows it large.
-                if model.viewMode == .list { PanelPreview(id: row.id) }
-                Text(row.name)
-                    .font(.headline)
-                    .lineLimit(2)
-                    .accessibilityAddTraits(.isHeader)
-                Text(model.descriptionStatus(for: row.id))
-                    .foregroundStyle(.secondary)
-                // A vertical text field, not a text editor, so Tab still moves on and Return saves; Option-Return
-                // starts a new line.
-                TextField("Description", text: $draft, prompt: Text("No description yet"), axis: .vertical)
-                    .lineLimit(6...30)
-                    .textFieldStyle(.roundedBorder)
-                    .focused(pane, equals: .description)
-                    .onSubmit { save(row.id) }
-                    .accessibilityHint("Edit to correct the description. Return saves it.")
-                // In a row when the panel is wide enough for their whole names, otherwise one under another: at the
-                // panel's usual width a row cut them to "Describ…" and "Use as…" (#35).
-                ViewThatFits(in: .horizontal) {
-                    HStack { actions(for: row.id) }
-                    VStack(alignment: .leading) { actions(for: row.id) }
-                }
-                .controlSize(.small)
-                Divider()
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Caption")
-                        .font(.subheadline.bold())
-                    Text(row.caption.isEmpty ? "No caption" : row.caption)
-                        .foregroundStyle(row.caption.isEmpty ? .secondary : .primary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .accessibilityElement(children: .combine)
-                Button("Edit Caption…") { model.editCaption([row.id]) }
+        // Scrolls, as Mac inspectors do: in a short window nothing is cut off, and Tab or VoiceOver scrolls each
+        // control into view (#139's review).
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 12) {
+                if let row = model.focusedRow, !row.isContainer, model.isDescribable(row.id) {
+                    // The photo itself, in list view, as Finder's and File Explorer's preview panes show it (Kelly, 13 Oct).
+                    // The gallery already shows it large.
+                    if model.viewMode == .list { PanelPreview(id: row.id) }
+                    Text(row.name)
+                        .font(.headline)
+                        .lineLimit(2)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(model.descriptionStatus(for: row.id))
+                        .foregroundStyle(.secondary)
+                    // A vertical text field, not a text editor, so Tab still moves on and Return saves; Option-Return
+                    // starts a new line.
+                    TextField("Description", text: $draft, prompt: Text("No description yet"), axis: .vertical)
+                        .lineLimit(6...30)
+                        .textFieldStyle(.roundedBorder)
+                        .focused(pane, equals: .description)
+                        .onSubmit { save(row.id) }
+                        .accessibilityHint("Edit to correct the description. Return saves it.")
+                    // In a row when the panel is wide enough for their whole names, otherwise one under another: at the
+                    // panel's usual width a row cut them to "Describ…" and "Use as…" (#35).
+                    ViewThatFits(in: .horizontal) {
+                        HStack { actions(for: row.id) }
+                        VStack(alignment: .leading) { actions(for: row.id) }
+                    }
                     .controlSize(.small)
-                // What the file's own alt text says, read-only: Use as Caption replaces it, after asking.
-                if !row.altText.isEmpty {
+                    Divider()
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Alt text in the file")
+                        Text("Caption")
                             .font(.subheadline.bold())
-                        Text(row.altText)
+                        Text(row.caption.isEmpty ? "No caption" : row.caption)
+                            .foregroundStyle(row.caption.isEmpty ? .secondary : .primary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .accessibilityElement(children: .combine)
+                    Button("Edit Caption…") { model.editCaption([row.id]) }
+                        .controlSize(.small)
+                    // What the file's own alt text says, read-only: Use as Caption replaces it, after asking.
+                    if !row.altText.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Alt text in the file")
+                                .font(.subheadline.bold())
+                            Text(row.altText)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                } else {
+                    // Focusable, so F6 can land here and move on rather than getting stuck on a panel with nothing in it.
+                    Text(model.focusedRow == nil ? "Select a photo to see its description." : "Videos and folders aren't described.")
+                        .foregroundStyle(.secondary)
+                        .focusable()
+                        .focused(pane, equals: .description)
                 }
-                Spacer(minLength: 0)
-            } else {
-                // Focusable, so F6 can land here and move on rather than getting stuck on a panel with nothing in it.
-                Text(model.focusedRow == nil ? "Select a photo to see its description." : "Videos and folders aren't described.")
-                    .foregroundStyle(.secondary)
-                    .focusable()
-                    .focused(pane, equals: .description)
-                Spacer(minLength: 0)
             }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .scrollBounceBehavior(.basedOnSize)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Description")
         .onAppear(perform: load)
@@ -95,6 +98,12 @@ struct DescriptionPanel: View {
         // Hidden with Option-Command-I, or the window closed, while you were typing: keep what you typed.
         .onDisappear {
             if let draftID { save(draftID) }
+            model.panelDraft = nil
+        }
+        // Copy Description copies what the box shows, even before Return saves it.
+        .onChange(of: draft) {
+            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            model.panelDraft = isDirty && !text.isEmpty ? draftID.map { ($0, text) } : nil
         }
     }
 
@@ -104,12 +113,13 @@ struct DescriptionPanel: View {
         Button("Use as Caption") { model.useDescriptionAsCaption([id]) }
             .disabled(model.savedDescription(for: id) == nil)
             .fixedSize()
-        Button("Copy") { model.copyDescription(for: id) }
+        Button("Copy") { model.copyDescription([id]) }
             .disabled(model.savedDescription(for: id) == nil)
             .fixedSize()
     }
 
     private func load() {
+        model.panelDraft = nil
         draftID = model.focusedRow?.id
         loadedText = draftID.flatMap(model.savedDescription(for:)) ?? ""
         draft = loadedText
@@ -163,9 +173,10 @@ private struct PanelPreview: View {
                     }
             }
         }
-        // Up to 240 points, shrinking first in a short window so the description keeps its room.
-        .frame(maxWidth: .infinity, minHeight: 0, maxHeight: 240)
-        .layoutPriority(-1)
+        // A steady 240 points: the panel scrolls, so it never has to shrink (shrinking to nothing whenever the
+        // description was long hid it altogether, the visual check, 13 Oct).
+        .frame(maxWidth: .infinity)
+        .frame(height: 240)
         .accessibilityHidden(true)
         .task(id: id) {
             let loaded = await model.previewImage(for: id)

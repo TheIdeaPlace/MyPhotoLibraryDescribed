@@ -358,10 +358,119 @@ public sealed class WindowTests : IDisposable
             model.SetColumnVisible(Columns.Find("keywords")!, true);
             Assert.Equal(before + 1, window.ListColumns.Columns.Count);
 
-            // Gallery shows the selected row with the list's name.
+            // Gallery shows the selected row, named with the gallery's labels: Position by default (#38).
             model.SelectedRows = [model.Rows[1]];
             AppCommands.AsGallery.Execute(null, window);
-            Assert.True(await WaitFor(() => AutomationProperties.GetName(window.GalleryImage).StartsWith("a.jpg")));
+            Assert.True(await WaitFor(() => window.GalleryImage.SpokenName == $"2 of {model.Rows.Count}"));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>The row keyboard focus is on in the list, if any.</summary>
+    private static FileRow? FocusedListRow(MainWindow window) =>
+        window.FileList.Items.Cast<FileRow>().FirstOrDefault(r =>
+            window.FileList.ItemContainerGenerator.ContainerFromItem(r) is ListViewItem { IsKeyboardFocused: true });
+
+    [WpfFact]
+    public async Task AtLaunch_FocusIsOnTheFirstPhoto_AndSwitchingViews_KeepsItOnThePhotoYouWereOn()
+    {
+        // Kelly, 14 Oct: open the app and start arrowing, no tabbing; list and gallery keep the photo you were on.
+        _lib.AddJpeg("a.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 3) });
+        _lib.AddJpeg("b.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 2) });
+        _lib.AddJpeg("c.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 1) });
+        var model = new LibraryModel(new Settings(), _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
+            () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1));
+        var window = new MainWindow(model) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            // After the details arrive and the list re-sorts newest first, it's still on the first photo.
+            Assert.True(await WaitFor(() => model.Rows.Count == 3 && FocusedListRow(window) is not null));
+            await model.DetailFillTask;
+            Assert.True(await WaitFor(() => FocusedListRow(window) == window.FileList.Items.Cast<FileRow>().First()));
+            var first = window.FileList.Items.Cast<FileRow>().First();
+            Assert.Equal("a.jpg", first.Name);
+            Assert.Same(first, FocusedListRow(window));
+            Assert.False(window.Sidebar.IsKeyboardFocusWithin);
+            // Selected too, so it's read as the photo you're on and the Description panel shows it.
+            Assert.True(await WaitFor(() => model.FocusedRow == first));
+            Assert.Same(first, window.FileList.SelectedItem);
+
+            // On the third photo, then to the gallery: it shows that photo, with focus on it.
+            var third = window.FileList.Items.Cast<FileRow>().Last();
+            window.FileList.SelectedItem = third;
+            Assert.True(await WaitFor(() => model.FocusedRow == third));
+            AppCommands.AsGallery.Execute(null, window);
+            Assert.True(await WaitFor(() => window.GalleryImage.IsKeyboardFocused));
+            Assert.Same(third, model.FocusedRow);
+            Assert.Equal("3 of 3", window.GalleryPositionText.Text);
+
+            // Back to the list: focus is on the third row, not the first.
+            AppCommands.AsList.Execute(null, window);
+            Assert.True(await WaitFor(() => FocusedListRow(window) == third));
+            Assert.Same(third, model.FocusedRow);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [WpfFact]
+    public async Task AfterLaunch_SortingOrANewPhoto_LeavesYouOnThePhotoYoureOn()
+    {
+        _lib.AddJpeg("a.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 3) });
+        _lib.AddJpeg("b.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 2) });
+        var model = new LibraryModel(new Settings(), _lib.PathOf(@"data\Settings.json"), new MetadataCache(_lib.PathOf(@"data\m.json")),
+            () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1));
+        var window = new MainWindow(model) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.True(await WaitFor(() => model.Rows.Count == 2 && FocusedListRow(window) is not null));
+            await model.DetailFillTask;
+            Assert.True(await WaitFor(() => model.FocusedRow?.Name == "a.jpg"));
+
+            // Oldest first: still on a.jpg, now last.
+            model.SortBy("date");
+            Assert.Equal("b.jpg", model.Rows[0].Name);
+            Assert.Equal("a.jpg", model.FocusedRow?.Name);
+
+            // A newer photo arriving doesn't move you either.
+            model.SortBy("date");
+            _lib.AddJpeg("new.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2023, 1, 1) });
+            await model.RescanAsync();
+            await model.DetailFillTask;
+            Assert.True(await WaitFor(() => model.Rows.Count == 3 && model.Rows[0].Name == "new.jpg"));
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.Equal("a.jpg", model.FocusedRow?.Name);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [WpfFact]
+    public async Task OpeningInTheGallery_StartsOnTheFirstPhoto_AfterTheDetailsArrive()
+    {
+        _lib.AddJpeg("a.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 3) });
+        _lib.AddJpeg("b.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 2) });
+        _lib.AddJpeg("c.jpg", new TestLibrary.JpegOptions { DateTaken = new DateTime(2022, 6, 1) });
+        var model = new LibraryModel(new Settings { ViewMode = ViewMode.Gallery }, _lib.PathOf(@"data\Settings.json"),
+            new MetadataCache(_lib.PathOf(@"data\m.json")), () => Task.FromResult(new List<string> { _lib.Root }), () => DateTime.Now.AddYears(1));
+        var window = new MainWindow(model) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.True(await WaitFor(() => model.Rows.Count == 3 && model.FocusedRow is not null));
+            await model.DetailFillTask;
+            Assert.True(await WaitFor(() => model.FocusedRow?.Name == "a.jpg"));
+            Assert.True(await WaitFor(() => window.GalleryPositionText.Text == "1 of 3"));
+            Assert.True(window.GalleryImage.IsKeyboardFocused);
         }
         finally
         {
@@ -384,8 +493,8 @@ public sealed class WindowTests : IDisposable
             Assert.True(await WaitFor(() => model.Rows.Count == 1 && model.DetailProgress is null && model.Rows[0].Caption == "Beach"));
             model.SelectedRows = [model.Rows[0]];
             AppCommands.AsGallery.Execute(null, window);
-            // Just the name, so arrowing says which photo and the description follows it.
-            Assert.True(await WaitFor(() => AutomationProperties.GetName(window.GalleryImage) == "a.jpg"));
+            // The gallery's labels (Position by default, #38), so arrowing says where you are and the description follows.
+            Assert.True(await WaitFor(() => window.GalleryImage.SpokenName == "1 of 1"));
             window.UpdateLayout();
 
             // Tab from the photo goes through the footer in reading order: name, details, caption (no description

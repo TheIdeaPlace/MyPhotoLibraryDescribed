@@ -123,14 +123,15 @@ public sealed class ColumnChoosingTests : IDisposable
         Assert.Contains(Columns.NameColumn, model.ShownColumns);
     }
 
-    private ColumnsDialog Dialog(IEnumerable<string> shown, FileRow? sample = null)
+    /// <summary>View > Labels' List tab (#38), which was the Columns dialog.</summary>
+    private static OrderListEditor Dialog(IEnumerable<string> shown, FileRow? sample = null)
     {
-        var dialog = new ColumnsDialog(shown, sample) { ShowActivated = false };
+        var dialog = new LabelsDialog(shown, GalleryLabels.DefaultOrder, sample, 1, 1, galleryFirst: false) { ShowActivated = false };
         dialog.Show();
-        return dialog;
+        return dialog.ListEditor;
     }
 
-    private static List<string> ShownTitles(ColumnsDialog d) => d.ShownList.Items.Cast<string>().ToList();
+    private static List<string> ShownTitles(OrderListEditor d) => d.ShownList.Items.Cast<string>().ToList();
 
     [WpfFact]
     public void Moving_SaysWhereTheColumnWent_AndKeepsItSelected()
@@ -140,22 +141,22 @@ public sealed class ColumnChoosingTests : IDisposable
         {
             d.ShownList.SelectedIndex = 2;
             d.Move(-1);
-            Assert.Equal(["name", "caption", "date"], d.ShownColumns);
+            Assert.Equal(["name", "caption", "date"], d.Shown);
             Assert.Equal(1, d.ShownList.SelectedIndex);
             Assert.Contains("Caption moved up, 2 of 3.", _announced);
 
             d.MoveToEnd(top: true);
-            Assert.Equal(["caption", "name", "date"], d.ShownColumns);
+            Assert.Equal(["caption", "name", "date"], d.Shown);
             Assert.Contains("Caption moved to top, 1 of 3.", _announced);
 
             d.Move(-1);
             Assert.Contains("Caption is already at the top.", _announced);
 
             d.MoveToEnd(top: false);
-            Assert.Equal(["name", "date", "caption"], d.ShownColumns);
+            Assert.Equal(["name", "date", "caption"], d.Shown);
             Assert.Equal(["Name", "Date Taken", "Caption"], ShownTitles(d));
         }
-        finally { d.Close(); }
+        finally { System.Windows.Window.GetWindow(d)!.Close(); }
     }
 
     [WpfFact]
@@ -167,22 +168,22 @@ public sealed class ColumnChoosingTests : IDisposable
             var available = d.AvailableList.Items.Cast<string>().ToList();
             Assert.DoesNotContain("Name", available);
             d.AvailableList.SelectedIndex = available.IndexOf("Rating");
-            d.AddColumn();
-            Assert.Equal(["name", "date", "rating"], d.ShownColumns);
+            d.Add();
+            Assert.Equal(["name", "date", "rating"], d.Shown);
             Assert.Contains("Rating added, 3 of 3.", _announced);
             Assert.DoesNotContain("Rating", d.AvailableList.Items.Cast<string>());
 
             d.ShownList.SelectedIndex = 1;
-            d.RemoveColumn();
-            Assert.Equal(["name", "rating"], d.ShownColumns);
+            d.Remove();
+            Assert.Equal(["name", "rating"], d.Shown);
             Assert.Contains("Date Taken removed. 2 columns shown.", _announced);
 
             d.ShownList.SelectedIndex = 0;
-            d.RemoveColumn();
-            Assert.Equal(["name", "rating"], d.ShownColumns);
+            d.Remove();
+            Assert.Equal(["name", "rating"], d.Shown);
             Assert.Contains("Name is always shown. It can be moved.", _announced);
         }
-        finally { d.Close(); }
+        finally { System.Windows.Window.GetWindow(d)!.Close(); }
     }
 
     [WpfFact]
@@ -192,10 +193,10 @@ public sealed class ColumnChoosingTests : IDisposable
         try
         {
             Assert.Equal(["Every column is shown."], d.AvailableList.Items.Cast<string>());
-            d.AddColumn();
+            d.Add();
             Assert.Contains("Every column is shown already.", _announced);
         }
-        finally { d.Close(); }
+        finally { System.Windows.Window.GetWindow(d)!.Close(); }
     }
 
     [WpfFact]
@@ -204,11 +205,11 @@ public sealed class ColumnChoosingTests : IDisposable
         var d = Dialog(["rating", "name"]);
         try
         {
-            d.ResetColumns();
-            Assert.Equal(Columns.DefaultOrder, d.ShownColumns);
+            d.Reset();
+            Assert.Equal(Columns.DefaultOrder, d.Shown);
             Assert.Contains($"Columns reset to the default: {Columns.DefaultOrder.Count} shown, Name first.", _announced);
         }
-        finally { d.Close(); }
+        finally { System.Windows.Window.GetWindow(d)!.Close(); }
     }
 
     [WpfFact]
@@ -240,7 +241,7 @@ public sealed class ColumnChoosingTests : IDisposable
             d.Move(-1);
             Assert.Equal("Caption: Sunset, IMG_1.jpg", d.PreviewBox.Text);
         }
-        finally { d.Close(); }
+        finally { System.Windows.Window.GetWindow(d)!.Close(); }
     }
 
     [WpfFact]
@@ -254,7 +255,7 @@ public sealed class ColumnChoosingTests : IDisposable
             Assert.Equal("Preview of the selected photo's line", System.Windows.Automation.AutomationProperties.GetName(d.PreviewBox));
             Assert.Equal("There's no photo here to preview.", d.PreviewBox.Text);
         }
-        finally { d.Close(); }
+        finally { System.Windows.Window.GetWindow(d)!.Close(); }
     }
 
     [WpfFact]
@@ -269,15 +270,15 @@ public sealed class ColumnChoosingTests : IDisposable
             var headers = window.ListColumns.Columns.Select(c => (string)((GridViewColumnHeader)c.Header).Tag).ToList();
             Assert.Equal(["caption", "name", "rating"], headers);
 
-            // Columns are chosen in one place: View > Columns, a plain item with no submenu, and the same dialog from
+            // Columns are chosen in one place: View > Labels, a plain item with no submenu, and the same dialog from
             // a column header's right-click menu.
             var viewMenu = window.MainMenu.Items.OfType<MenuItem>().Single(m => (string)m.Header == "_View");
-            var columnsItem = Assert.Single(viewMenu.Items.OfType<MenuItem>(), m => m.Command == AppCommands.ChooseColumns);
+            var columnsItem = Assert.Single(viewMenu.Items.OfType<MenuItem>(), m => m.Command == AppCommands.ChooseLabels);
             Assert.Empty(columnsItem.Items);
             Assert.DoesNotContain(viewMenu.Items.OfType<MenuItem>(), m => m.Command is null && (m.Header as string)?.Contains("Columns") == true);
             var headerMenu = ((GridViewColumnHeader)window.ListColumns.Columns[0].Header).ContextMenu!;
             var only = Assert.Single(headerMenu.Items.OfType<MenuItem>());
-            Assert.Equal(AppCommands.ChooseColumns, only.Command);
+            Assert.Equal(AppCommands.ChooseLabels, only.Command);
         }
         finally { window.Close(); }
     }

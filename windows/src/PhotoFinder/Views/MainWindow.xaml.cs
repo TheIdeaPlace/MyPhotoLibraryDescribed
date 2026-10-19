@@ -81,9 +81,22 @@ public partial class MainWindow : Window
         }));
 
         model.PropertyChanged += Model_PropertyChanged;
+        // Place Taken's names (#172): the rows showing, the current photo first.
+        _places = new PlaceLookups(Services.PlaceNames.Shared, PlacesWanted, () => _model.Rows, () => _model.FocusedRow);
+        FileList.AddHandler(System.Windows.Controls.ScrollViewer.ScrollChangedEvent, new System.Windows.Controls.ScrollChangedEventHandler((_, _) => ScanShowingRowsSoon()));
+        // A row whose coordinates arrive with its details, after it's shown: looked up if it's on screen.
+        Action<FileRow> arrived = _ => ScanShowingRowsSoon();
+        FileRow.CoordinatesArrived += arrived;
+        Closed += (_, _) =>
+        {
+            FileRow.CoordinatesArrived -= arrived;
+            FileRow.KnownPlaceName = null;
+            _places.Dispose();
+        };
         model.SelectionRequested += Model_SelectionRequested;
         model.ErrorRaised += message => ShowError(message);
         model.ColumnsChanged += BuildColumns;
+        model.ColumnsChanged += RefreshPlaces;
         model.SidebarRebuilding += () => _sidebarHadFocus = Sidebar.IsKeyboardFocusWithin;
         model.SidebarRebuilt += () => { if (_sidebarHadFocus) Dispatcher.BeginInvoke(FocusSidebarSelection, System.Windows.Threading.DispatcherPriority.Loaded); };
 
@@ -104,14 +117,18 @@ public partial class MainWindow : Window
                 ShowError($"{AppInfo.Name} couldn't read your library: {ex.Message}");
             }
             UpdateEmptyText();
+            // On the first photo, selected, so arrowing starts there and it's read as the photo you're on.
+            _model.StartOnFirst();
             FocusContent();
             // Background describing picks up where it left off: the library's photos not described yet (#96).
             BackgroundDescriber?.Resume();
             // Once the library is showing and focus is on it: say so if this is the first launch after an update. Closing
-            // that puts focus back on the photo.
+            // that puts focus back on the photo. Otherwise, after a run that didn't quit cleanly (#33), offer once to
+            // report it; never over the update's message, and never for the update itself.
             _ = Dispatcher.BeginInvoke(() =>
             {
                 if (SayIfJustUpdated()) FocusContent();
+                else _ = Dispatcher.BeginInvoke(OfferCrashReport, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
             }, System.Windows.Threading.DispatcherPriority.Input);
         };
         model.FilesChanged += paths => { foreach (var p in paths) _thumbnails.Forget(p); };
@@ -163,6 +180,8 @@ public partial class MainWindow : Window
         Bind(AppCommands.PreviousPhoto, () => _model.StepPhoto(-1, announce: !FileList.IsKeyboardFocusWithin));
         Bind(AppCommands.ShowInExplorer, () => _model.ShowInExplorer(), () => _model.SelectedRows.Any(r => r.Item is not null || r.Container?.FolderPath is not null));
         Bind(AppCommands.Export, ExportSelection, HasFiles);
+        // Always enabled: when there's nothing to copy, it says why. A correction not saved yet is copied as typed.
+        Bind(AppCommands.CopyDescription, () => _model.CopyDescriptions(draft: DescriptionPanel.Draft));
         Bind(AppCommands.AddFolder, AddFolder);
         Bind(AppCommands.RemoveFolder, RemoveFolder, () => _model.CurrentRoot is not null);
         Bind(AppCommands.Refresh, () => _model.Fire(_model.RescanAsync()), () => !_model.IsLoading);
@@ -184,11 +203,11 @@ public partial class MainWindow : Window
             try
             {
                 Directory.CreateDirectory(Services.Log.Folder);
-                OpenUrl(Services.Log.Folder);
+                OpenUrl(Services.AppPaths.ForExplorer(Services.Log.Folder));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
             {
-                ShowError($"File Explorer couldn't open the log folder. It's at {Services.Log.Folder}.");
+                ShowError($"File Explorer couldn't open the log folder. It's at {Services.AppPaths.ForExplorer(Services.Log.Folder)}.");
             }
         });
         Bind(AppCommands.GoToStatusBar, FocusStatusBar);
@@ -200,7 +219,7 @@ public partial class MainWindow : Window
         Bind(AppCommands.UserGuide, () => OpenInBrowser(AppInfo.UserGuideUrl, "The user guide is"));
         Bind(AppCommands.PrivacyPolicy, () => OpenInBrowser(AppInfo.PrivacyPolicyUrl, "The privacy policy is"));
         Bind(AppCommands.ReportBug, () => ReportBug(null));
-        Bind(AppCommands.ChooseColumns, ChooseColumns);
+        Bind(AppCommands.ChooseLabels, ChooseLabels);
         Bind(AppCommands.ShowDescription, () => ShowDescriptionPanel(!_model.Settings.ShowDescriptionPanel, announce: true));
         Bind(AppCommands.AutoDescribe, () =>
         {
@@ -283,29 +302,46 @@ public partial class MainWindow : Window
         };
         // The arrow is for sighted people; screen readers hear the title and the sort as words.
         AutomationProperties.SetName(header, column.Title);
+        // Place names come from OpenStreetMap, whose licence asks for this credit where they're shown (#172).
+        if (column.Id == "location")
+        {
+            header.ToolTip = $"Place names {Services.PlaceNames.Credit}";
+            AutomationProperties.SetHelpText(header, $"Place names {Services.PlaceNames.Credit}");
+        }
         if (sorted) AutomationProperties.SetItemStatus(header, _model.SortDescending ? "sorted descending" : "sorted ascending");
         header.Click += (_, _) => _model.SortBy(column.Id);
         return header;
     }
 
-    /// <summary>Right-clicking a column header opens the Columns dialog, the one place columns are chosen and ordered.</summary>
+    /// <summary>Right-clicking a column header opens View > Labels, the one place columns are chosen and ordered.</summary>
     private ContextMenu MakeColumnsContextMenu()
     {
         var menu = new ContextMenu();
-        menu.Items.Add(new MenuItem { Command = AppCommands.ChooseColumns, CommandTarget = this });
+        menu.Items.Add(new MenuItem { Command = AppCommands.ChooseLabels, CommandTarget = this });
         return menu;
     }
 
-    /// <summary>View, Columns: which columns, and in what order they're shown and read.</summary>
-    private void ChooseColumns()
+    /// <summary>View > Labels (#38): which columns the list shows and reads, and what the gallery says.</summary>
+    private void ChooseLabels()
     {
         var sample = _model.FocusedRow is { IsContainer: false } focused ? focused : _model.Rows.FirstOrDefault(r => !r.IsContainer);
         var before = _model.ShownColumns.Select(c => c.Id).ToList();
+        var galleryBefore = _model.GalleryLabelOrder.ToList();
         var returnTo = Keyboard.FocusedElement as IInputElement;
-        var dialog = new ColumnsDialog(before, sample) { Owner = this };
+        var number = sample is null ? 1 : _model.Rows.IndexOf(sample) + 1;
+        var dialog = new LabelsDialog(before, galleryBefore, sample, number, _model.Rows.Count, galleryFirst: _model.ViewMode == ViewMode.Gallery)
+            { Owner = this };
         // The new order first, then focus back: the focused row reading in its new order is the confirmation,
         // rather than the old order, a name change and an announcement all at once.
-        if (dialog.ShowDialog() == true && !dialog.ShownColumns.SequenceEqual(before)) _model.SetColumnOrder(dialog.ShownColumns);
+        if (dialog.ShowDialog() == true)
+        {
+            if (!dialog.ShownColumns.SequenceEqual(before)) _model.SetColumnOrder(dialog.ShownColumns);
+            if (!dialog.ShownGalleryLabels.SequenceEqual(galleryBefore))
+            {
+                _model.SetGalleryLabels(dialog.ShownGalleryLabels);
+                if (_model.ViewMode == ViewMode.Gallery) UpdateGallery();
+            }
+        }
         // Back where it was (it can be opened from the sidebar or search); the list if that's gone.
         if (returnTo is UIElement { IsVisible: true } element && element.Focus()) return;
         FocusContent();
@@ -358,7 +394,8 @@ public partial class MainWindow : Window
         _model.Settings.LookUpPlaceNames = on;
         _model.SaveSettings();
         PlaceNamesItem.IsChecked = on;
-        Services.Announcer.AnnounceAfter(on ? "Get Info looks up place names" : "Place names aren't looked up", "PhotoFinderSetting");
+        Services.Announcer.AnnounceAfter(on ? "Place names are looked up for Get Info and Place Taken" : "Place names aren't looked up", "PhotoFinderSetting");
+        RefreshPlaces();
     }
 
     /// <summary>"caption", "caption and alt text", "caption, alt text and extended description".</summary>
@@ -438,6 +475,20 @@ public partial class MainWindow : Window
             ShowError("The captions couldn't be read, so they weren't changed.", owner);
             return;
         }
+        // Photos whose caption would be refused (an older Photoshop caption would still be read, #179) are left out of
+        // the question, and said after; with none left, said now, without asking anything.
+        var refused = new List<FileRow>();
+        foreach (var c in current)
+            if (await XmpFields.WouldRefuseCaptionAsync(c.Row.Item!.Path, c.Text)) refused.Add(c.Row);
+        string? refusal = refused.Count == 0 ? null
+            : refused.Count == 1 ? $"{refused[0].Name}: {new OlderCaptionException().Message}, so it was left as it is."
+            : $"{refused.Count} photos weren't changed: an older caption saved in each by Photoshop or a similar app would still be read instead of the new one.";
+        if (refused.Count == current.Count)
+        {
+            ShowError(refusal!, owner);
+            return;
+        }
+        current = current.Where(c => !refused.Contains(c.Row)).ToList();
         // The Mac's question: "Replace the caption and alt text of name?" with what each holds, or, for several photos,
         // "Replace what's already in N photos?".
         var replacing = current
@@ -460,6 +511,7 @@ public partial class MainWindow : Window
                 && (c.AltText != FileFields.AltText(c.Text) || c.Extended != (FileFields.ExtendedDescription(c.Text) ?? ""))))
             .Select(c => (c.Row.Item!, c.Text)).ToList();
         await _model.SaveCaptionsAsync(toWrite, current.Count - toWrite.Count, photos.Count - described.Count);
+        if (refusal is not null) ShowError(refusal, owner);
         if (unreadable > 0)
             ShowError(unreadable == 1 ? "1 caption couldn't be read, so it wasn't changed." : $"{unreadable} captions couldn't be read, so they weren't changed.", owner);
     }
@@ -501,6 +553,96 @@ public partial class MainWindow : Window
         }
     }
 
+    // MARK: Place Taken's names (#172)
+
+    private readonly PlaceLookups _places;
+    private FileRow? _placesFocused;
+    private System.Windows.Threading.DispatcherTimer? _placesSettle;
+    private bool _scanQueued;
+
+    /// <summary>Names are wanted with Look Up Place Names on and Place Taken showing: a list column in the list, a label
+    /// in the gallery.</summary>
+    private bool PlacesWanted() =>
+        _model.Settings.LookUpPlaceNames
+        && (_model.ViewMode == ViewMode.Gallery ? _model.GalleryLabelOrder : _model.Settings.ShownColumnIds()).Contains("location");
+
+    /// <summary>After the rows, the view, the columns, the labels or the setting change: names already known shown (or
+    /// taken away), and the rows showing looked up.</summary>
+    internal void RefreshPlaces()
+    {
+        FileRow.KnownPlaceName = PlacesWanted() ? Services.PlaceNames.Shared.TryCached : null;
+        _places.ShowKnown();
+        ScanShowingRowsSoon();
+        if (_model.FocusedRow is { } row) _places.Current(row);
+    }
+
+    /// <summary>The list's rows on screen, top to bottom, once scrolling settles: only those whose bounds meet the visible
+    /// part of the list, not the rows the panel keeps ready above and below.</summary>
+    private void ScanShowingRowsSoon()
+    {
+        if (_scanQueued || !PlacesWanted() || _model.ViewMode != ViewMode.List) return;
+        _scanQueued = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _scanQueued = false;
+            // The rows' own viewport: the scroll viewer's content area, below the column headers and above any scroll bar.
+            if (FindItemsHost(FileList) is not { } panel || FindAncestor<System.Windows.Controls.ScrollContentPresenter>(panel) is not { } viewer) return;
+            var view = new Rect(viewer.RenderSize);
+            var showing = new List<(double Top, FileRow Row)>();
+            foreach (var child in panel.Children.OfType<System.Windows.Controls.ListViewItem>())
+            {
+                if (child.DataContext is not FileRow row || !child.IsVisible) continue;
+                var bounds = Rect.Intersect(child.TransformToAncestor(viewer).TransformBounds(new Rect(child.RenderSize)), view);
+                // Some of it showing, not just touching an edge.
+                if (!bounds.IsEmpty && bounds.Height > 1) showing.Add((bounds.Top, row));
+            }
+            _places.Showing(showing.OrderBy(s => s.Top).Select(s => s.Row));
+        }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+    }
+
+    private static T? FindAncestor<T>(DependencyObject from) where T : DependencyObject
+    {
+        for (var at = System.Windows.Media.VisualTreeHelper.GetParent(from); at is not null; at = System.Windows.Media.VisualTreeHelper.GetParent(at))
+            if (at is T found) return found;
+        return null;
+    }
+
+    private static System.Windows.Controls.Panel? FindItemsHost(DependencyObject parent)
+    {
+        for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is System.Windows.Controls.Panel { IsItemsHost: true } panel) return panel;
+            if (FindItemsHost(child) is { } found) return found;
+        }
+        return null;
+    }
+
+    /// <summary>Focus moved: the row left behind is told its name quietly kept back, and the new one is looked up first
+    /// (in the gallery once you've settled on it a moment, so photos passed are never sent).</summary>
+    private void FocusMovedForPlaces()
+    {
+        if (_placesFocused is { } left && left != _model.FocusedRow) left.NotifyAccessibleName();
+        _placesFocused = _model.FocusedRow;
+        _placesSettle?.Stop();
+        if (_model.FocusedRow is not { } row || !PlacesWanted()) return;
+        if (_model.ViewMode == ViewMode.List)
+        {
+            _places.Current(row);
+            return;
+        }
+        _placesSettle ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _placesSettle.Tick -= PlacesSettled;
+        _placesSettle.Tick += PlacesSettled;
+        _placesSettle.Start();
+    }
+
+    private void PlacesSettled(object? sender, EventArgs e)
+    {
+        _placesSettle?.Stop();
+        if (_model.FocusedRow is { } row) _places.Current(row);
+    }
+
     // MARK: Model changes
 
     private void Model_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -513,12 +655,17 @@ public partial class MainWindow : Window
                 break;
             case nameof(LibraryModel.Rows):
                 UpdateEmptyText();
+                RefreshPlaces();
+                break;
+            case nameof(LibraryModel.ViewMode) or nameof(LibraryModel.GalleryLabelOrder):
+                RefreshPlaces();
                 break;
             case nameof(LibraryModel.SortColumn) or nameof(LibraryModel.SortDescending):
                 UpdateSortHeaders();
                 break;
             case nameof(LibraryModel.FocusedRow):
                 if (_model.ViewMode == ViewMode.Gallery) UpdateGallery();
+                FocusMovedForPlaces();
                 break;
             case nameof(LibraryModel.IsLoading):
                 UpdateEmptyText();
@@ -939,7 +1086,7 @@ public partial class MainWindow : Window
         UpdateEmptyText();
         if (gallery)
         {
-            _model.EnsureGallerySelection();
+            _model.SelectFirstIfNone();
             UpdateGallery();
         }
     }
@@ -958,7 +1105,7 @@ public partial class MainWindow : Window
         {
             _galleryShownId = null;
             GalleryName.Text = GalleryDetails.Text = GalleryCaption.Text = "";
-            AutomationProperties.SetName(GalleryImage, _model.IsLoading ? "Loading" : "No items");
+            GalleryImage.SpokenName = _model.IsLoading ? "Loading" : "No items";
             GalleryImage.Show(null, _model.IsLoading ? "Loading…" : "There is nothing here.");
             return;
         }
@@ -975,9 +1122,9 @@ public partial class MainWindow : Window
             row.PropertyChanged += GalleryRow_PropertyChanged;
         }
         ShowGalleryDescription(row);
-        // Just the name: arrowing through the gallery says which photo, then its description follows. The rest is in
-        // the footer below (Tab to it).
-        AutomationProperties.SetName(GalleryImage, row.Name);
+        // What View > Labels > Gallery chooses (#38), the same words moving to it says; its description follows. The
+        // rest is in the footer below (Tab to it).
+        GalleryImage.SpokenName = position is { } at ? _model.MoveText(at.Index) : row.Name;
         if (_galleryShownId == row.Id) return;
         _galleryShownId = row.Id;
 
@@ -995,7 +1142,11 @@ public partial class MainWindow : Window
 
     private void GalleryRow_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(FileRow.Description) && sender is FileRow row && row == _galleryRow) ShowGalleryDescription(row);
+        if (sender is not FileRow row || row != _galleryRow) return;
+        if (e.PropertyName == nameof(FileRow.Description)) ShowGalleryDescription(row);
+        // The labels can name its rating, caption or date, which can change while it's showing (a rating given, details
+        // read): the picture's name follows, quietly.
+        else if (_model.GalleryPosition is { } at) GalleryImage.SpokenName = _model.MoveText(at.Index);
     }
 
     private void ShowGalleryDescription(FileRow row)
@@ -1147,6 +1298,13 @@ public partial class MainWindow : Window
                 }
             }
             else initial = item.Metadata.Caption;
+            // A caption that would be refused whatever's typed (an older Photoshop caption would still be read, #179):
+            // said now, rather than after it's been typed.
+            if (await XmpFields.HasOlderCaptionAsync(item.Path))
+            {
+                ShowError($"{item.Name}: {new OlderCaptionException().Message}, so its caption can't be changed.");
+                return;
+            }
         }
         var dialog = new CaptionDialog(rows.Count, initial) { Owner = this };
         var saved = dialog.ShowDialog() == true;
@@ -1202,11 +1360,24 @@ public partial class MainWindow : Window
         if (answer == MessageBoxResult.OK) _model.Fire(_model.RemoveFolderAsync(root));
     }
 
+    /// <summary>Help > About (#33, as the app kit asks): what the app is for, its version, and links to the source, the
+    /// user guide and the privacy policy.</summary>
     private void ShowAbout()
     {
-        MessageBox.Show(this,
-            $"{AppInfo.Name} {Services.Updates.AppVersion}\n\nBrowse your Pictures library like folders in File Explorer, built to work well with screen readers.\n\nFolders in the library:\n{string.Join("\n", _model.Roots)}",
-            $"About {AppInfo.Name}", MessageBoxButton.OK, MessageBoxImage.Information);
+        new AboutWindow(OpenInBrowser) { Owner = this }.ShowDialog();
+        FocusContent();
+    }
+
+    /// <summary>At a start after a run that didn't quit cleanly (#33): asks once whether to report it. Report… opens the
+    /// form with the end of the log, for the person to read before sending.</summary>
+    private void OfferCrashReport()
+    {
+        if (App.UncleanLaunch is null) return;
+        App.UncleanLaunch = null;
+        if (!QuestionDialog.AskSafely(this, AppInfo.Name, $"{AppInfo.Name} quit unexpectedly last time. Report it?",
+                "The report opens in a form, where you can read and change it before it's sent. Reports are public.", "Report…", "Not Now"))
+            return;
+        ReportBugWith(null, null, App.CrashAttachments, "Quit unexpectedly");
     }
 
     private bool _updating;
@@ -1273,7 +1444,7 @@ public partial class MainWindow : Window
         _update = Services.Updates.IsNewer(_update.Version, current) ? _update : (false, null);
         ShowUpdatesItem();
         var shown = Services.Updates.Shown(current, last!).Running;
-        // Release notes are per version (windows-v0.2.0); a build of the same version has none of its own, so the list.
+        // Release notes are per version (v0.2.0); a build of the same version has none of its own, so the list.
         var notes = Services.Updates.ShortVersion(current) == Services.Updates.ShortVersion(last!)
             ? AppInfo.ReleasesUrl
             : AppInfo.ReleaseNotesUrl(Services.Updates.ShortVersion(current));
@@ -1318,8 +1489,8 @@ public partial class MainWindow : Window
                     Inform($"This copy of {AppInfo.Name} isn't installed, so it can't update itself.");
                     break;
                 case Services.Updates.State.NotFromAppInstaller:
-                    Inform($"{AppInfo.Name} was installed without PhotoFinder.appinstaller, so Windows doesn't know where its updates are. " +
-                           "Open PhotoFinder.appinstaller to install it again; your settings are kept.");
+                    Inform($"{AppInfo.Name} wasn't installed from the releases page, so Windows doesn't know where its updates are. " +
+                           $"Open {AppInfo.InstallerFile} from there to install it again; your settings are kept.");
                     break;
                 case Services.Updates.State.UpToDate:
                     Found(result.State, null);
@@ -1452,13 +1623,14 @@ public partial class MainWindow : Window
 
     private bool _reporting;
 
-    /// <summary>Help > Report a Bug…: a new GitHub issue in the browser, prefilled with the questions and the system
-    /// check, and the same text on the clipboard, as on the Mac. Until the app kit's relay is set up (#33). The report
-    /// leaves out folder paths, since an issue is public.</summary>
+    /// <summary>Help > Report a Bug… (#138), and Check System's button: the form, with the system check.</summary>
     private void ReportBug(Services.SystemCheck? check) => ReportBugWith(check, null);
 
+    /// <summary>Help > Report a Bug… (#138): the form, filled in with the system check and anything that came with it.</summary>
     /// <param name="aiCheck">Check AI Description's whole result, when the report starts there.</param>
-    private async void ReportBugWith(Services.SystemCheck? check, Services.AIDescriptionCheck? aiCheck)
+    /// <param name="attachments">The log after a crash.</param>
+    private async void ReportBugWith(Services.SystemCheck? check, Services.AIDescriptionCheck? aiCheck,
+        List<Services.BugReport.Attachment>? attachments = null, string title = "")
     {
         if (_reporting)
         {
@@ -1473,48 +1645,19 @@ public partial class MainWindow : Window
                 Services.Announcer.Announce("Preparing a bug report");
                 check = await RunSystemCheckAsync();
             }
-            var body = Services.BugReport.Body(check.ReportText +
-                (aiCheck is null ? "" : $"{Environment.NewLine}{Environment.NewLine}Check AI Description: {aiCheck.ReportText}"));
-            var copied = false;
-            try
-            {
-                Clipboard.SetText(body);
-                copied = true;
-            }
-            catch (System.Runtime.InteropServices.ExternalException)
-            {
-                // Another app holding the clipboard.
-            }
-            var uri = Services.BugReport.NewIssueUri(body, out var includesBody);
-            try
-            {
-                OpenUrl(uri.AbsoluteUri);
-                Services.Announcer.Announce(
-                    includesBody && copied ? "Opening a new bug report in your browser. The details are also on the clipboard."
-                    : includesBody ? "Opening a new bug report in your browser."
-                    : copied ? "Opening a new bug report in your browser. Paste the details from the clipboard into it."
-                    : "Opening a new bug report in your browser.");
-                if (!includesBody && !copied) ShowReport(body);
-            }
-            catch (Exception)
-            {
-                if (copied)
-                    ShowError($"The browser couldn't be opened. The bug report is on the clipboard: paste it into a new issue at {AppInfo.IssuesUrl}.");
-                else
-                    ShowReport(body);
-            }
+            var report = new Services.BugReport { Title = title, SystemText = check.ReportText.Replace("\r\n", "\n") };
+            if (aiCheck is not null)
+                report.Attachments.Add(new("the AI description check", "Check AI Description", aiCheck.ReportText.Replace("\r\n", "\n")));
+            if (attachments is not null) report.Attachments.AddRange(attachments);
+            var owner = ActiveWindow;
+            new BugReportWindow(report, Services.BugReportRelay.Key) { Owner = owner }.ShowDialog();
+            if (owner == this) FocusContent();
         }
         finally
         {
             _reporting = false;
         }
     }
-
-    /// <summary>When neither the browser nor the clipboard could take the report: shown, so it can still be copied.</summary>
-    private void ShowReport(string body) =>
-        MessageBox.Show(this,
-            $"Press Ctrl+C to copy this report, then paste it into a new issue at {AppInfo.IssuesUrl}.\n\n{body}",
-            "Report a Bug", MessageBoxButton.OK, MessageBoxImage.Information);
 
     /// <summary>Over the window in front (Get Info, say), so focus goes back there afterwards, not to this one behind it.</summary>
     private void ShowError(string message, Window? owner = null) =>

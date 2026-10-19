@@ -1,0 +1,9 @@
+{
+  "_comment": "Read by the apps to switch online services off without an update (#128). Windows reads placeNames.windows before looking up a place, at most once a day. Set enabled to false, with a message to show in Get Info, if a service asks us to stop.",
+  "placeNames": {
+    "windows": {
+      "enabled": true,
+      "message": ""
+    }
+  }
+}

@@ -15,6 +15,10 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // Whether the last run quit cleanly (#33): offered as a report once the window is up, with the end of the log
+        // read now, before this run adds to it.
+        UncleanLaunch = CrashCheck.Begin();
+        if (UncleanLaunch is not null) CrashAttachments = CrashCheck.Attachments();
         Log.RemoveOld();
         Log.Write("start", $"{AppInfo.Name} {Updates.AppVersion} on Windows {Environment.OSVersion.Version}, {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}");
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
@@ -32,28 +36,34 @@ public partial class App : Application
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             args.Handled = true;
         };
+        if (UncleanLaunch is not null) Log.Write("start", "The last run didn't quit cleanly");
         var settings = Settings.Load(Settings.DefaultPath);
         // Every launch starts read-only (#83): nothing may change a photo until the person allows it.
         PhotoChanges.Allowed = !settings.ReadOnly;
         var descriptions = new DescriptionStore(DescriptionStore.DefaultPath);
+        // What's saved with each description (#199): Windows' package list is slow, so it's read now, off this thread.
+        DescriptionProvenance.Warm();
         var model = new LibraryModel(settings, Settings.DefaultPath, new MetadataCache(MetadataCache.DefaultPath),
             LibraryRoots.PicturesLibraryAsync) { Descriptions = descriptions };
         var autoDescriber = new AutoDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync,
             describeAhead: DescribeAheadAsync) { MayDescribeAhead = () => !EnergySaverOn() };
-        var backgroundDescriber = new BackgroundDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync);
+        var backgroundDescriber = new BackgroundDescriber(model, descriptions, DescribeAsync, Services.WindowsAI.CheckAsync, Services.WindowsAI.PrepareAsync,
+            BackgroundDescriber.DefaultFailuresPath);
         backgroundDescriber.ForegroundBusy = () => autoDescriber.IsBusy;
         backgroundDescriber.MayRun = () => !EnergySaverOn();
+        // Describe Photo working after background describing gave up waiting for Windows AI: it starts, unasked.
+        WindowsAI.DescribedOne += () => Dispatcher.BeginInvoke(backgroundDescriber.WindowsAIWorked);
         MainWindow = new MainWindow(model) { AutoDescriber = autoDescriber, BackgroundDescriber = backgroundDescriber };
         MainWindow.Show();
     }
 
-    private static Task<string> DescribeAsync(Models.MediaItem item, string kind, CancellationToken cancel) =>
-        WindowsAI.DescribeAsync(JpegOf(item, default), kind, cancel);
+    private static Task<Described> DescribeAsync(Models.MediaItem item, string kind, CancellationToken cancel) =>
+        WindowsAI.DescribeTimedAsync(JpegOf(item, default), kind, cancel);
 
     /// <summary>Describes a photo ahead (#64): <paramref name="drop"/> gives it up while it's being decoded or waiting its
     /// turn, but not once Windows has it.</summary>
-    private static Task<string> DescribeAheadAsync(Models.MediaItem item, string kind, CancellationToken drop) =>
-        WindowsAI.DescribeAsync(JpegOf(item, drop), kind, drop: drop);
+    private static Task<Described> DescribeAheadAsync(Models.MediaItem item, string kind, CancellationToken drop) =>
+        WindowsAI.DescribeTimedAsync(JpegOf(item, drop), kind, drop: drop);
 
     /// <summary>The photo as a JPEG at a given size, for Windows AI; <paramref name="drop"/> stops it before and after decoding.</summary>
     private static Func<uint, Task<byte[]>> JpegOf(Models.MediaItem item, CancellationToken drop) => async size =>
@@ -77,8 +87,15 @@ public partial class App : Application
         }
     }
 
+    /// <summary>When the last run started, if it didn't quit cleanly; cleared once the offer to report it is made.</summary>
+    public static DateTime? UncleanLaunch { get; set; }
+
+    /// <summary>The end of the crashed run's log, for the crash report.</summary>
+    public static List<BugReport.Attachment> CrashAttachments { get; set; } = [];
+
     protected override void OnExit(ExitEventArgs e)
     {
+        CrashCheck.End();
         _windowsAI?.Dispose();
         base.OnExit(e);
     }

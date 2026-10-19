@@ -129,11 +129,24 @@ enum FolderRoots {
         }
         return nil
     }
+
+    /// The sidebar place to show instead of one that's gone (#47): the nearest folder above `previousPath` that's still
+    /// listed; otherwise All Photos, or without Photos access the first added folder still listed, and failing that the
+    /// "Photos library: no access" row.
+    static func fallbackPlace(previousPath: String?, roots: [String], photosAllowed: Bool,
+                              isListed: (String) -> Bool) -> String {
+        if let path = previousPath, let parent = nearestListed(above: path, roots: roots, isListed: isListed) {
+            return FolderID.folder(parent)
+        }
+        if photosAllowed { return SidebarID.allPhotos }
+        if let root = roots.first(where: isListed) { return FolderID.folder(root) }
+        return SidebarID.photosNoAccess
+    }
 }
 
 /// Which photos in an added folder to describe in the background after it's scanned (#47): every photo in a folder
 /// just added (as Windows does), and afterwards the photos that weren't there at the last scan. The first scan after
-/// launch only sets the baseline, so opening Photo Finder doesn't describe whole folders again. Videos aren't
+/// launch only sets the baseline, so opening My Photo Library Described doesn't describe whole folders again. Videos aren't
 /// described.
 enum FolderChanges {
     static func photosToDescribe(before: Set<String>?, after: [String], justAdded: Bool) -> [String] {
@@ -254,7 +267,7 @@ enum FolderScanner {
         }
     }
 
-    /// One file as the file system has it now, after Photo Finder wrote into it (#31).
+    /// One file as the file system has it now, after My Photo Library Described wrote into it (#31).
     static func file(at path: String) -> MediaFile? {
         guard let values = try? URL(fileURLWithPath: path).resourceValues(forKeys: Set(fileKeys)),
               values.isRegularFile == true else { return nil }

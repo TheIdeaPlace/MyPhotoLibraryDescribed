@@ -6,7 +6,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.1"
+    MARKETING_VERSION: "0.2.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
   PhotoFinder:
@@ -30,27 +30,36 @@ targets:
     info:
       path: PhotoFinder/Info.plist
       properties:
-        CFBundleName: Photo Finder
-        CFBundleDisplayName: Photo Finder
+        CFBundleName: My Photo Library Described
+        CFBundleDisplayName: My Photo Library Described
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.photography
-        NSPhotoLibraryUsageDescription: Photo Finder lists the photos and videos in your library so you can browse, preview and export them like files.
+        # The app kit's relay key (#33), from the build setting below; empty unless the build is given one.
+        AppKitRelayKey: $(APPKIT_RELAY_KEY)
+        NSPhotoLibraryUsageDescription: My Photo Library Described lists the photos and videos in your library so you can browse, preview and export them like files.
         # Folders added with File > Add Folder to Library… can be in these places (#36); macOS asks once for each.
-        NSDesktopFolderUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
-        NSDocumentsFolderUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
-        NSDownloadsFolderUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
-        NSRemovableVolumesUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
-        NSNetworkVolumesUsageDescription: Photo Finder lists the photos and videos in folders you add to its library.
+        NSDesktopFolderUsageDescription: My Photo Library Described lists the photos and videos in folders you add to its library.
+        NSDocumentsFolderUsageDescription: My Photo Library Described lists the photos and videos in folders you add to its library.
+        NSDownloadsFolderUsageDescription: My Photo Library Described lists the photos and videos in folders you add to its library.
+        NSRemovableVolumesUsageDescription: My Photo Library Described lists the photos and videos in folders you add to its library.
+        NSNetworkVolumesUsageDescription: My Photo Library Described lists the photos and videos in folders you add to its library.
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: net.theideaplace.PhotoFinder
-        PRODUCT_NAME: Photo Finder
+        PRODUCT_BUNDLE_IDENTIFIER: net.theideaplace.MyPhotoLibraryDescribed
+        # The app icon, the same picture as Windows' (scripts/make-mac-icon.swift draws it).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_NAME: My Photo Library Described
+        # The module keeps its old name, so `@testable import Photo_Finder` and the code don't churn (#125).
+        PRODUCT_MODULE_NAME: Photo_Finder
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: Apple Development
         DEVELOPMENT_TEAM: P887QF74N8
         ENABLE_HARDENED_RUNTIME: NO
         GENERATE_INFOPLIST_FILE: NO
+        # Report a Bug's relay key (#33) isn't in the repo: scripts/release-mac.sh passes APPKIT_RELAY_KEY=… to
+        # xcodebuild, which overrides this empty default. Without it, Report a Bug opens the GitHub page instead.
+        APPKIT_RELAY_KEY: ""
       configs:
         # Notarization needs the hardened runtime; releases are built in Release (scripts/release-mac.sh, #22).
         Release:
@@ -65,9 +74,9 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: net.theideaplace.PhotoFinderTests
+        PRODUCT_BUNDLE_IDENTIFIER: net.theideaplace.MyPhotoLibraryDescribedTests
         # The app's product name has a space, which XcodeGen's default test host path doesn't account for.
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Photo Finder.app/Contents/MacOS/Photo Finder"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/My Photo Library Described.app/Contents/MacOS/My Photo Library Described"
         BUNDLE_LOADER: "$(TEST_HOST)"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: P887QF74N8
