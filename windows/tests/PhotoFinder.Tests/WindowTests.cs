@@ -149,7 +149,9 @@ public sealed class WindowTests : IDisposable
         store.Put(row.Item!, "brief", "A dog.");
         var asked = new List<(string Description, string Question, int History)>();
         var original = InfoWindow.AskQuestion;
+        var originalOffered = InfoWindow.PhiSilicaOffered;
         InfoWindow.FollowUpQuestionsShown = true;
+        InfoWindow.PhiSilicaOffered = _ => Task.FromResult(true);
         InfoWindow.AskQuestion = (description, text, question, history, _) =>
         {
             asked.Add((description, question, history.Count));
@@ -159,6 +161,7 @@ public sealed class WindowTests : IDisposable
         window.Show();
         try
         {
+            await window.FollowUpQuestionsChecked;
             Assert.Equal(Visibility.Visible, window.AskPanel.Visibility);
             await window.AskAsync();
             Assert.Contains("Type a question first", announced);
@@ -184,9 +187,74 @@ public sealed class WindowTests : IDisposable
         finally
         {
             InfoWindow.AskQuestion = original;
+            InfoWindow.PhiSilicaOffered = originalOffered;
             InfoWindow.FollowUpQuestionsShown = AppInfo.FollowUpQuestions;
             Announcer.Observer = null;
             window.Close();
+        }
+    }
+
+    [WpfFact]
+    public async Task InfoWindow_FollowUpQuestions_SayWhatWentWrong_DropAStaleAnswer_AndHideWhereWindowsCantAnswer()
+    {
+        var announced = new List<string>();
+        Announcer.Observer = announced.Add;
+        var path = _lib.AddJpeg("b.jpg");
+        var row = RowFor(path);
+        var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions2.json"));
+        store.Put(row.Item!, "accessible", "A cat on a sofa.");
+        store.Put(row.Item!, "brief", "A cat.");
+        var original = InfoWindow.AskQuestion;
+        var originalOffered = InfoWindow.PhiSilicaOffered;
+        InfoWindow.FollowUpQuestionsShown = true;
+        InfoWindow.PhiSilicaOffered = _ => Task.FromResult(true);
+        InfoWindow? window = null;
+        InfoWindow? other = null;
+        try
+        {
+            window = new InfoWindow(row, new Settings { DescriptionKind = "accessible" }, () => { }, describeNow: false, store) { ShowActivated = false };
+            window.Show();
+            await window.FollowUpQuestionsChecked;
+
+            // A refusal is shown and said, and the question stays to ask again.
+            const string refusal = "Windows didn't let this app use its text model (Unavailable).";
+            InfoWindow.AskQuestion = (_, _, _, _, _) => throw new DescriptionException("not_supported", refusal);
+            window.QuestionBox.Text = "What colour is the cat?";
+            await window.AskAsync();
+            Assert.Equal(refusal, window.AskStatus.Text);
+            Assert.Contains(refusal, announced);
+            Assert.Equal("What colour is the cat?", window.QuestionBox.Text);
+            Assert.Equal(Visibility.Collapsed, window.AnswersBox.Visibility);
+
+            // Another type chosen and this one again while answering: the answer is about a conversation that's over.
+            InfoWindow.AskQuestion = (_, _, _, _, _) =>
+            {
+                window!.KindBox.SelectedValue = "brief";
+                window.KindBox.SelectedValue = "accessible";
+                return Task.FromResult("Grey.");
+            };
+            await window.AskAsync();
+            Assert.Contains("The description changed, so that answer was dropped. Ask again about this one.", announced);
+            Assert.DoesNotContain("Grey.", window.AnswersBox.Text);
+            Assert.Equal("What colour is the cat?", window.QuestionBox.Text);
+            window.Close();
+            window = null;
+
+            // Where Windows can't answer, there's no box.
+            InfoWindow.PhiSilicaOffered = _ => Task.FromResult(false);
+            other = new InfoWindow(row, new Settings { DescriptionKind = "accessible" }, () => { }, describeNow: false, store) { ShowActivated = false };
+            other.Show();
+            await other.FollowUpQuestionsChecked;
+            Assert.Equal(Visibility.Collapsed, other.AskPanel.Visibility);
+        }
+        finally
+        {
+            InfoWindow.AskQuestion = original;
+            InfoWindow.PhiSilicaOffered = originalOffered;
+            InfoWindow.FollowUpQuestionsShown = AppInfo.FollowUpQuestions;
+            Announcer.Observer = null;
+            window?.Close();
+            other?.Close();
         }
     }
 

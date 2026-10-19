@@ -32,6 +32,15 @@ public class AskTests
         Assert.Equal(granted, Protocol.ForPhiSilicaAccess(access) is null);
     }
 
+    [Theory]
+    [InlineData("Available", true, "Available")]
+    [InlineData("Unavailable", true, "Unavailable")]
+    [InlineData("AvailableWithoutToken", false, "AvailableWithoutToken")]
+    [InlineData("Unavailable", false, Protocol.NoToken)]
+    [InlineData("Unknown", false, Protocol.NoToken)]
+    public void TheAccessReported_IsWindowsOwn_ExceptARefusalWithoutAToken(string status, bool hasToken, string reported) =>
+        Assert.Equal(reported, Protocol.AccessStatus(status, hasToken));
+
     [Fact]
     public void ARefusal_SaysWhy_PlainlyAsNotSupported()
     {

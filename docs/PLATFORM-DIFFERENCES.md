@@ -41,7 +41,7 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 
 ### On Windows, from the Mac
 
-- **Follow-up questions about a photo.** The Mac's Apple Intelligence answers follow-up questions after describing. Windows has them built (#24): Phi Silica answers in Get Info from the saved description and any text read from the photo. They stay hidden, because Phi Silica is a Limited Access Feature that Windows refuses an app without Microsoft's token, which Photo Finder doesn't have yet.
+- **How follow-up questions are answered.** Both apps answer follow-up questions about a photo in Get Info. The Mac's Apple Intelligence looks at the photo again. On Windows (#24), Phi Silica answers from the saved description and any text read from the photo, and Get Info says so, because Windows' text model can't see pictures. Phi Silica is a Limited Access Feature: release builds carry Microsoft's token for this app, and a copy built without it says it can't answer.
 - **What's in the photo.** The Mac's Find Objects and Text lists objects and scenes (Vision's classifier) as well as reading text. Windows reads text only: Windows has no built-in classifier for apps.
 
 ## Describing in the background

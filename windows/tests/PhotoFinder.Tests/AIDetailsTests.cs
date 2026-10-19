@@ -118,6 +118,22 @@ public sealed class AIDetailsTests : IDisposable
     [InlineData("Unknown", "Permission: Unknown")]
     public void PhiSilicasPermission_IsSaidInWords(string access, string words) => Assert.Equal(words, SystemCheck.AccessText(access));
 
+    [Theory]
+    [InlineData("Available", "Ready", true)]
+    [InlineData("AvailableWithoutToken", "NotReady", true)]
+    [InlineData("NoToken", "Ready", false)]
+    [InlineData("Unavailable", "Ready", false)]
+    [InlineData("Available", "NotSupportedOnCurrentSystem", false)]
+    [InlineData("Available", "DisabledByUser", false)]
+    [InlineData(null, "Ready", false)]
+    public void FollowUpQuestions_AreOffered_OnlyWhenWindowsGrantsPhiSilica_AndHasIt(string? access, string state, bool offered)
+    {
+        var components = new Dictionary<string, string> { ["languageModel"] = state };
+        if (access is not null) components["languageModelAccess"] = access;
+        Assert.Equal(offered, WindowsAI.OffersFollowUpQuestions(Ready with { Components = components }));
+        Assert.False(WindowsAI.OffersFollowUpQuestions(null));
+    }
+
     [Fact]
     public void PhiSilica_SaysWhetherThisCopyMayUseIt_WhenTheHelperSays()
     {

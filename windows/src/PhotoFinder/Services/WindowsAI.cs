@@ -109,6 +109,14 @@ public sealed class WindowsAI : IDisposable
         }
     }
 
+    /// <summary>Whether Get Info offers follow-up questions (#24), from the helper's --details: Windows granted this
+    /// copy Phi Silica, and has it or can download it. Not from an older helper, which doesn't say, or one that
+    /// didn't answer.</summary>
+    public static bool OffersFollowUpQuestions(AIReadiness? details) =>
+        details?.Components is { } c
+        && c.TryGetValue("languageModelAccess", out var access) && access is "Available" or "AvailableWithoutToken"
+        && c.TryGetValue("languageModel", out var state) && state is "Ready" or "NotReady";
+
     /// <summary>The helper's --details for Check System (#94): its readiness plus the other Windows AI features' states.
     /// Separate from --check, which every description depends on, so asking about Phi Silica can't hold describing up.
     /// Not remembered: Check System shows how things are now. An older helper without it gives no component states.</summary>

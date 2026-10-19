@@ -205,7 +205,8 @@ public static class Protocol
     };
 
     /// <summary>Phi Silica's Limited Access Feature, and the attestation Microsoft gave with this app's token (#24). Neither
-    /// is secret; the token is, and comes from the build (<see cref="BuiltInToken"/>).</summary>
+    /// is secret. The token is kept out of this public source and comes from the build (<see cref="BuiltInToken"/>); it
+    /// can be read from a released helper, but Windows accepts it only from this app's package family.</summary>
     public const string PhiSilicaFeature = "com.microsoft.windows.ai.languagemodel";
     public const string PhiSilicaAttestation =
         "mzky7tc8qkasw has registered their use of com.microsoft.windows.ai.languagemodel with Microsoft and agrees to the terms of use.";
@@ -222,6 +223,10 @@ public static class Protocol
     /// <summary>Whether Windows granted Phi Silica, by the LimitedAccessFeatureStatus name. AvailableWithoutToken is a
     /// Windows that no longer asks.</summary>
     public static bool PhiSilicaGranted(string access) => access is "Available" or "AvailableWithoutToken";
+
+    /// <summary>The access status to report: Windows' own, except that a build without the token that Windows refused
+    /// says NoToken, which is the reason.</summary>
+    public static string AccessStatus(string status, bool hasToken) => hasToken || PhiSilicaGranted(status) ? status : NoToken;
 
     /// <summary>The code and message for Phi Silica not being granted, or null if it was.</summary>
     public static (string Code, string Message)? ForPhiSilicaAccess(string access) => PhiSilicaGranted(access) ? null : access switch
