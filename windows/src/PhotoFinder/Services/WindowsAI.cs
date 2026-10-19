@@ -368,8 +368,9 @@ public sealed class WindowsAI : IDisposable
         _server?.Dispose();
         _serverAnswered = false;
         _server = Process.Start(StartInfo("--serve")) ?? throw new DescriptionException("not_installed", NotInstalledMessage);
-        // Its stderr is only progress notes ("getting the model ready"); read it so it never fills up and blocks.
-        _server.ErrorDataReceived += (_, _) => { };
+        // Its stderr is only notes ("getting the model ready", "trying once more with a new model"): read so it never
+        // fills up and blocks, and kept in the log, where they explain a slow or failed description.
+        _server.ErrorDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) Log.Write("helper", e.Data.Trim()); };
         _server.BeginErrorReadLine();
         return _server;
     }

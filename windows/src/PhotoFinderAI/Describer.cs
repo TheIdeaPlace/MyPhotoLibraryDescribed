@@ -36,8 +36,16 @@ public sealed class Describer : IDisposable
                     throw new ProtocolException(request.Id, refused.Code, refused.Message);
                 }
             }
-            using var context = _language.CreateContext(Protocol.AskSystemPrompt);
-            var result = await _language.GenerateResponseAsync(context, Protocol.AskPrompt(request), new LanguageModelOptions());
+            var result = await GenerateAsync(request);
+            if (result.Status == LanguageModelResponseStatus.Error)
+            {
+                // As with the image model: a fresh one may answer where a long-used one fails (19 Oct).
+                Console.Error.WriteLine("Phi Silica answered Error; trying once more with a new text model");
+                ResetLanguageModel();
+                _language = await StartLanguageModelAsync(request);
+                result = await GenerateAsync(request);
+                Console.Error.WriteLine($"The new text model's result: {result.Status}");
+            }
             var status = result.Status.ToString();
             if (Protocol.CodeForAnswerStatus(status) is { } code) throw new ProtocolException(request.Id, code, Protocol.MessageForAnswerStatus(status));
             return result.Text.Trim();
@@ -50,6 +58,12 @@ public sealed class Describer : IDisposable
             throw new ProtocolException(request.Id, Codes.InternalError,
                 $"Windows couldn't answer" + (string.IsNullOrWhiteSpace(ex.Message) ? "." : $": {ex.Message.Trim()}") + $" (0x{ex.HResult:X8})");
         }
+    }
+
+    private async Task<LanguageModelResponseResult> GenerateAsync(Protocol.AskRequest request)
+    {
+        using var context = _language!.CreateContext(Protocol.AskSystemPrompt);
+        return await _language.GenerateResponseAsync(context, Protocol.AskPrompt(request), new LanguageModelOptions());
     }
 
     /// <summary>Unlocks Phi Silica, a Limited Access Feature, with Microsoft's token for this app (#24), once per run.
@@ -177,6 +191,17 @@ public sealed class Describer : IDisposable
                 _ => ImageDescriptionKind.AccessibleDescription,
             };
             var result = await _generator.DescribeAsync(image, kind, new ContentFilterOptions());
+            if (result.Status == ImageDescriptionResultStatus.InternalError)
+            {
+                // After a few descriptions, the same generator starts answering InternalError at once for pictures a new
+                // one describes fine (Kelly's PC, 19 Oct: 2 of 8 in one helper, all 8 in fresh ones). So one more try
+                // with a new generator before giving up.
+                Console.Error.WriteLine("InternalError; trying once more with a new image description model");
+                Reset();
+                _generator = await ImageDescriptionGenerator.CreateAsync();
+                result = await _generator.DescribeAsync(image, kind, new ContentFilterOptions());
+                Console.Error.WriteLine($"The new model's result: {result.Status}");
+            }
             var status = result.Status.ToString();
             if (Protocol.CodeForStatus(status) is { } code) throw new ProtocolException(request.Id, code, Protocol.MessageForStatus(status));
             return result.Description;
