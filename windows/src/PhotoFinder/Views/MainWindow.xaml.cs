@@ -170,7 +170,10 @@ public partial class MainWindow : Window
         Bind(AppCommands.OpenItem, () => _model.Open(), HasSelection);
         Bind(AppCommands.OpenSelected, () => _model.Open(), HasSelection);
         Bind(AppCommands.Preview, ShowPreview, HasFiles);
-        Bind(AppCommands.GetInfo, ShowInfo, HasFiles);
+        Bind(AppCommands.GetInfo, () => ShowInfo(), HasFiles);
+        // Only where follow-up questions are on at all; the menu item goes with it.
+        if (AppInfo.FollowUpQuestions) Bind(AppCommands.AskAboutPhoto, () => ShowInfo(ask: true), HasFiles);
+        else AskAboutPhotoItem.Visibility = Visibility.Collapsed;
         // Available on any row, so the shortcut on a folder or video says why it can't, rather than nothing.
         Bind(AppCommands.DescribePhoto, () => DescribePhoto(again: false), () => _model.FocusedRow is not null);
         Bind(AppCommands.Redescribe, () => DescribePhoto(again: true), () => _model.FocusedRow is not null);
@@ -198,18 +201,8 @@ public partial class MainWindow : Window
         Bind(AppCommands.ToggleFavorite, () => { if (CanChangePhotos() && (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite"))) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, () => EditCaption(), HasFiles);
         Bind(AppCommands.ReadStatusBar, ReadStatusBar);
-        Bind(AppCommands.OpenLogFolder, () =>
-        {
-            try
-            {
-                Directory.CreateDirectory(Services.Log.Folder);
-                OpenUrl(Services.AppPaths.ForExplorer(Services.Log.Folder));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
-            {
-                ShowError($"File Explorer couldn't open the log folder. It's at {Services.AppPaths.ForExplorer(Services.Log.Folder)}.");
-            }
-        });
+        Bind(AppCommands.OpenLogFolder, () => OpenAppFolder(Services.Log.Folder, "log folder"));
+        Bind(AppCommands.OpenDescriptionsFolder, () => OpenAppFolder(Services.AppPaths.DataFolder, "descriptions folder"));
         Bind(AppCommands.GoToStatusBar, FocusStatusBar);
         Bind(AppCommands.UseDescriptionAsCaption, () => _model.Fire(UseDescriptionAsCaptionAsync(_model.SelectedRows)), HasFiles);
         Bind(AppCommands.About, ShowAbout);
@@ -1261,14 +1254,41 @@ public partial class MainWindow : Window
         return AutoDescriber.DescribeNowAsync(row, stillOn, again, replacing);
     }
 
-    private void ShowInfo()
+    /// <summary>One of the app's own folders in File Explorer, at the place Explorer can see it (a packaged app's data is
+    /// kept in its package's folder).</summary>
+    private void OpenAppFolder(string folder, string what)
+    {
+        try
+        {
+            Directory.CreateDirectory(folder);
+            OpenUrl(Services.AppPaths.ForExplorer(folder));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            ShowError($"File Explorer couldn't open the {what}. It's at {Services.AppPaths.ForExplorer(folder)}.");
+        }
+    }
+
+    /// <param name="ask">Ask About Photo (#233): Get Info opens with focus in the follow-up question box.</param>
+    private void ShowInfo(bool ask = false)
     {
         DescriptionPanel.SaveIfChanged();
         var kindBefore = _model.Settings.DescriptionKind;
         var row = _model.SelectedRows.FirstOrDefault(r => r.Item is not null);
-        if (row?.Item is null) { System.Media.SystemSounds.Beep.Play(); return; }
+        if (row?.Item is null)
+        {
+            // On a folder: Ask About Photo says why, as Describe Photo does; Get Info beeps, as it always has.
+            if (ask) Services.Announcer.Announce("Choose a photo to ask about.");
+            else System.Media.SystemSounds.Beep.Play();
+            return;
+        }
+        if (ask && row.Item.IsVideo)
+        {
+            Services.Announcer.Announce("Questions are about photos, not videos.");
+            return;
+        }
         new InfoWindow(row, _model.Settings, _model.SaveSettings, describeNow: false, _model.Descriptions,
-            useAsCaption: (r, info, kind) => UseDescriptionAsCaptionAsync([r], info, kind)) { Owner = this }.ShowDialog();
+            useAsCaption: (r, info, kind) => UseDescriptionAsCaptionAsync([r], info, kind), askNow: ask) { Owner = this }.ShowDialog();
         // Get Info can change the Description Type.
         if (_model.Settings.DescriptionKind != kindBefore) _model.DescriptionKindChanged();
         // The rows may have been rebuilt while it was open, so the element WPF would return to can be gone.

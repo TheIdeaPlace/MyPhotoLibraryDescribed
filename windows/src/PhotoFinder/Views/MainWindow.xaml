@@ -89,6 +89,7 @@
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.DescribePhoto" />
                 <v:AppMenuItem Command="v:AppCommands.Redescribe" />
+                <v:AppMenuItem x:Name="AskAboutPhotoItem" Command="v:AppCommands.AskAboutPhoto" />
                 <v:AppMenuItem Command="v:AppCommands.UseDescriptionAsCaption" />
                 <v:AppMenuItem x:Name="AutoDescribeItem" Command="v:AppCommands.AutoDescribe" IsCheckable="True" />
                 <v:AppMenuItem Header="Description T_ype" x:Name="KindMenu" />
@@ -103,6 +104,7 @@
                 <v:AppMenuItem Command="v:AppCommands.CheckSystem" />
                 <v:AppMenuItem Command="v:AppCommands.CheckAIDescription" />
                 <v:AppMenuItem Command="v:AppCommands.OpenLogFolder" />
+                <v:AppMenuItem Command="v:AppCommands.OpenDescriptionsFolder" />
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.UserGuide" />
                 <v:AppMenuItem Command="v:AppCommands.PrivacyPolicy" />

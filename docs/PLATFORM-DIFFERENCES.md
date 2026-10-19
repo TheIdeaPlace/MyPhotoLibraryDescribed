@@ -35,6 +35,8 @@ Each gap below has a GitHub issue with the `parity` label (`gh issue list --labe
 
 ### On the Mac, from Windows
 
+- **Ask About Photo.** Windows has Photo > Ask About Photo… (Ctrl+K), which opens Get Info in the follow-up question box (#233). On the Mac, the questions are only in Get Info so far; Command-K would match (#235).
+- **Help > Open Descriptions Folder.** Windows opens the folder of descriptions, settings and logs in File Explorer (Kelly, 19 Oct). The Mac has Open Log Folder only (#236).
 - **Moving between panes.** Both have F6 and Shift+F6 (Go > Next Pane and Previous Pane on the Mac) for the sidebar, the list or gallery, search and the status bar, with Left and Right Arrow between status bar sections. On Windows the status bar is reached only with F6, not Tab, as in QuickMail; on the Mac, SwiftUI's focusable status sections may also be Tab stops.
 - **Tests.** Both have tests (the Mac about 430, Windows about 300). Mac CI can't compile the macOS 27 code until GitHub's runners have Xcode 27.
 - **Favorites and ratings in files in added folders.** Windows sets favorites (a five-star rating) and ratings in the files themselves. On the Mac, Toggle Favorite says it isn't available for files yet. Captions are written into files on the Mac too (#31).

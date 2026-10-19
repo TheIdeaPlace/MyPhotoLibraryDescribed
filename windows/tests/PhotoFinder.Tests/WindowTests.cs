@@ -195,6 +195,97 @@ public sealed class WindowTests : IDisposable
     }
 
     [WpfFact]
+    public async Task AskAboutPhoto_PutsFocusInTheQuestionBox_OrSaysWhyNot()
+    {
+        var announced = new List<string>();
+        Announcer.Observer = announced.Add;
+        var described = RowFor(_lib.AddJpeg("described.jpg"));
+        var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions3.json"));
+        store.Put(described.Item!, "accessible", "A boat in a harbour.");
+        var originalOffered = InfoWindow.PhiSilicaOffered;
+        var originalAsk = InfoWindow.AskQuestion;
+        InfoWindow.FollowUpQuestionsShown = true;
+        var opened = new List<InfoWindow>();
+        InfoWindow Open(FileRow row)
+        {
+            var w = new InfoWindow(row, new Settings { DescriptionKind = "accessible" }, () => { }, describeNow: false, store, askNow: true);
+            opened.Add(w);
+            w.Show();
+            w.Activate();
+            return w;
+        }
+        try
+        {
+            // Described, and Windows can answer: straight to the question box.
+            InfoWindow.PhiSilicaOffered = _ => Task.FromResult(true);
+            var window = Open(described);
+            Assert.True(await WaitFor(() => window.QuestionBox.IsKeyboardFocused));
+            Assert.Equal(Visibility.Visible, window.AskPanel.Visibility);
+            Assert.Equal("Follow-up question", System.Windows.Automation.AutomationProperties.GetName(window.QuestionBox));
+            window.Close();
+
+            // A photo not described yet is described first, with focus already in the box. That uses the real AI helper,
+            // so it's checked in the app, not here: a test describing for real competes with
+            // InfoWindow_DescribeNow_DescribesThePhotoAndRemembersTheKind for the one helper.
+
+            // Windows can't answer here: Get Info opens as usual and says why.
+            InfoWindow.PhiSilicaOffered = _ => Task.FromResult(false);
+            var plain = Open(described);
+            await plain.FollowUpQuestionsChecked;
+            Assert.True(await WaitFor(() => announced.Contains(InfoWindow.NoQuestionsHere)));
+            Assert.Equal(Visibility.Collapsed, plain.AskPanel.Visibility);
+            Assert.True(await WaitFor(() => plain.GeneralList.IsKeyboardFocusWithin));
+            plain.Close();
+
+            // Asking with no description to ask about says so, and nothing is sent.
+            InfoWindow.PhiSilicaOffered = _ => Task.FromResult(true);
+            var asked = 0;
+            InfoWindow.AskQuestion = (_, _, _, _, _) => { asked++; return Task.FromResult("No."); };
+            var empty = new InfoWindow(RowFor(_lib.AddJpeg("empty.jpg")), new Settings { DescriptionKind = "accessible" }, () => { }, describeNow: false, store)
+                { ShowActivated = false };
+            opened.Add(empty);
+            empty.Show();
+            empty.QuestionBox.Text = "What's in it?";
+            await empty.AskAsync();
+            Assert.Contains("There's no description to ask about yet. Describe the photo first.", announced);
+            Assert.Equal(0, asked);
+        }
+        finally
+        {
+            InfoWindow.PhiSilicaOffered = originalOffered;
+            InfoWindow.AskQuestion = originalAsk;
+            InfoWindow.FollowUpQuestionsShown = AppInfo.FollowUpQuestions;
+            Announcer.Observer = null;
+            foreach (var w in opened) if (w.IsLoaded) w.Close();
+        }
+    }
+
+    [WpfFact]
+    public void InfoWindow_QuestionBox_ComesBeforeAsk_AndEveryBoxHasAName()
+    {
+        var window = new InfoWindow(RowFor(_lib.AddJpeg("order.jpg")), new Settings(), () => { }, describeNow: false) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.Equal(0, Grid.GetColumn(window.QuestionBox));
+            Assert.Equal(1, Grid.GetColumn(window.AskButton));
+            // The box comes first among the grid's children, which is Tab order.
+            var grid = (Grid)window.QuestionBox.Parent;
+            Assert.True(grid.Children.IndexOf(window.QuestionBox) < grid.Children.IndexOf(window.AskButton));
+            foreach (var (control, name) in new (UIElement, string)[]
+            {
+                (window.QuestionBox, "Follow-up question"), (window.AnswersBox, "Answers"),
+                (window.DescriptionBox, "Description"), (window.OcrBox, "Text in image"), (window.KindBox, "Description type"),
+            })
+                Assert.Equal(name, System.Windows.Automation.AutomationProperties.GetName(control));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [WpfFact]
     public async Task InfoWindow_FollowUpQuestions_SayWhatWentWrong_DropAStaleAnswer_AndHideWhereWindowsCantAnswer()
     {
         var announced = new List<string>();
@@ -683,10 +774,13 @@ public sealed class WindowTests : IDisposable
             Assert.Equal("brief", Settings.Load(_lib.PathOf(@"data\Settings.json")).DescriptionKind);
 
             Assert.Contains(items, m => m.Command == AppCommands.DescribePhoto);
+            // Ask About Photo sits under Redescribe (#233).
+            var photo = window.MainMenu.Items.OfType<MenuItem>().Single(m => (string)m.Header == "_Photo").Items.OfType<MenuItem>().ToList();
+            Assert.Equal(photo.FindIndex(m => m.Command == AppCommands.Redescribe) + 1, photo.FindIndex(m => m.Command == AppCommands.AskAboutPhoto));
 
-            // The Help menu in the order both apps use (#33).
+            // The Help menu in the order both apps use (#33); Open Descriptions Folder is Windows' so far (#236).
             var help = window.MainMenu.Items.OfType<MenuItem>().Last();
-            Assert.Equal([AppCommands.CheckForUpdates, AppCommands.ReportBug, AppCommands.CheckSystem, AppCommands.CheckAIDescription, AppCommands.OpenLogFolder, null, AppCommands.UserGuide, AppCommands.PrivacyPolicy, null, AppCommands.About],
+            Assert.Equal([AppCommands.CheckForUpdates, AppCommands.ReportBug, AppCommands.CheckSystem, AppCommands.CheckAIDescription, AppCommands.OpenLogFolder, AppCommands.OpenDescriptionsFolder, null, AppCommands.UserGuide, AppCommands.PrivacyPolicy, null, AppCommands.About],
                 help.Items.Cast<object>().Select(i => (i as MenuItem)?.Command));
             Assert.Equal($"_About {AppInfo.Name}", AppCommands.About.Text);
 

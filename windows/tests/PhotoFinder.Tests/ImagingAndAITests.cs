@@ -174,7 +174,27 @@ public class WindowsAIProtocolTests
             size => { sizes.Add(size); return Task.FromResult(new byte[] { 1 }); },
             _ => ++calls < 3 ? throw new DescriptionException("internal_error", "boom") : Task.FromResult("Worked small"));
         Assert.Equal("Worked small", text);
-        Assert.Equal([2048u, 1024u, 512u], sizes);
+        Assert.Equal([1536u, 1024u, 512u], sizes);
+    }
+
+    [Fact]
+    public async Task Retries_TryOneSmallerSize_AfterATimeout_ButNotMore()
+    {
+        // Windows' model can hang on a photo at one size and describe it smaller (Kelly's PC, 19 Oct).
+        var sizes = new List<uint>();
+        var text = await WindowsAI.WithRetriesAsync(
+            size => { sizes.Add(size); return Task.FromResult(new byte[] { 1 }); },
+            _ => sizes.Count == 1 ? throw new DescriptionException("timeout", "Too long.") : Task.FromResult("Worked smaller"));
+        Assert.Equal("Worked smaller", text);
+        Assert.Equal([1536u, 1024u], sizes);
+
+        // Each timeout is a minute's wait, so two is the most.
+        sizes.Clear();
+        var ex = await Assert.ThrowsAsync<DescriptionException>(() => WindowsAI.WithRetriesAsync<string>(
+            size => { sizes.Add(size); return Task.FromResult(new byte[] { 1 }); },
+            _ => throw new DescriptionException("timeout", "Too long.")));
+        Assert.Equal("timeout", ex.Code);
+        Assert.Equal([1536u, 1024u], sizes);
     }
 
     [Fact]

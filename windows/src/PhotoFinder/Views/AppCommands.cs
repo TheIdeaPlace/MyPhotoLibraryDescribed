@@ -68,6 +68,9 @@ public static class AppCommands
     /// <summary>Describes the photo you're on afresh, replacing its saved description, and speaks it. The Mac's is
     /// Command-R (#119).</summary>
     public static readonly RoutedUICommand Redescribe = Make("Redescri_be", nameof(Redescribe), new KeyGesture(Key.R, ModifierKeys.Control));
+    /// <summary>Follow-up questions about the photo you're on (#233): Get Info, with focus in the question box. Ctrl+K,
+    /// free in both apps; the Mac's would be Command-K. The access key is h: k is Describe Photos in the Background's.</summary>
+    public static readonly RoutedUICommand AskAboutPhoto = Make("Ask About P_hoto…", nameof(AskAboutPhoto), new KeyGesture(Key.K, ModifierKeys.Control));
     public static readonly RoutedUICommand DescribeInBackground = Make("Describe Photos in the Bac_kground", nameof(DescribeInBackground));
     public static readonly RoutedUICommand StopBackground = Make("_Stop Background Describing", nameof(StopBackground));
     public static readonly RoutedUICommand AutoDescribe = Make("Describe Photos _Automatically", nameof(AutoDescribe),
@@ -83,6 +86,9 @@ public static class AppCommands
     public static readonly RoutedUICommand CheckAIDescription = Make("Check AI _Description…", nameof(CheckAIDescription));
     /// <summary>The diagnostic log's folder, in File Explorer, for attaching to a bug report.</summary>
     public static readonly RoutedUICommand OpenLogFolder = Make("Open _Log Folder", nameof(OpenLogFolder));
+    /// <summary>The folder with the descriptions, settings and the rest the app keeps (Kelly, 19 Oct), in File Explorer.
+    /// The access key is e: D is Check AI Description's.</summary>
+    public static readonly RoutedUICommand OpenDescriptionsFolder = Make("Open Descriptions Fold_er", nameof(OpenDescriptionsFolder));
     /// <summary>The user guide and privacy policy, on GitHub, as on the Mac (#105).</summary>
     public static readonly RoutedUICommand UserGuide = Make($"{AppInfo.Name} User _Guide", nameof(UserGuide));
     public static readonly RoutedUICommand PrivacyPolicy = Make("_Privacy Policy", nameof(PrivacyPolicy));

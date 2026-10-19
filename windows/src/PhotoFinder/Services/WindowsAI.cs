@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -48,9 +48,20 @@ public sealed class WindowsAI : IDisposable
     /// describe fine smaller, and trying the same size again only fails again (found in IDT).</summary>
     public static readonly uint[] RetrySizes = [1024, 512];
 
-    public const uint FirstSize = 2048;
+    /// <summary>The long edge sent first. It was 2048, but at 2048 Windows' model never answers for a whole kind of photo
+    /// (Kelly's iPhone backup, 19 Oct: the "…_singular_display_fullPicture.heic" files, a third of the library), while at
+    /// 1536 the same photos are described in about 7 seconds, and other photos as well as before.</summary>
+    public const uint FirstSize = 1536;
 
-    private static readonly TimeSpan DescribeTimeout = TimeSpan.FromMinutes(3);
+    /// <summary>How long a request may take. A photo usually takes 5 to 15 seconds, the first after a start a little
+    /// more. It was 3 minutes, but Windows' model can hang on a particular photo and never answer (Kelly's PC, 19 Oct):
+    /// each start then sat silent on that photo for 3 minutes.</summary>
+    private static readonly TimeSpan DescribeTimeout = TimeSpan.FromSeconds(60);
+    /// <summary>The first request a newly started helper answers also loads Windows' model (or Phi Silica), which can take
+    /// a while just after Windows starts or updates, so it gets longer.</summary>
+    private static readonly TimeSpan FirstRequestTimeout = TimeSpan.FromMinutes(2);
+    /// <summary>Whether the helper running now has answered a request yet.</summary>
+    private bool _serverAnswered;
     private static readonly TimeSpan CheckTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PrepareTimeout = TimeSpan.FromMinutes(15);
 
@@ -228,8 +239,9 @@ public sealed class WindowsAI : IDisposable
         return new(text, took);
     }
 
-    /// <summary>Tries the first size, then smaller ones while the model reports an internal error.
-    /// Any other failure (content filter, too much text) is final.</summary>
+    /// <summary>Tries the first size, then smaller ones while the model reports an internal error or doesn't answer in
+    /// time: a photo it hangs on at one size can be fine smaller (19 Oct). Any other failure (content filter, too much
+    /// text) is final.</summary>
     internal static async Task<T> WithRetriesAsync<T>(Func<uint, Task<byte[]>> jpegAtSize, Func<byte[], Task<T>> describe, bool retry = true)
     {
         var sizes = retry ? new[] { FirstSize }.Concat(RetrySizes).ToArray() : [FirstSize];
@@ -241,7 +253,8 @@ public sealed class WindowsAI : IDisposable
             {
                 return await describe(jpeg);
             }
-            catch (DescriptionException ex) when (ex.Code == "internal_error")
+            // Never two timeouts in a row: each is a minute's wait. (An internal error between them resets this.)
+            catch (DescriptionException ex) when (ex.Code == "internal_error" || (ex.Code == "timeout" && last?.Code != "timeout"))
             {
                 last = ex;
             }
@@ -282,7 +295,7 @@ public sealed class WindowsAI : IDisposable
             string? line;
             var started = Stopwatch.StartNew();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            timeout.CancelAfter(DescribeTimeout);
+            timeout.CancelAfter(_serverAnswered ? DescribeTimeout : FirstRequestTimeout);
             try
             {
                 await server.StandardInput.WriteAsync(build(id) + "\n");
@@ -307,6 +320,7 @@ public sealed class WindowsAI : IDisposable
                 StopServer();
                 throw new DescriptionException("internal_error", $"The {AppInfo.HelperName} stopped unexpectedly.");
             }
+            _serverAnswered = true;
             try
             {
                 return (ParseResponse(line, id), started.Elapsed);
@@ -352,9 +366,11 @@ public sealed class WindowsAI : IDisposable
     {
         if (_server is { HasExited: false }) return _server;
         _server?.Dispose();
+        _serverAnswered = false;
         _server = Process.Start(StartInfo("--serve")) ?? throw new DescriptionException("not_installed", NotInstalledMessage);
-        // Its stderr is only progress notes ("getting the model ready"); read it so it never fills up and blocks.
-        _server.ErrorDataReceived += (_, _) => { };
+        // Its stderr is only notes ("getting the model ready", "trying once more with a new model"): read so it never
+        // fills up and blocks, and kept in the log, where they explain a slow or failed description.
+        _server.ErrorDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) Log.Write("helper", e.Data.Trim()); };
         _server.BeginErrorReadLine();
         return _server;
     }
