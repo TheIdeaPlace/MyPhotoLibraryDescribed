@@ -109,6 +109,14 @@ public sealed class WindowsAI : IDisposable
         }
     }
 
+    /// <summary>Whether Get Info offers follow-up questions (#24), from the helper's --details: Windows granted this
+    /// copy Phi Silica, and has it or can download it. Not from an older helper, which doesn't say, or one that
+    /// didn't answer.</summary>
+    public static bool OffersFollowUpQuestions(AIReadiness? details) =>
+        details?.Components is { } c
+        && c.TryGetValue("languageModelAccess", out var access) && access is "Available" or "AvailableWithoutToken"
+        && c.TryGetValue("languageModel", out var state) && state is "Ready" or "NotReady";
+
     /// <summary>The helper's --details for Check System (#94): its readiness plus the other Windows AI features' states.
     /// Separate from --check, which every description depends on, so asking about Phi Silica can't hold describing up.
     /// Not remembered: Check System shows how things are now. An older helper without it gives no component states.</summary>
@@ -241,7 +249,28 @@ public sealed class WindowsAI : IDisposable
         throw last!;
     }
 
-    private async Task<(string Text, TimeSpan Took)> DescribeOnceAsync(byte[] jpeg, string kind, CancellationToken cancel, CancellationToken drop)
+    private Task<(string Text, TimeSpan Took)> DescribeOnceAsync(byte[] jpeg, string kind, CancellationToken cancel, CancellationToken drop) =>
+        SendAsync(id => BuildRequest(id, kind, jpeg), "Windows took too long to describe this photo. Try again.", cancel, drop);
+
+    /// <summary>A follow-up question about a photo (#24), answered by Windows' text model (Phi Silica) from its description
+    /// and any text read from it, not by looking at the photo again.</summary>
+    public async Task<string> AskAsync(string description, string text, string question,
+        IReadOnlyList<(string Question, string Answer)> history, CancellationToken cancel = default) =>
+        (await SendAsync(id => BuildAskRequest(id, description, text, question, history), "Windows took too long to answer. Try again.", cancel, default)).Text;
+
+    internal static string BuildAskRequest(int id, string description, string text, string question, IReadOnlyList<(string Question, string Answer)> history) =>
+        new JsonObject
+        {
+            ["id"] = id,
+            ["op"] = "ask",
+            ["description"] = description,
+            ["text"] = text,
+            ["question"] = question,
+            ["history"] = new JsonArray(history.Select(h => (JsonNode)new JsonObject { ["question"] = h.Question, ["answer"] = h.Answer }).ToArray()),
+        }.ToJsonString();
+
+    /// <summary>One request to the helper and its answer, in turn with any other, and how long it took once sent.</summary>
+    private async Task<(string Text, TimeSpan Took)> SendAsync(Func<int, string> build, string tooLong, CancellationToken cancel, CancellationToken drop)
     {
         using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancel, drop))
             await _gate.WaitAsync(waiting.Token);
@@ -256,7 +285,7 @@ public sealed class WindowsAI : IDisposable
             timeout.CancelAfter(DescribeTimeout);
             try
             {
-                await server.StandardInput.WriteAsync(BuildRequest(id, kind, jpeg) + "\n");
+                await server.StandardInput.WriteAsync(build(id) + "\n");
                 await server.StandardInput.FlushAsync(timeout.Token);
                 line = await server.StandardOutput.ReadLineAsync(timeout.Token);
             }
@@ -267,7 +296,7 @@ public sealed class WindowsAI : IDisposable
                 StopServer();
                 if (!cancel.IsCancellationRequested) Log.Error("helper", "A request to the helper failed; it was restarted", ex);
                 if (ex is OperationCanceledException && !cancel.IsCancellationRequested)
-                    throw new DescriptionException("timeout", "Windows took too long to describe this photo. Try again.");
+                    throw new DescriptionException("timeout", tooLong);
                 if (ex is IOException)
                     throw new DescriptionException("internal_error", $"The {AppInfo.HelperName} stopped unexpectedly.");
                 throw;

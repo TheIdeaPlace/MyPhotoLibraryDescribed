@@ -4,8 +4,12 @@
 // Serve mode reads one JSON request per line on stdin and writes one JSON response per line on
 // stdout, in order. Requests:
 //   {"id": 7, "kind": "accessible", "mime": "image/jpeg", "image": "<base64>"}
+// A follow-up question about a photo (#24), answered by Phi Silica from its description, not the picture:
+//   {"id": 8, "op": "ask", "description": "...", "text": "text read from it", "question": "...",
+//    "history": [{"question": "...", "answer": "..."}]}
 // Responses:
 //   {"id": 7, "ok": true,  "kind": "accessible", "text": "...", "seconds": 2.41}
+//   {"id": 8, "ok": true,  "kind": "answer", "text": "...", "seconds": 1.10}
 //   {"id": 7, "ok": false, "code": "content_filtered", "message": "..."}
 // The codes are the contract; My Photo Library Described (Services/WindowsAI.cs) decides what each one means
 // for the person. Bump Version if a field's meaning changes.
@@ -17,7 +21,7 @@ namespace PhotoFinderAI;
 
 public static class Protocol
 {
-    public const int Version = 1;
+    public const int Version = 2;
 
     /// <summary>The description kinds, in order: the first is the default.</summary>
     public static readonly string[] Kinds = ["accessible", "detailed", "brief", "diagram"];
@@ -47,9 +51,33 @@ public static class Protocol
 
     public sealed record DescribeRequest(int Id, string Kind, string Mime, byte[] Image);
 
+    /// <summary>A follow-up question about a photo, with what's known about it and the questions asked so far.</summary>
+    public sealed record AskRequest(int Id, string Description, string Text, string Question, IReadOnlyList<(string Question, string Answer)> History);
+
+    /// <summary>Limits on a question's parts, far beyond a real one, so a request can't be made huge.</summary>
+    public const int MaxDescriptionChars = 20_000;
+    public const int MaxQuestionChars = 2_000;
+    public const int MaxHistory = 20;
+
+    /// <summary>A request line: a description (<see cref="DescribeRequest"/>) or, with "op": "ask", a follow-up question
+    /// (<see cref="AskRequest"/>).</summary>
+    public static object ParseAnyRequest(string line)
+    {
+        var (request, id) = ParseJson(line);
+        if (request["op"] is { } op && op.GetValueKind() == JsonValueKind.String && op.GetValue<string>() == "ask")
+            return AskFrom(request, id);
+        return DescribeFrom(request, id);
+    }
+
     /// <summary>Reads one request line. Throws <see cref="ProtocolException"/> with the code to
     /// answer with, and the request's id when it could be read.</summary>
     public static DescribeRequest ParseRequest(string line)
+    {
+        var (request, id) = ParseJson(line);
+        return DescribeFrom(request, id);
+    }
+
+    private static (JsonObject Request, int Id) ParseJson(string line)
     {
         JsonObject request;
         try
@@ -71,16 +99,21 @@ public static class Protocol
                 throw new ProtocolException(0, Codes.BadRequest, "The request's id must be a whole number.");
             id = parsedId;
         }
+        return (request, id);
+    }
 
-        string? StringField(string name)
-        {
-            var node = request[name];
-            if (node is null) return null;
-            if (node.GetValueKind() != JsonValueKind.String)
-                throw new ProtocolException(id, Codes.BadRequest, $"The request's {name} must be text.");
-            return node.GetValue<string>();
-        }
+    private static string? StringField(JsonObject request, int id, string name)
+    {
+        var node = request[name];
+        if (node is null) return null;
+        if (node.GetValueKind() != JsonValueKind.String)
+            throw new ProtocolException(id, Codes.BadRequest, $"The request's {name} must be text.");
+        return node.GetValue<string>();
+    }
 
+    private static DescribeRequest DescribeFrom(JsonObject request, int id)
+    {
+        string? StringField(string name) => Protocol.StringField(request, id, name);
         var kind = StringField("kind");
         var mime = StringField("mime");
         var image = StringField("image") ?? throw new ProtocolException(id, Codes.BadRequest, "The request has no picture.");
@@ -97,6 +130,111 @@ public static class Protocol
         }
         return Validate(id, kind, mime, bytes);
     }
+
+    private static AskRequest AskFrom(JsonObject request, int id)
+    {
+        var description = (StringField(request, id, "description") ?? "").Trim();
+        var text = (StringField(request, id, "text") ?? "").Trim();
+        var question = (StringField(request, id, "question") ?? "").Trim();
+        if (description.Length == 0) throw new ProtocolException(id, Codes.BadRequest, "There's no description to answer from.");
+        if (question.Length == 0) throw new ProtocolException(id, Codes.BadRequest, "There's no question.");
+        if (description.Length > MaxDescriptionChars || text.Length > MaxDescriptionChars || question.Length > MaxQuestionChars)
+            throw new ProtocolException(id, Codes.TooLarge, "The question is too long.");
+        var history = new List<(string, string)>();
+        if (request["history"] is { } node)
+        {
+            if (node is not JsonArray items) throw new ProtocolException(id, Codes.BadRequest, "The request's history must be a list.");
+            foreach (var item in items.TakeLast(MaxHistory))
+            {
+                if (item is not JsonObject o) throw new ProtocolException(id, Codes.BadRequest, "Each history item must be a question and answer.");
+                var q = (StringField(o, id, "question") ?? "").Trim();
+                var a = (StringField(o, id, "answer") ?? "").Trim();
+                if (q.Length > MaxQuestionChars || a.Length > MaxDescriptionChars) throw new ProtocolException(id, Codes.TooLarge, "The question is too long.");
+                if (q.Length > 0 && a.Length > 0) history.Add((q, a));
+            }
+        }
+        return new AskRequest(id, description, text, question, history);
+    }
+
+    /// <summary>What Phi Silica is told: it can't see the photo, only what's known about it, and must say so rather than
+    /// guess. Kept here, in plain C#, so it's tested.</summary>
+    public const string AskSystemPrompt =
+        "You answer questions about a photo for someone who can't see it. You can't see the photo either: you have only " +
+        "its description and any text read from it. Answer from those alone, briefly and plainly. If they don't say, " +
+        "say that the description doesn't say. Never invent details.";
+
+    public static string AskPrompt(AskRequest request)
+    {
+        var prompt = new System.Text.StringBuilder();
+        prompt.Append("Description of the photo:\n").Append(request.Description).Append("\n\n");
+        if (request.Text.Length > 0) prompt.Append("Text read from the photo:\n").Append(request.Text).Append("\n\n");
+        foreach (var (q, a) in request.History) prompt.Append("Question: ").Append(q).Append("\nAnswer: ").Append(a).Append("\n\n");
+        prompt.Append("Question: ").Append(request.Question).Append("\nAnswer:");
+        return prompt.ToString();
+    }
+
+    /// <summary>The code for a finished answer's status, by the status's name in
+    /// Microsoft.Windows.AI.Text.LanguageModelResponseStatus. Null means it succeeded.</summary>
+    public static string? CodeForAnswerStatus(string status) => status switch
+    {
+        "Complete" => null,
+        "PromptBlockedByContentModeration" or "ResponseBlockedByContentModeration" => Codes.ContentFiltered,
+        "PromptLargerThanContext" => Codes.TooLarge,
+        "BlockedByPolicy" => Codes.BlockedByPolicy,
+        _ => Codes.InternalError,
+    };
+
+    public static string MessageForAnswerStatus(string status) => status switch
+    {
+        "PromptBlockedByContentModeration" => "Windows' content filter declined the question.",
+        "ResponseBlockedByContentModeration" => "Windows' content filter declined the answer it wrote.",
+        "PromptLargerThanContext" => "The description and questions are too long for Windows' text model. Close Get Info and ask again.",
+        "BlockedByPolicy" => "A policy on this PC blocks Windows' text model.",
+        _ => $"Windows couldn't answer ({status}).",
+    };
+
+    /// <summary>The code and message for Phi Silica not being usable, by its ready state's name.</summary>
+    public static (string Code, string Message)? ForTextReadyState(string state) => state switch
+    {
+        "Ready" or "NotReady" => null,
+        "NotSupportedOnCurrentSystem" => (Codes.NotSupported,
+            "Follow-up questions need Windows' text model (Phi Silica), on a Copilot+ PC with a recent version of Windows 11."),
+        "DisabledByUser" => (Codes.DisabledByUser,
+            "Windows' AI features are turned off on this PC. They can be turned on in Settings, Privacy & security."),
+        _ => (Codes.NotSupported, $"Windows' text model isn't available on this PC ({state})."),
+    };
+
+    /// <summary>Phi Silica's Limited Access Feature, and the attestation Microsoft gave with this app's token (#24). Neither
+    /// is secret. The token is kept out of this public source and comes from the build (<see cref="BuiltInToken"/>); it
+    /// can be read from a released helper, but Windows accepts it only from this app's package family.</summary>
+    public const string PhiSilicaFeature = "com.microsoft.windows.ai.languagemodel";
+    public const string PhiSilicaAttestation =
+        "mzky7tc8qkasw has registered their use of com.microsoft.windows.ai.languagemodel with Microsoft and agrees to the terms of use.";
+
+    /// <summary>The access status reported for a build made without the token.</summary>
+    public const string NoToken = "NoToken";
+
+    /// <summary>The Phi Silica token the build put in the assembly's metadata, or null if it was built without one.</summary>
+    public static string? BuiltInToken(System.Reflection.Assembly assembly) =>
+        assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+            .OfType<System.Reflection.AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "PhiSilicaToken")?.Value is { Length: > 0 } token ? token.Trim() : null;
+
+    /// <summary>Whether Windows granted Phi Silica, by the LimitedAccessFeatureStatus name. AvailableWithoutToken is a
+    /// Windows that no longer asks.</summary>
+    public static bool PhiSilicaGranted(string access) => access is "Available" or "AvailableWithoutToken";
+
+    /// <summary>The access status to report: Windows' own, except that a build without the token that Windows refused
+    /// says NoToken, which is the reason.</summary>
+    public static string AccessStatus(string status, bool hasToken) => hasToken || PhiSilicaGranted(status) ? status : NoToken;
+
+    /// <summary>The code and message for Phi Silica not being granted, or null if it was.</summary>
+    public static (string Code, string Message)? ForPhiSilicaAccess(string access) => PhiSilicaGranted(access) ? null : access switch
+    {
+        NoToken => (Codes.NotSupported,
+            "This copy was built without Microsoft's permission to use Windows' text model, so it can't answer follow-up questions."),
+        _ => (Codes.NotSupported, $"Windows didn't let this app use its text model ({access})."),
+    };
 
     /// <summary>Checks a request's parts, wherever they came from, and normalises the kind and type.</summary>
     public static DescribeRequest Validate(int id, string? kind, string? mime, byte[] image)
@@ -132,6 +270,10 @@ public static class Protocol
     /// <summary>The answer line for a description.</summary>
     public static string Success(int id, string kind, string text, double seconds) =>
         new JsonObject { ["id"] = id, ["ok"] = true, ["kind"] = kind, ["text"] = text, ["seconds"] = Math.Round(seconds, 2) }.ToJsonString(Readable);
+
+    /// <summary>The answer line for a follow-up question.</summary>
+    public static string Answer(int id, string text, double seconds) =>
+        new JsonObject { ["id"] = id, ["ok"] = true, ["kind"] = "answer", ["text"] = text, ["seconds"] = Math.Round(seconds, 2) }.ToJsonString(Readable);
 
     public static string Failure(int id, string code, string message) =>
         new JsonObject { ["id"] = id, ["ok"] = false, ["code"] = code, ["message"] = message }.ToJsonString(Readable);

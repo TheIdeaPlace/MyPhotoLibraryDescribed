@@ -145,7 +145,9 @@ public sealed partial class SystemCheck : ICheckResult
             items.Add(new("Windows AI packages", Status.Info, string.Join("; ", facts.AIPackages.Select(p => $"{p.Name} {p.Version}")) + "."));
         var components = facts.Readiness?.Components ?? new Dictionary<string, string>();
         if (components.TryGetValue("textRecognition", out var text)) items.Add(new("Text recognition", Status.Info, $"{StateText(text)}."));
-        if (components.TryGetValue("languageModel", out var phi)) items.Add(new("Phi Silica", Status.Info, $"{StateText(phi)}."));
+        if (components.TryGetValue("languageModel", out var phi))
+            items.Add(new("Phi Silica", Status.Info, $"{StateText(phi)}." +
+                (components.TryGetValue("languageModelAccess", out var access) ? $" {AccessText(access)}." : "")));
         if (facts.DescribeTimings is { } timings) items.Add(new("Descriptions this session", Status.Info, timings));
         foreach (var failure in facts.RecentFailures) items.Add(new("Recent failure", Status.Info, failure));
         if (facts.AIDescriptionCheck is { } check) items.Add(new("AI description check", Status.Info, check));
@@ -169,6 +171,16 @@ public sealed partial class SystemCheck : ICheckResult
         "NotSupportedOnCurrentSystem" => "Not supported on this PC",
         "NotCompatibleWithSystemHardware" => "Not compatible with this PC's hardware",
         _ => state,
+    };
+
+    /// <summary>Whether Windows let this copy use Phi Silica, a Limited Access Feature (#24), in words: the helper's
+    /// LimitedAccessFeatureStatus name, or NoToken for a build without Microsoft's token.</summary>
+    internal static string AccessText(string access) => access switch
+    {
+        "Available" or "AvailableWithoutToken" => "Permission granted",
+        "NoToken" => "This copy was built without Microsoft's permission to use it",
+        "Unavailable" => "Windows didn't grant this copy permission to use it",
+        _ => $"Permission: {access}",
     };
 
     public string Summary

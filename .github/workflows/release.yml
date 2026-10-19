@@ -140,6 +140,8 @@ jobs:
         env:
           # Report a Bug's relay key (#138), put in the app's folder.
           APPKIT_RELAY_KEY: ${{ secrets.APPKIT_RELAY_KEY }}
+          # Microsoft's token for Phi Silica (#24), built into the AI helper.
+          PHI_SILICA_TOKEN: ${{ secrets.PHI_SILICA_TOKEN }}
         run: |
           .\scripts\build-msix.ps1 -Sign -Flat -BaseUri "https://github.com/${{ github.repository }}/releases/latest/download" -Destination "$env:RUNNER_TEMP\release"
           Get-ChildItem "$env:RUNNER_TEMP\release" | Format-Table Name, Length

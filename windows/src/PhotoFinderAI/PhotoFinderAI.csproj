@@ -34,6 +34,15 @@
     <!-- The app's name, from one place (#34). -->
     <Compile Include="..\PhotoFinder\AppInfo.cs" Link="AppInfo.cs" />
   </ItemGroup>
+  <!-- Microsoft's token for Phi Silica (#24), a Limited Access Feature. It's kept out of the source: the build takes it from
+       the PHI_SILICA_TOKEN environment variable (the release workflow's secret, or the signing kit's copy, through
+       scripts\build-msix.ps1) and puts it in the helper's assembly metadata. Without it, follow-up questions say so. -->
+  <PropertyGroup>
+    <PhiSilicaToken Condition="'$(PhiSilicaToken)' == ''">$(PHI_SILICA_TOKEN)</PhiSilicaToken>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(PhiSilicaToken)' != ''">
+    <AssemblyMetadata Include="PhiSilicaToken" Value="$(PhiSilicaToken)" />
+  </ItemGroup>
   <ItemGroup>
     <!-- Kept whole by the trimmer. These reach the model through Windows Runtime activation,
          which the trimmer can't see: trimmed, every description fails with InternalError
@@ -42,7 +51,8 @@
     <TrimmerRootAssembly Include="WinRT.Runtime" />
     <TrimmerRootAssembly Include="Microsoft.Windows.AI.Projection" />
     <TrimmerRootAssembly Include="Microsoft.Windows.AI.Imaging.Projection" />
-    <!-- Phi Silica's ready state, for Check System (#94). -->
+    <!-- Phi Silica: for follow-up questions (#24), and its ready state for Check System (#94). Trimmed, it fails to load
+         at all (found on a Copilot+ PC, 12 Oct). -->
     <TrimmerRootAssembly Include="Microsoft.Windows.AI.Text.Projection" />
     <TrimmerRootAssembly Include="Microsoft.Windows.AI.ContentSafety.Projection" />
     <TrimmerRootAssembly Include="Microsoft.Windows.AI.Foundation.Projection" />

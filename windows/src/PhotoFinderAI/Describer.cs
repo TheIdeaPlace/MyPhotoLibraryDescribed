@@ -6,6 +6,7 @@ using Microsoft.Windows.AI;
 using Microsoft.Windows.AI.ContentSafety;
 using Microsoft.Windows.AI.Imaging;
 using Microsoft.Windows.AI.Text;
+using Windows.ApplicationModel;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 
@@ -14,6 +15,88 @@ namespace PhotoFinderAI;
 public sealed class Describer : IDisposable
 {
     private ImageDescriptionGenerator? _generator;
+    private LanguageModel? _language;
+
+    /// <summary>Answers a follow-up question from the photo's description (#24), with Phi Silica. Throws
+    /// <see cref="ProtocolException"/> with the code to answer with.</summary>
+    public async Task<string> AskAsync(Protocol.AskRequest request)
+    {
+        try
+        {
+            if (_language is null)
+            {
+                try
+                {
+                    _language = await StartLanguageModelAsync(request);
+                }
+                catch (UnauthorizedAccessException ex) when (ex.Message.Contains("Limited Access Feature", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Phi Silica is a Limited Access Feature: an app needs Microsoft's token to use it (#24).
+                    var refused = Protocol.ForPhiSilicaAccess(PhiSilicaAccess.Value) ?? Protocol.ForPhiSilicaAccess("Unavailable")!.Value;
+                    throw new ProtocolException(request.Id, refused.Code, refused.Message);
+                }
+            }
+            using var context = _language.CreateContext(Protocol.AskSystemPrompt);
+            var result = await _language.GenerateResponseAsync(context, Protocol.AskPrompt(request), new LanguageModelOptions());
+            var status = result.Status.ToString();
+            if (Protocol.CodeForAnswerStatus(status) is { } code) throw new ProtocolException(request.Id, code, Protocol.MessageForAnswerStatus(status));
+            return result.Text.Trim();
+        }
+        catch (Exception ex) when (ex is not ProtocolException)
+        {
+            // Start the text model afresh next time, but keep the image model: a question going wrong says nothing
+            // about describing, and reloading it would slow the next description down.
+            ResetLanguageModel();
+            throw new ProtocolException(request.Id, Codes.InternalError,
+                $"Windows couldn't answer" + (string.IsNullOrWhiteSpace(ex.Message) ? "." : $": {ex.Message.Trim()}") + $" (0x{ex.HResult:X8})");
+        }
+    }
+
+    /// <summary>Unlocks Phi Silica, a Limited Access Feature, with Microsoft's token for this app (#24), once per run.
+    /// Windows checks the token against the package family, TheIdeaPlace.MyPhotoLibraryDescribed_mzky7tc8qkasw, so only
+    /// a build signed as Kelly Ford gets it. The token isn't in the source: the build takes it from the PhiSilicaToken
+    /// property or environment variable (the release workflow's PHI_SILICA_TOKEN secret). A build without one still
+    /// asks, with no token, so a Windows that doesn't need one says AvailableWithoutToken; refused, it says NoToken.
+    /// Otherwise the status, as LimitedAccessFeatureStatus names it.</summary>
+    private static readonly Lazy<string> PhiSilicaAccess = new(() =>
+    {
+        var token = Protocol.BuiltInToken(typeof(Describer).Assembly);
+        var status = StateOf(() =>
+            LimitedAccessFeatures.TryUnlockFeature(Protocol.PhiSilicaFeature, token ?? "", Protocol.PhiSilicaAttestation).Status.ToString());
+        return Protocol.AccessStatus(status, hasToken: token is not null);
+    });
+
+    /// <summary>Windows getting Phi Silica ready (downloading it, the first time), started by a question and left
+    /// running, so a long download doesn't run into the app's time limit for an answer.</summary>
+    private static Task<AIFeatureReadyResult>? _preparingLanguage;
+
+    private static async Task<LanguageModel> StartLanguageModelAsync(Protocol.AskRequest request)
+    {
+        if (Protocol.ForPhiSilicaAccess(PhiSilicaAccess.Value) is { } refused) throw new ProtocolException(request.Id, refused.Code, refused.Message);
+        var state = LanguageModel.GetReadyState();
+        if (Protocol.ForTextReadyState(state.ToString()) is { } unavailable) throw new ProtocolException(request.Id, unavailable.Code, unavailable.Message);
+        if (state != AIFeatureReadyState.Ready)
+        {
+            _preparingLanguage ??= LanguageModel.EnsureReadyAsync().AsTask();
+            // A minute's wait covers a model that's already there; a download carries on after this answer.
+            await Task.WhenAny(_preparingLanguage, Task.Delay(TimeSpan.FromMinutes(1)));
+            if (!_preparingLanguage.IsCompleted)
+                throw new ProtocolException(request.Id, Codes.NotReady,
+                    "Windows is getting its text model ready, which the first time can take a few minutes. Ask again shortly.");
+            var ready = await _preparingLanguage;
+            _preparingLanguage = null;
+            if (ready.Status != AIFeatureReadyResultState.Success)
+                throw new ProtocolException(request.Id, Codes.NotReady,
+                    "Windows couldn't get its text model ready" + (ready.ExtendedError is { } e ? $": {e.Message.Trim()}" : ". It may still be downloading; try again in a few minutes."));
+        }
+        return await LanguageModel.CreateAsync();
+    }
+
+    private void ResetLanguageModel()
+    {
+        try { _language?.Dispose(); } catch { /* it may already be gone */ }
+        _language = null;
+    }
 
     public static string ReadyState() => ImageDescriptionGenerator.GetReadyState().ToString();
 
@@ -23,6 +106,7 @@ public sealed class Describer : IDisposable
     public static Dictionary<string, string> OtherStates() => new()
     {
         ["textRecognition"] = StateOf(() => TextRecognizer.GetReadyState().ToString()),
+        ["languageModelAccess"] = PhiSilicaAccess.Value,
         ["languageModel"] = StateOf(() => LanguageModel.GetReadyState().ToString()),
     };
 
@@ -106,5 +190,9 @@ public sealed class Describer : IDisposable
         _generator = null;
     }
 
-    public void Dispose() => Reset();
+    public void Dispose()
+    {
+        Reset();
+        ResetLanguageModel();
+    }
 }

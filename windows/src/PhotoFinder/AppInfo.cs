@@ -23,6 +23,10 @@ internal static class AppInfo
     /// <summary>The installer people open, and where every copy looks for updates (the latest release's).</summary>
     public const string InstallerFile = "MyPhotoLibraryDescribed.appinstaller";
 
+    /// <summary>Follow-up questions in Get Info (#24), answered by Phi Silica, a Limited Access Feature. Microsoft granted
+    /// this app's package family a token (19 Oct), which the release build puts in the AI helper.</summary>
+    public static readonly bool FollowUpQuestions = true;
+
     /// <summary>The GitHub repository, in one place (as the Mac's AppInfo.repository), for an eventual move.</summary>
     public const string Repository = "TheIdeaPlace/MyPhotoLibraryDescribed";
 

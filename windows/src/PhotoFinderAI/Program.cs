@@ -62,7 +62,7 @@ try
         case "--serve":
         {
             using var describer = new Describer();
-            await Server.RunAsync(Console.In, Console.Out, describer.DescribeAsync, describer.Reset);
+            await Server.RunAsync(Console.In, Console.Out, describer.DescribeAsync, describer.Reset, describer.AskAsync);
             return 0;
         }
 

@@ -65,12 +65,14 @@ public partial class InfoWindow : Window
                 DescriptionBox.Visibility = Visibility.Collapsed;
                 UseAsCaptionButton.Visibility = Visibility.Collapsed;
                 DescriptionBox.Text = "";
+                StartConversation("");
             }
             UpdateDescribeButton();
         };
         KindBox.SelectedValue = WindowsAI.Kinds.Any(k => k.Id == settings.DescriptionKind) ? settings.DescriptionKind : WindowsAI.Kinds[0].Id;
         // A description already made (automatically, or here before) shows at once.
         if (store?.Get(_item, (string)KindBox.SelectedValue) is { } saved) ShowDescription(saved);
+        FollowUpQuestionsChecked = _item.IsVideo ? Task.CompletedTask : CheckFollowUpQuestionsAsync();
         Loaded += async (_, _) =>
         {
             if (GeneralList.Items.Count > 0) GeneralList.SelectedIndex = 0;
@@ -287,6 +289,7 @@ public partial class InfoWindow : Window
             if (text.Length > 0)
             {
                 UseAsCaptionButton.Visibility = _useAsCaption is null ? Visibility.Collapsed : Visibility.Visible;
+                StartConversation(text);
                 _store?.Put(_item, kind, text, took: took);
                 _row.Description = text;
                 UpdateDescribeButtonLater();
@@ -321,6 +324,144 @@ public partial class InfoWindow : Window
         DescriptionBox.Visibility = Visibility.Visible;
         DescriptionBox.Text = text;
         UseAsCaptionButton.Visibility = _useAsCaption is null ? Visibility.Collapsed : Visibility.Visible;
+        StartConversation(text);
+    }
+
+    // MARK: Follow-up questions (#24)
+
+    /// <summary>Whether the question box is offered: <see cref="AppInfo.FollowUpQuestions"/>, replaceable in tests.</summary>
+    internal static bool FollowUpQuestionsShown { get; set; } = AppInfo.FollowUpQuestions;
+
+    /// <summary>Whether this PC can answer questions: the helper's word that Windows granted Phi Silica and has it, or can
+    /// get it. Asked once a run, once the helper has answered; replaceable in tests.</summary>
+    internal static Func<CancellationToken, Task<bool>> PhiSilicaOffered { get; set; } = async cancel =>
+    {
+        if (_phiSilicaOffered is { } known) return known;
+        var details = await WindowsAI.DetailsAsync(cancel);
+        var offered = WindowsAI.OffersFollowUpQuestions(details);
+        if (details is not null) _phiSilicaOffered = offered;
+        return offered;
+    };
+    private static bool? _phiSilicaOffered;
+
+    /// <summary>Done once Get Info knows whether to offer questions, for tests to wait on.</summary>
+    internal Task FollowUpQuestionsChecked { get; }
+    private bool _questionsOffered;
+
+    private async Task CheckFollowUpQuestionsAsync()
+    {
+        if (!FollowUpQuestionsShown) return;
+        try
+        {
+            _questionsOffered = await PhiSilicaOffered(_closing.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        ShowAskPanel();
+    }
+
+    /// <summary>Asks Windows' text model; replaceable in tests.</summary>
+    internal static Func<string, string, string, IReadOnlyList<(string Question, string Answer)>, CancellationToken, Task<string>> AskQuestion { get; set; } =
+        (description, text, question, history, cancel) => App.WindowsAI.AskAsync(description, text, question, history, cancel);
+
+    /// <summary>The description the questions are about, and what's been asked so far. A new description starts over.</summary>
+    private string _conversationAbout = "";
+    private readonly List<(string Question, string Answer)> _exchanges = [];
+    private bool _asking;
+    /// <summary>Counts conversations, so an answer about one that's over is recognised even if the same description
+    /// came back meanwhile (another type chosen and then this one again).</summary>
+    private int _conversation;
+
+    private void StartConversation(string description)
+    {
+        if (description == _conversationAbout) return;
+        _conversationAbout = description;
+        _conversation++;
+        _exchanges.Clear();
+        AnswersBox.Text = "";
+        AnswersLabel.Visibility = Visibility.Collapsed;
+        AnswersBox.Visibility = Visibility.Collapsed;
+        AskStatus.Visibility = Visibility.Collapsed;
+        ShowAskPanel();
+    }
+
+    /// <summary>The question box is offered with a description, on a PC whose Phi Silica can answer. That's its own
+    /// check: image description being unavailable says nothing about it.</summary>
+    private void ShowAskPanel() =>
+        AskPanel.Visibility = _conversationAbout.Length > 0 && FollowUpQuestionsShown && _questionsOffered
+            ? Visibility.Visible : Visibility.Collapsed;
+
+    private async void Ask_Click(object sender, RoutedEventArgs e) => await AskAsync();
+
+    private async void QuestionBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None) return;
+        e.Handled = true;
+        await AskAsync();
+    }
+
+    /// <summary>Asks the question in the box about the description showing. The answer is spoken whole and added to the
+    /// answers, and the box is cleared for the next question, with focus left there.</summary>
+    internal async Task AskAsync()
+    {
+        var question = QuestionBox.Text.Trim();
+        if (question.Length == 0)
+        {
+            Announcer.Announce("Type a question first");
+            return;
+        }
+        if (_asking)
+        {
+            Announcer.Announce("Still answering");
+            return;
+        }
+        var description = _conversationAbout;
+        var conversation = _conversation;
+        var text = OcrBox.Visibility == Visibility.Visible && OcrBox.Text != "No text found" ? OcrBox.Text : "";
+        _asking = true;
+        AskStatus.Visibility = Visibility.Visible;
+        AskStatus.Text = "Asking Windows…";
+        Announcer.Announce("Asking");
+        try
+        {
+            var answer = await AskQuestion(description, text, question, _exchanges.ToList(), _closing.Token);
+            if (conversation != _conversation)
+            {
+                // Described again, or another type chosen, meanwhile: the answer is about a description no longer showing.
+                // The question stays in the box to ask again.
+                Announcer.Announce("The description changed, so that answer was dropped. Ask again about this one.");
+                return;
+            }
+            if (answer.Length == 0) answer = "Windows returned an empty answer.";
+            else _exchanges.Add((question, answer));
+            AskStatus.Visibility = Visibility.Collapsed;
+            AnswersLabel.Visibility = Visibility.Visible;
+            AnswersBox.Visibility = Visibility.Visible;
+            AnswersBox.AppendText((AnswersBox.Text.Length > 0 ? Environment.NewLine + Environment.NewLine : "") + $"You asked: {question}{Environment.NewLine}Answer: {answer}");
+            AnswersBox.ScrollToEnd();
+            QuestionBox.Clear();
+            Announcer.Announce(answer, interrupt: true);
+        }
+        catch (OperationCanceledException)
+        {
+            // The window closed.
+        }
+        catch (DescriptionException ex)
+        {
+            AskStatus.Text = ex.Message;
+            Announcer.Announce(ex.Message, interrupt: true);
+        }
+        catch (Exception ex)
+        {
+            AskStatus.Text = $"Windows couldn't answer: {ex.Message}";
+            Announcer.Announce(AskStatus.Text, interrupt: true);
+        }
+        finally
+        {
+            _asking = false;
+        }
     }
 
     /// <summary>Use as Caption: the saved description of the chosen type becomes the photo's caption, the same as
