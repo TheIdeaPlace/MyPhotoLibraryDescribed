@@ -78,8 +78,9 @@ public sealed class Describer : IDisposable
         if (state != AIFeatureReadyState.Ready)
         {
             _preparingLanguage ??= LanguageModel.EnsureReadyAsync().AsTask();
-            // A minute's wait covers a model that's already there; a download carries on after this answer.
-            await Task.WhenAny(_preparingLanguage, Task.Delay(TimeSpan.FromMinutes(1)));
+            // Less than the app's minute for an answer (WindowsAI.DescribeTimeout), so this answer gets back; a download
+            // carries on after it.
+            await Task.WhenAny(_preparingLanguage, Task.Delay(TimeSpan.FromSeconds(40)));
             if (!_preparingLanguage.IsCompleted)
                 throw new ProtocolException(request.Id, Codes.NotReady,
                     "Windows is getting its text model ready, which the first time can take a few minutes. Ask again shortly.");

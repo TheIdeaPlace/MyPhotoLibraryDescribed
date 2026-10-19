@@ -553,37 +553,81 @@ public sealed class BackgroundDescriberTests : IDisposable
     }
 
     [WpfFact]
-    public async Task TooMuchText_DoesntStopTheRun_ButATimeoutIsntRemembered()
+    public async Task TooMuchText_DoesntStopTheRun_AndAPhotoWindowsHangsOn_IsntTriedFirstAtEveryStart()
     {
         for (var i = 0; i < 6; i++) _lib.AddJpeg($"text{i}.jpg");
-        _lib.AddJpeg("slow.jpg");
+        _lib.AddJpeg("hangs.jpg");
         _lib.AddJpeg("ok.jpg");
         MakeNewest("text");
-        File.SetLastWriteTime(_lib.PathOf("slow.jpg"), DateTime.Now.AddMinutes(-2));
+        File.SetLastWriteTime(_lib.PathOf("hangs.jpg"), DateTime.Now.AddMinutes(-2));
         var failures = _lib.PathOf(@"data\BackgroundFailures.json");
-        var slow = true;
+        var pause = BackgroundDescriber.AfterTimeoutPause;
+        BackgroundDescriber.AfterTimeoutPause = TimeSpan.Zero;
         Task<string> Describe(MediaItem item) => item.Name.StartsWith("text", StringComparison.Ordinal)
             ? throw new DescriptionException("too_much_text", "There's too much text in this picture to describe.")
-            : item.Name == "slow.jpg" && slow ? throw new DescriptionException("timeout", "Windows took too long. Try again.")
+            : item.Name == "hangs.jpg" ? throw new DescriptionException("timeout", "Windows took too long. Try again.")
             : Task.FromResult("Fine");
-        var (model, background, _) = await StartAsync(enabled: false, describe: Describe, failuresPath: failures);
-        using (model) using (background)
+        try
         {
-            background.Enabled = true;
-            await background.WhenIdleAsync();
-            Assert.DoesNotContain(_announced, s => s.StartsWith("Background describing stopped:"));
-            Assert.Contains("ok.jpg", _described);
+            var (model, background, _) = await StartAsync(enabled: false, describe: Describe, failuresPath: failures);
+            using (model) using (background)
+            {
+                background.Enabled = true;
+                await background.WhenIdleAsync();
+                Assert.DoesNotContain(_announced, s => s.StartsWith("Background describing stopped:"));
+                Assert.Contains("ok.jpg", _described);
+            }
+            // A photo after it was described, so Windows wasn't just slow: the hung photo isn't tried at the next start,
+            // nor are the ones with too much text (Kelly, 19 Oct: one hung photo held every start up).
+            _described.Clear();
+            (model, background, _) = await StartAsync(enabled: true, describe: Describe, failuresPath: failures);
+            using (model) using (background)
+            {
+                await background.DescribeLibraryAsync();
+                await background.WhenIdleAsync();
+                Assert.DoesNotContain("hangs.jpg", _described);
+                Assert.DoesNotContain(_described, n => n.StartsWith("text", StringComparison.Ordinal));
+            }
         }
-        // The timed-out photo is tried again at the next start; the ones with too much text aren't.
-        slow = false;
-        _described.Clear();
-        (model, background, _) = await StartAsync(enabled: true, describe: Describe, failuresPath: failures);
-        using (model) using (background)
+        finally
         {
-            await background.DescribeLibraryAsync();
-            await background.WhenIdleAsync();
-            Assert.Contains("slow.jpg", _described);
-            Assert.DoesNotContain(_described, n => n.StartsWith("text", StringComparison.Ordinal));
+            BackgroundDescriber.AfterTimeoutPause = pause;
+        }
+    }
+
+    [WpfFact]
+    public async Task Timeouts_WithNothingDescribedAfter_AreTriedAgainAtTheNextStart()
+    {
+        _lib.AddJpeg("slow.jpg");
+        var failures = _lib.PathOf(@"data\BackgroundFailures.json");
+        var pause = BackgroundDescriber.AfterTimeoutPause;
+        BackgroundDescriber.AfterTimeoutPause = TimeSpan.Zero;
+        var slow = true;
+        Task<string> Describe(MediaItem item) => slow
+            ? throw new DescriptionException("timeout", "Windows took too long. Try again.")
+            : Task.FromResult("Fine");
+        try
+        {
+            var (model, background, _) = await StartAsync(enabled: false, describe: Describe, failuresPath: failures);
+            using (model) using (background)
+            {
+                background.Enabled = true;
+                await background.WhenIdleAsync();
+            }
+            // Every photo timed out, which says Windows was slow, not that the photos are at fault: tried again.
+            slow = false;
+            _described.Clear();
+            (model, background, _) = await StartAsync(enabled: true, describe: Describe, failuresPath: failures);
+            using (model) using (background)
+            {
+                await background.DescribeLibraryAsync();
+                await background.WhenIdleAsync();
+                Assert.Contains("slow.jpg", _described);
+            }
+        }
+        finally
+        {
+            BackgroundDescriber.AfterTimeoutPause = pause;
         }
     }
 

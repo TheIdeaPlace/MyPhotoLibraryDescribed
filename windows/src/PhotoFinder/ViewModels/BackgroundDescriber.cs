@@ -393,11 +393,18 @@ public sealed class BackgroundDescriber : IDisposable
     /// A missing codec shows as decode_failed or unsupported_format, which do.</summary>
     internal static bool IsAboutThePhoto(Exception ex) => ex is DescriptionException { Code: "content_filtered" or "too_much_text" };
 
-    /// <summary>A failure that may well not happen next time: Windows taking too long, or the helper stopping partway
-    /// (WindowsAI says "stopped unexpectedly"). Never kept for later starts.</summary>
+    /// <summary>A failure that may well not happen next time: the helper stopping partway (WindowsAI says "stopped
+    /// unexpectedly"). Never kept for later starts. A timeout isn't one: Windows' model can hang on a particular photo
+    /// every time (Kelly's PC, 19 Oct), and that photo, first in the queue, held every start up. So a timeout is kept
+    /// like other failures, once a later photo in the run is described, which shows Windows wasn't simply slow.</summary>
     internal static bool IsPassing(Exception ex) =>
-        ex is TimeoutException or DescriptionException { Code: "timeout" }
-        || (ex is DescriptionException { Code: "internal_error" } d && d.Message.Contains("stopped unexpectedly", StringComparison.Ordinal));
+        ex is DescriptionException { Code: "internal_error" } d && d.Message.Contains("stopped unexpectedly", StringComparison.Ordinal);
+
+    internal static bool IsTimeout(Exception ex) => ex is TimeoutException or DescriptionException { Code: "timeout" };
+
+    /// <summary>The pause after a photo times out before the next is sent: Windows' AI service stays slow for a while after
+    /// a hung request, and the next photo sent straight away tends to time out too. Settable for tests.</summary>
+    internal static TimeSpan AfterTimeoutPause { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>After this many photos in a row fail, the run stops and says why, rather than failing through thousands
     /// of photos (a missing HEIF codec, a broken helper). Photos Windows' content filter declines don't count.</summary>
@@ -539,9 +546,15 @@ public sealed class BackgroundDescriber : IDisposable
                         _remembered.Add(key);
                         SaveFailures();
                     }
-                    // A timeout, or the helper stopping partway, says nothing about the photo: skipped this session only.
+                    // The helper stopping partway says nothing about the photo: skipped this session only.
                     else if (!IsPassing(ex)) _pending.Add(key);
                     Log.Write("background", $"Couldn't describe {item.Name}: {(ex is DescriptionException d ? $"{d.Code}: " : ex.GetType().Name + ": ")}{ex.Message}");
+                    if (IsTimeout(ex) && !(run == _run && failedInARow + 1 >= FailuresInARow))
+                    {
+                        _model.BackgroundProgress = $"Windows got stuck on {item.Name}; going on in a moment";
+                        try { await Task.Delay(AfterTimeoutPause, _closing.Token); }
+                        catch (OperationCanceledException) { return; }
+                    }
                     if (run == _run && !IsAboutThePhoto(ex) && ++failedInARow >= FailuresInARow)
                     {
                         // Something may be wrong with every photo: StopQueue drops the streak, so it isn't kept for later starts.

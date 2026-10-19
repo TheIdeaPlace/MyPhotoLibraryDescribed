@@ -50,7 +50,10 @@ public sealed class WindowsAI : IDisposable
 
     public const uint FirstSize = 2048;
 
-    private static readonly TimeSpan DescribeTimeout = TimeSpan.FromMinutes(3);
+    /// <summary>How long a request may take. A photo usually takes 5 to 15 seconds, the first after a start a little
+    /// more. It was 3 minutes, but Windows' model can hang on a particular photo and never answer (Kelly's PC, 19 Oct):
+    /// each start then sat silent on that photo for 3 minutes. Settable for tests.</summary>
+    internal static TimeSpan DescribeTimeout { get; set; } = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan CheckTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PrepareTimeout = TimeSpan.FromMinutes(15);
 
