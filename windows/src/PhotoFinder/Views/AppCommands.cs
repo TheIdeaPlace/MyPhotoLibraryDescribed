@@ -68,6 +68,9 @@ public static class AppCommands
     /// <summary>Describes the photo you're on afresh, replacing its saved description, and speaks it. The Mac's is
     /// Command-R (#119).</summary>
     public static readonly RoutedUICommand Redescribe = Make("Redescri_be", nameof(Redescribe), new KeyGesture(Key.R, ModifierKeys.Control));
+    /// <summary>Follow-up questions about the photo you're on (#233): Get Info, with focus in the question box. Ctrl+K,
+    /// free in both apps; the Mac's would be Command-K. The access key is h: k is Describe Photos in the Background's.</summary>
+    public static readonly RoutedUICommand AskAboutPhoto = Make("Ask About P_hoto…", nameof(AskAboutPhoto), new KeyGesture(Key.K, ModifierKeys.Control));
     public static readonly RoutedUICommand DescribeInBackground = Make("Describe Photos in the Bac_kground", nameof(DescribeInBackground));
     public static readonly RoutedUICommand StopBackground = Make("_Stop Background Describing", nameof(StopBackground));
     public static readonly RoutedUICommand AutoDescribe = Make("Describe Photos _Automatically", nameof(AutoDescribe),

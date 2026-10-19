@@ -68,12 +68,12 @@
                     <TextBlock x:Name="AIStatus" TextWrapping="Wrap" Margin="0,6,0,0" />
                     <StackPanel x:Name="DescribePanel" Orientation="Horizontal" Margin="0,6,0,0">
                         <Label Content="Description _type:" Target="{Binding ElementName=KindBox}" Padding="0,0,6,0" VerticalAlignment="Center" />
-                        <ComboBox x:Name="KindBox" Width="130" DisplayMemberPath="Title" SelectedValuePath="Id" />
+                        <ComboBox x:Name="KindBox" AutomationProperties.Name="Description type" Width="130" DisplayMemberPath="Title" SelectedValuePath="Id" />
                         <Button x:Name="DescribeButton" Content="_Describe Image" Margin="8,0,0,0" Padding="10,3" Click="Describe_Click" />
                     </StackPanel>
                     <Label x:Name="DescriptionLabel" Content="Descr_iption:" Target="{Binding ElementName=DescriptionBox}"
                            Padding="0,8,0,2" Visibility="Collapsed" />
-                    <TextBox x:Name="DescriptionBox" IsReadOnly="True" TextWrapping="Wrap" MinHeight="80" MaxHeight="260"
+                    <TextBox x:Name="DescriptionBox" AutomationProperties.Name="Description" IsReadOnly="True" TextWrapping="Wrap" MinHeight="80" MaxHeight="260"
                              VerticalScrollBarVisibility="Auto" Visibility="Collapsed" IsReadOnlyCaretVisible="True" />
                     <Button x:Name="UseAsCaptionButton" Content="_Use as Caption" HorizontalAlignment="Left" Margin="0,6,0,0"
                             Padding="10,3" Visibility="Collapsed" Click="UseAsCaption_Click" />
@@ -84,20 +84,28 @@
                             Click="ReadText_Click" />
                     <TextBlock x:Name="OcrStatus" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed" />
                     <Label x:Name="OcrLabel" Content="Text in i_mage:" Target="{Binding ElementName=OcrBox}" Padding="0,8,0,2" Visibility="Collapsed" />
-                    <TextBox x:Name="OcrBox" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="60" MaxHeight="220"
+                    <TextBox x:Name="OcrBox" AutomationProperties.Name="Text in image" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="60" MaxHeight="220"
                              VerticalScrollBarVisibility="Auto" Visibility="Collapsed" IsReadOnlyCaretVisible="True" />
                     <TextBlock Style="{StaticResource Note}" Text="Reads any text in the photo with Windows' built-in text recognition." />
 
                     <!-- Follow-up questions (#24), once there's a description to answer from. -->
                     <StackPanel x:Name="AskPanel" Visibility="Collapsed" Margin="0,14,0,0">
                         <Label Content="Follow-up _question:" Target="{Binding ElementName=QuestionBox}" Padding="0,0,0,2" />
-                        <DockPanel>
-                            <Button x:Name="AskButton" Content="_Ask" DockPanel.Dock="Right" Margin="8,0,0,0" Padding="10,3" Click="Ask_Click" />
-                            <TextBox x:Name="QuestionBox" KeyDown="QuestionBox_KeyDown" />
-                        </DockPanel>
+                        <!-- A grid, not a DockPanel: the box has to come before Ask in Tab order, and a DockPanel's
+                             docked button has to come first. Each box here is named as well as labelled: JAWS read the
+                             question box with no name from its label alone (Kelly, 19 Oct). -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="QuestionBox" Grid.Column="0" KeyDown="QuestionBox_KeyDown"
+                                     AutomationProperties.Name="Follow-up question" />
+                            <Button x:Name="AskButton" Grid.Column="1" Content="_Ask" Margin="8,0,0,0" Padding="10,3" Click="Ask_Click" />
+                        </Grid>
                         <TextBlock x:Name="AskStatus" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed" />
                         <Label x:Name="AnswersLabel" Content="Ans_wers:" Target="{Binding ElementName=AnswersBox}" Padding="0,8,0,2" Visibility="Collapsed" />
-                        <TextBox x:Name="AnswersBox" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="60" MaxHeight="260"
+                        <TextBox x:Name="AnswersBox" AutomationProperties.Name="Answers" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="60" MaxHeight="260"
                                  VerticalScrollBarVisibility="Auto" Visibility="Collapsed" IsReadOnlyCaretVisible="True" />
                         <TextBlock Style="{StaticResource Note}"
                                    Text="Answers come from the description and any text read from the photo, not from looking at the photo again. Windows' text model answers on this PC." />

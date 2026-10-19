@@ -195,6 +195,83 @@ public sealed class WindowTests : IDisposable
     }
 
     [WpfFact]
+    public async Task AskAboutPhoto_PutsFocusInTheQuestionBox_OrSaysWhyNot()
+    {
+        var announced = new List<string>();
+        Announcer.Observer = announced.Add;
+        var described = RowFor(_lib.AddJpeg("described.jpg"));
+        var store = new DescriptionStore(_lib.PathOf(@"data\Descriptions3.json"));
+        store.Put(described.Item!, "accessible", "A boat in a harbour.");
+        var originalOffered = InfoWindow.PhiSilicaOffered;
+        var originalAsk = InfoWindow.AskQuestion;
+        InfoWindow.FollowUpQuestionsShown = true;
+        var opened = new List<InfoWindow>();
+        InfoWindow Open(FileRow row)
+        {
+            var w = new InfoWindow(row, new Settings { DescriptionKind = "accessible" }, () => { }, describeNow: false, store, askNow: true);
+            opened.Add(w);
+            w.Show();
+            w.Activate();
+            return w;
+        }
+        try
+        {
+            // Described, and Windows can answer: straight to the question box.
+            InfoWindow.PhiSilicaOffered = _ => Task.FromResult(true);
+            var window = Open(described);
+            Assert.True(await WaitFor(() => window.QuestionBox.IsKeyboardFocused));
+            Assert.Equal(Visibility.Visible, window.AskPanel.Visibility);
+            Assert.Equal("Follow-up question", System.Windows.Automation.AutomationProperties.GetName(window.QuestionBox));
+            window.Close();
+
+            // A photo not described yet is described first, with focus already in the box. That uses the real AI helper,
+            // so it's checked in the app, not here: a test describing for real competes with
+            // InfoWindow_DescribeNow_DescribesThePhotoAndRemembersTheKind for the one helper.
+
+            // Windows can't answer here: Get Info opens as usual and says why.
+            InfoWindow.PhiSilicaOffered = _ => Task.FromResult(false);
+            var plain = Open(described);
+            await plain.FollowUpQuestionsChecked;
+            Assert.True(await WaitFor(() => announced.Contains(InfoWindow.NoQuestionsHere)));
+            Assert.Equal(Visibility.Collapsed, plain.AskPanel.Visibility);
+            Assert.False(plain.QuestionBox.IsKeyboardFocused);
+        }
+        finally
+        {
+            InfoWindow.PhiSilicaOffered = originalOffered;
+            InfoWindow.AskQuestion = originalAsk;
+            InfoWindow.FollowUpQuestionsShown = AppInfo.FollowUpQuestions;
+            Announcer.Observer = null;
+            foreach (var w in opened) if (w.IsLoaded) w.Close();
+        }
+    }
+
+    [WpfFact]
+    public void InfoWindow_QuestionBox_ComesBeforeAsk_AndEveryBoxHasAName()
+    {
+        var window = new InfoWindow(RowFor(_lib.AddJpeg("order.jpg")), new Settings(), () => { }, describeNow: false) { ShowActivated = false };
+        window.Show();
+        try
+        {
+            Assert.Equal(0, Grid.GetColumn(window.QuestionBox));
+            Assert.Equal(1, Grid.GetColumn(window.AskButton));
+            // The box comes first among the grid's children, which is Tab order.
+            var grid = (Grid)window.QuestionBox.Parent;
+            Assert.True(grid.Children.IndexOf(window.QuestionBox) < grid.Children.IndexOf(window.AskButton));
+            foreach (var (control, name) in new (UIElement, string)[]
+            {
+                (window.QuestionBox, "Follow-up question"), (window.AnswersBox, "Answers"),
+                (window.DescriptionBox, "Description"), (window.OcrBox, "Text in image"), (window.KindBox, "Description type"),
+            })
+                Assert.Equal(name, System.Windows.Automation.AutomationProperties.GetName(control));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [WpfFact]
     public async Task InfoWindow_FollowUpQuestions_SayWhatWentWrong_DropAStaleAnswer_AndHideWhereWindowsCantAnswer()
     {
         var announced = new List<string>();

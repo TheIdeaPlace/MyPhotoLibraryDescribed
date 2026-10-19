@@ -170,7 +170,8 @@ public partial class MainWindow : Window
         Bind(AppCommands.OpenItem, () => _model.Open(), HasSelection);
         Bind(AppCommands.OpenSelected, () => _model.Open(), HasSelection);
         Bind(AppCommands.Preview, ShowPreview, HasFiles);
-        Bind(AppCommands.GetInfo, ShowInfo, HasFiles);
+        Bind(AppCommands.GetInfo, () => ShowInfo(), HasFiles);
+        Bind(AppCommands.AskAboutPhoto, () => ShowInfo(ask: true), HasFiles);
         // Available on any row, so the shortcut on a folder or video says why it can't, rather than nothing.
         Bind(AppCommands.DescribePhoto, () => DescribePhoto(again: false), () => _model.FocusedRow is not null);
         Bind(AppCommands.Redescribe, () => DescribePhoto(again: true), () => _model.FocusedRow is not null);
@@ -1261,14 +1262,20 @@ public partial class MainWindow : Window
         return AutoDescriber.DescribeNowAsync(row, stillOn, again, replacing);
     }
 
-    private void ShowInfo()
+    /// <param name="ask">Ask About Photo (#233): Get Info opens with focus in the follow-up question box.</param>
+    private void ShowInfo(bool ask = false)
     {
         DescriptionPanel.SaveIfChanged();
         var kindBefore = _model.Settings.DescriptionKind;
         var row = _model.SelectedRows.FirstOrDefault(r => r.Item is not null);
         if (row?.Item is null) { System.Media.SystemSounds.Beep.Play(); return; }
+        if (ask && row.Item.IsVideo)
+        {
+            Services.Announcer.Announce("Questions are about photos, not videos.");
+            return;
+        }
         new InfoWindow(row, _model.Settings, _model.SaveSettings, describeNow: false, _model.Descriptions,
-            useAsCaption: (r, info, kind) => UseDescriptionAsCaptionAsync([r], info, kind)) { Owner = this }.ShowDialog();
+            useAsCaption: (r, info, kind) => UseDescriptionAsCaptionAsync([r], info, kind), askNow: ask) { Owner = this }.ShowDialog();
         // Get Info can change the Description Type.
         if (_model.Settings.DescriptionKind != kindBefore) _model.DescriptionKindChanged();
         // The rows may have been rebuilt while it was open, so the element WPF would return to can be gone.

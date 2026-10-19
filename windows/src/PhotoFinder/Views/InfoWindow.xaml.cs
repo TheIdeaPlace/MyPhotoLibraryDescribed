@@ -35,9 +35,11 @@ public partial class InfoWindow : Window
 
     private readonly Func<FileRow, Window, string, Task>? _useAsCaption;
 
+    /// <param name="askNow">Opened by Ask About Photo (#233): focus goes to the follow-up question box.</param>
     public InfoWindow(FileRow row, Settings settings, Action saveSettings, bool describeNow, DescriptionStore? store = null,
-        Func<FileRow, Window, string, Task>? useAsCaption = null, PlaceNames? placeNames = null)
+        Func<FileRow, Window, string, Task>? useAsCaption = null, PlaceNames? placeNames = null, bool askNow = false)
     {
+        _askNow = askNow && !(row.Item?.IsVideo ?? false);
         _useAsCaption = useAsCaption;
         _item = row.Item ?? throw new ArgumentException("Get Info needs a photo or video.", nameof(row));
         _settings = settings;
@@ -76,8 +78,10 @@ public partial class InfoWindow : Window
         Loaded += async (_, _) =>
         {
             if (GeneralList.Items.Count > 0) GeneralList.SelectedIndex = 0;
-            if (!describeNow) FocusFirstField();
-            await Task.WhenAll(LoadDetailsAsync(), CheckAIAsync(), LookUpPlaceAsync());
+            if (!describeNow && !_askNow) FocusFirstField();
+            var aiChecked = CheckAIAsync();
+            Asking = _askNow ? StartAskingAsync(aiChecked) : Task.CompletedTask;
+            await Task.WhenAll(LoadDetailsAsync(), aiChecked, LookUpPlaceAsync(), Asking);
         };
         _row.PropertyChanged += Row_PropertyChanged;
         Closed += (_, _) =>
@@ -347,6 +351,9 @@ public partial class InfoWindow : Window
     /// <summary>Done once Get Info knows whether to offer questions, for tests to wait on.</summary>
     internal Task FollowUpQuestionsChecked { get; }
     private bool _questionsOffered;
+    private readonly bool _askNow;
+    /// <summary>Ask About Photo's start (focus to the box, describing first if need be), for tests to wait on.</summary>
+    internal Task Asking { get; private set; } = Task.CompletedTask;
 
     private async Task CheckFollowUpQuestionsAsync()
     {
@@ -390,8 +397,34 @@ public partial class InfoWindow : Window
     /// <summary>The question box is offered with a description, on a PC whose Phi Silica can answer. That's its own
     /// check: image description being unavailable says nothing about it.</summary>
     private void ShowAskPanel() =>
-        AskPanel.Visibility = _conversationAbout.Length > 0 && FollowUpQuestionsShown && _questionsOffered
+        AskPanel.Visibility = (_conversationAbout.Length > 0 || _askNow) && FollowUpQuestionsShown && _questionsOffered
             ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Photo > Ask About Photo (#233): focus goes to the question box once Windows is known to answer, and a
+    /// photo with no description of this type yet is described first, with focus already in the box, so the
+    /// description is heard and the question can follow. Where Windows can't answer, it says so and Get Info opens
+    /// as usual.</summary>
+    private async Task StartAskingAsync(Task aiChecked)
+    {
+        await FollowUpQuestionsChecked;
+        if (_closing.IsCancellationRequested) return;
+        if (!_questionsOffered)
+        {
+            FocusFirstField();
+            Announcer.Announce(NoQuestionsHere);
+            return;
+        }
+        AskPanel.BringIntoView();
+        QuestionBox.Focus();
+        if (_conversationAbout.Length > 0) return;
+        await aiChecked;
+        if (_closing.IsCancellationRequested) return;
+        if (_readiness is { Usable: true }) await DescribeAsync();
+        else Announcer.Announce(AIStatus.Text.Length > 0 ? AIStatus.Text : "This photo has no description to ask about.");
+    }
+
+    internal const string NoQuestionsHere =
+        "Follow-up questions need Windows' text model, Phi Silica, on a Copilot+ PC with a recent version of Windows 11.";
 
     private async void Ask_Click(object sender, RoutedEventArgs e) => await AskAsync();
 
@@ -410,6 +443,12 @@ public partial class InfoWindow : Window
         if (question.Length == 0)
         {
             Announcer.Announce("Type a question first");
+            return;
+        }
+        if (_conversationAbout.Length == 0)
+        {
+            // Ask About Photo shows the box while the photo is still being described.
+            Announcer.Announce(_describing ? "Still describing; ask once the description is read" : "There's no description to ask about yet. Describe the photo first.");
             return;
         }
         if (_asking)
