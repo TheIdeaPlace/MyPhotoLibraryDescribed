@@ -22,50 +22,74 @@ struct InfoView: View {
     @State private var contents: ImageContents?
     @State private var describing = false
     @State private var describeError: String?
+    @State private var selectedField: InfoField.ID?
+    @FocusState private var listFocused: Bool
+
+    /// Everything about the photo, in one list (Kelly, 19 Oct): one Tab stop, then Up and Down Arrow.
+    private var fields: [InfoField] {
+        general + (loadingDetails ? [InfoField(label: "Details", value: "Reading…")] : details)
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(target.name)
                 .font(.title2.bold())
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding([.horizontal, .top])
                 .accessibilityAddTraits(.isHeader)
-            Form {
-                Section("General") { fields(general) }
-                Section("Details") {
-                    if loadingDetails {
-                        ProgressView("Reading details…")
-                    } else if details.isEmpty {
-                        Text("No additional details available.").foregroundStyle(.secondary)
-                    } else {
-                        fields(details)
+            fieldList
+            if target.isImage {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Image Contents")
+                            .font(.headline)
+                            .accessibilityAddTraits(.isHeader)
+                        contentsSection
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if target.isImage {
-                    Section("Image Contents") { contentsSection }
-                }
+            } else {
+                Spacer(minLength: 0)
             }
-            .formStyle(.grouped)
             Divider()
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
-            .padding()
         }
-        .frame(minWidth: 460, idealWidth: 520, minHeight: 420, idealHeight: 620)
+        .padding()
+        .frame(minWidth: 460, idealWidth: 520, minHeight: 420, idealHeight: 640)
         .closesWithKeyboard { dismiss() }
         .task { await load() }
+        .onAppear {
+            // Ask About Photo starts in the question field instead.
+            if !target.askNow { listFocused = true }
+        }
     }
 
-    @ViewBuilder private func fields(_ items: [InfoField]) -> some View {
-        ForEach(items) { field in
-            LabeledContent(field.label) {
+    /// As Windows' General and Details lists: each row is read as "Label: value", and Command-C copies the value.
+    private var fieldList: some View {
+        List(fields, selection: $selectedField) { field in
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(field.label)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 120, alignment: .leading)
                 Text(field.value)
-                    .textSelection(.enabled)
-                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(field.label): \(field.value)")
+        }
+        .accessibilityLabel("Information")
+        .focused($listFocused)
+        .frame(minHeight: 160, idealHeight: 220)
+        .onCopyCommand {
+            guard let field = fields.first(where: { $0.id == selectedField }) else { return [] }
+            AccessibilityNotification.Announcement("Copied \(field.label)").post()
+            return [NSItemProvider(object: field.value as NSString)]
+        }
+        .onChange(of: fields.first?.id) {
+            if selectedField == nil || !fields.contains(where: { $0.id == selectedField }) { selectedField = fields.first?.id }
         }
     }
 
@@ -77,28 +101,26 @@ struct InfoView: View {
         }
 #endif
         if let contents {
-            LabeledContent("Detected") {
-                Text(contents.labels.isEmpty ? "Nothing recognized" : contents.labels.joined(separator: ", "))
-                    .textSelection(.enabled)
-                    .multilineTextAlignment(.trailing)
-            }
-            LabeledContent("Text in Image") {
-                Text(contents.text.isEmpty ? "No text found" : contents.text.joined(separator: "\n"))
-                    .textSelection(.enabled)
-                    .multilineTextAlignment(.trailing)
-            }
+            ReadOnlyText(text: Self.found(contents), label: "Objects and text")
+                .frame(height: 100)
         } else if describing {
             ProgressView("Finding objects and text…")
         } else {
             Button("Find Objects and Text") { Task { await describe() } }
                 .disabled(imageData == nil)
-            Text("Lists objects and scenes, and reads any text in the photo, using on-device Vision.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
+        Text("Lists objects and scenes, and reads any text in the photo, using on-device Vision.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
         if let describeError {
             Text(describeError).foregroundStyle(.red)
         }
+    }
+
+    static func found(_ contents: ImageContents) -> String {
+        let detected = contents.labels.isEmpty ? "Nothing recognized" : contents.labels.joined(separator: ", ")
+        let text = contents.text.isEmpty ? "No text found" : contents.text.joined(separator: "\n")
+        return "Detected: \(detected)\n\nText in image: \(text)"
     }
 
     private func load() async {

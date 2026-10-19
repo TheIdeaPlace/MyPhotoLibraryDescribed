@@ -337,11 +337,19 @@ struct AppleIntelligenceSection: View {
                 .foregroundStyle(.secondary)
         } else {
             if let conversation {
-                ForEach(conversation.exchanges) { exchange in
-                    if let asked = exchange.question {
-                        answerRow(label: "You asked", text: asked)
-                    }
-                    answerRow(label: exchange.question == nil ? "Description" : "Answer", text: exchange.answer)
+                // In read-only boxes, as on Windows: one Tab stop each, read by VoiceOver, Tab moves on.
+                if let description = conversation.exchanges.first(where: { $0.question == nil }) {
+                    Text("Description").font(.subheadline.bold()).accessibilityHidden(true)
+                    ReadOnlyText(text: description.answer, label: "Description")
+                        .frame(height: 140)
+                }
+                let answers = conversation.exchanges.filter { $0.question != nil }
+                if !answers.isEmpty {
+                    Text("Answers").font(.subheadline.bold()).accessibilityHidden(true)
+                    ReadOnlyText(text: answers.map { "You asked: \($0.question ?? "")\nAnswer: \($0.answer)" }
+                                    .joined(separator: "\n\n"),
+                                 label: "Answers")
+                        .frame(height: 140)
                 }
                 if conversation.isWorking {
                     ProgressView("Asking Apple Intelligence…")
@@ -400,18 +408,6 @@ struct AppleIntelligenceSection: View {
     private func showSaved() {
         guard conversation == nil, let imageData, let saved = model.descriptions.description(forKey: descriptionKey) else { return }
         conversation = ImageConversation(imageData: imageData, saved: saved)
-    }
-
-    private func answerRow(label: String, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.subheadline.bold())
-            Text(text)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
     }
 
     /// `replacingEdit` is the correction the person agreed Redescribe may replace; any other correction is kept.
