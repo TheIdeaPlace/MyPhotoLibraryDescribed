@@ -24,7 +24,11 @@ final class ImageConversation {
     var errorMessage: String?
 
     private let image: CGImage
+    /// For trying once more at a smaller size.
+    private let imageData: Data
     private var session: LanguageModelSession?
+    /// Get Info describing or answering, so background describing waits rather than competing for the model.
+    private(set) static var inProgress = 0
     /// A description saved earlier (by Describe Image or background describing), shown without asking again.
     private let saved: String?
 
@@ -46,6 +50,7 @@ final class ImageConversation {
           onDescribed: @escaping (String, DescriptionProvenance) -> Void = { _, _ in }) {
         guard let image = Self.makeImage(from: imageData) else { return nil }
         self.image = image
+        self.imageData = imageData
         self.saved = saved
         self.onDescribed = onDescribed
         if let saved { exchanges = [Exchange(question: nil, answer: saved)] }
@@ -109,47 +114,95 @@ final class ImageConversation {
     private func run(question: String?) async {
         guard !isWorking else { return }
         isWorking = true
+        Self.inProgress += 1
         errorMessage = nil
-        defer { isWorking = false }
+        defer {
+            isWorking = false
+            Self.inProgress -= 1
+        }
         do {
-            let answer: String
-            var provenance: DescriptionProvenance?
-            if let session, let question {
-                answer = try await session.respond(to: question).content
-            } else {
-                let session = LanguageModelSession(instructions: Self.instructions)
-                self.session = session
-                let image = self.image
-                // A question about a saved description starts a new conversation that knows what was said.
-                let prompt: String
-                if let question, let saved {
-                    prompt = "Earlier you described this photo like this: \(saved)\n\nNow answer this question about it: \(question)"
-                } else {
-                    prompt = question ?? Self.describePrompt
-                }
-                // A first description is counted for Check System; a question about a saved one isn't a description.
-                if question == nil {
-                    let start = ContinuousClock.now
-                    answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image)
-                    provenance = .appleIntelligence(prompt: prompt, seconds: PhotoDescriber.seconds(since: start))
-                } else {
-                    answer = try await session.respond {
-                        prompt
-                        Attachment(image)
-                    }.content
-                }
-            }
+            let (answer, provenance) = try await attempt(question: question)
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             exchanges.append(Exchange(question: question, answer: trimmed))
             if let provenance { onDescribed(trimmed, provenance) }
             AccessibilityNotification.Announcement(trimmed).post()
         } catch {
-            errorMessage = Self.message(for: error)
+            if question != nil, !(error is CancellationError) {
+                DiagnosticLog.write("ask", "Apple Intelligence couldn't answer a question: \(Self.failureCode(for: error)): \(error.localizedDescription)")
+            }
+            errorMessage = Self.message(for: error, asking: question != nil)
             AccessibilityNotification.Announcement(errorMessage ?? "").post()
         }
     }
 
-    static func message(for error: Error) -> String {
+    /// One request, and for a failure that isn't about the photo or the question, one more a moment later, with the
+    /// photo at 1536 pixels: Apple Intelligence may have been busy (background describing), and Windows' model fails
+    /// on some large iPhone photos (#234).
+    private func attempt(question: String?) async throws -> (String, DescriptionProvenance?) {
+        // A follow-up in a conversation that's going sends only text, so it's asked again as it was.
+        let followUp = session != nil && question != nil
+        do {
+            return try await request(question: question, image: image)
+        } catch {
+            guard Self.worthRetrying(error), !Task.isCancelled else { throw error }
+            DiagnosticLog.write(question == nil ? "describe" : "ask",
+                                "Trying again\(followUp ? "" : " smaller") after \(Self.failureCode(for: error))")
+            try await Task.sleep(for: .seconds(2))
+            if followUp { return try await request(question: question, image: image) }
+            session = nil
+            let smaller = await Task.detached(priority: .userInitiated) { [imageData] in
+                Self.makeImage(from: imageData, maxPixelSize: 1536)
+            }.value
+            return try await request(question: question, image: smaller ?? image)
+        }
+    }
+
+    private func request(question: String?, image: CGImage) async throws -> (String, DescriptionProvenance?) {
+        if let session, let question {
+            return (try await session.respond(to: question).content, nil)
+        }
+        let session = LanguageModelSession(instructions: Self.instructions)
+        self.session = session
+        // A question about a saved description starts a new conversation that knows what was said.
+        let prompt: String
+        if let question, let saved {
+            prompt = "Earlier you described this photo like this: \(saved)\n\nNow answer this question about it: \(question)"
+        } else {
+            prompt = question ?? Self.describePrompt
+        }
+        // A first description is counted for Check System; a question about a saved one isn't a description.
+        if question == nil {
+            let start = ContinuousClock.now
+            let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image)
+            return (answer, .appleIntelligence(prompt: prompt, seconds: PhotoDescriber.seconds(since: start)))
+        }
+        let answer = try await session.respond {
+            prompt
+            Attachment(image)
+        }.content
+        return (answer, nil)
+    }
+
+    /// Not a refusal, a conversation that's too long or an unsupported language, which asking again won't change.
+    static func worthRetrying(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let error = error as? LanguageModelSession.GenerationError {
+            switch error {
+            case .guardrailViolation, .refusal, .exceededContextWindowSize, .unsupportedLanguageOrLocale: return false
+            default: return true
+            }
+        }
+        if let error = error as? LanguageModelError {
+            switch error {
+            case .guardrailViolation, .refusal, .contextSizeExceeded, .unsupportedLanguageOrLocale: return false
+            default: return true
+            }
+        }
+        return true
+    }
+
+    /// `asking`: a follow-up question, rather than describing.
+    static func message(for error: Error, asking: Bool = false) -> String {
         let declined = "Apple Intelligence declined to describe this image."
         let tooLong = "This conversation is too long for Apple Intelligence. Close Get Info and open it again to start over."
         let language = "Apple Intelligence doesn't support your current language for this."
@@ -168,17 +221,20 @@ final class ImageConversation {
             default: break
             }
         }
+        // Help > Open Log Folder has the details; the error's own text (a framework's domain and number) means nothing
+        // read aloud.
+        if asking { return "Apple Intelligence couldn't answer that. Try asking again in a moment." }
         return "Apple Intelligence couldn't describe this image: \(error.localizedDescription)"
     }
 
     /// Decodes the photo at a sensible size, already rotated upright. The model resizes internally,
     /// so a full-resolution decode would only cost memory.
-    nonisolated static func makeImage(from data: Data) -> CGImage? {
+    nonisolated static func makeImage(from data: Data, maxPixelSize: Int = 2048) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 2048,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
         ]
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }

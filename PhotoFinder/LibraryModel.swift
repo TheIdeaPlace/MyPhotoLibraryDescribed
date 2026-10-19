@@ -2279,8 +2279,9 @@ final class LibraryModel {
         // A photo whose folder was taken out of the library meanwhile isn't described.
         describer.isForegroundBusy = { [weak self] in
             guard let self else { return false }
+            // Get Info describing or answering a question too, so its question isn't turned away (#237).
             return self.autoDescriber.describingID != nil || self.autoDescriber.aheadID != nil
-                || self.describingIDs.keys.contains { self.focusedRow?.id == $0 }
+                || self.describingIDs.keys.contains { self.focusedRow?.id == $0 } || ImageConversation.inProgress > 0
         }
         describer.isWanted = { [weak self] path in
             guard let self else { return false }
