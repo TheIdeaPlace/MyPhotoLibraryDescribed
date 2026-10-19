@@ -197,7 +197,6 @@ public partial class InfoWindow : Window
         {
             AIStatus.Text = _readiness.Message ?? "Windows' image description isn't available on this PC.";
             DescribePanel.Visibility = Visibility.Collapsed;
-            ShowAskPanel();
             if (_describeNow)
             {
                 FocusFirstField();
@@ -388,10 +387,10 @@ public partial class InfoWindow : Window
         ShowAskPanel();
     }
 
-    /// <summary>The question box is offered with a description, on a PC that can answer, and not where Windows' AI isn't
-    /// usable at all.</summary>
+    /// <summary>The question box is offered with a description, on a PC whose Phi Silica can answer. That's its own
+    /// check: image description being unavailable says nothing about it.</summary>
     private void ShowAskPanel() =>
-        AskPanel.Visibility = _conversationAbout.Length > 0 && FollowUpQuestionsShown && _questionsOffered && _readiness is not { Usable: false }
+        AskPanel.Visibility = _conversationAbout.Length > 0 && FollowUpQuestionsShown && _questionsOffered
             ? Visibility.Visible : Visibility.Collapsed;
 
     private async void Ask_Click(object sender, RoutedEventArgs e) => await AskAsync();
