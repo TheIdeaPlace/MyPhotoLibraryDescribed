@@ -48,7 +48,10 @@ public sealed class WindowsAI : IDisposable
     /// describe fine smaller, and trying the same size again only fails again (found in IDT).</summary>
     public static readonly uint[] RetrySizes = [1024, 512];
 
-    public const uint FirstSize = 2048;
+    /// <summary>The long edge sent first. It was 2048, but at 2048 Windows' model never answers for a whole kind of photo
+    /// (Kelly's iPhone backup, 19 Oct: the "…_singular_display_fullPicture.heic" files, a third of the library), while at
+    /// 1536 the same photos are described in about 7 seconds, and other photos as well as before.</summary>
+    public const uint FirstSize = 1536;
 
     /// <summary>How long a request may take. A photo usually takes 5 to 15 seconds, the first after a start a little
     /// more. It was 3 minutes, but Windows' model can hang on a particular photo and never answer (Kelly's PC, 19 Oct):
@@ -231,8 +234,9 @@ public sealed class WindowsAI : IDisposable
         return new(text, took);
     }
 
-    /// <summary>Tries the first size, then smaller ones while the model reports an internal error.
-    /// Any other failure (content filter, too much text) is final.</summary>
+    /// <summary>Tries the first size, then smaller ones while the model reports an internal error or doesn't answer in
+    /// time: a photo it hangs on at one size can be fine smaller (19 Oct). Any other failure (content filter, too much
+    /// text) is final.</summary>
     internal static async Task<T> WithRetriesAsync<T>(Func<uint, Task<byte[]>> jpegAtSize, Func<byte[], Task<T>> describe, bool retry = true)
     {
         var sizes = retry ? new[] { FirstSize }.Concat(RetrySizes).ToArray() : [FirstSize];
@@ -244,7 +248,8 @@ public sealed class WindowsAI : IDisposable
             {
                 return await describe(jpeg);
             }
-            catch (DescriptionException ex) when (ex.Code == "internal_error")
+            // One smaller try after a timeout, not every size: each costs a minute of waiting.
+            catch (DescriptionException ex) when (ex.Code == "internal_error" || (ex.Code == "timeout" && last?.Code != "timeout"))
             {
                 last = ex;
             }
