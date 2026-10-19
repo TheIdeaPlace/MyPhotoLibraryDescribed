@@ -78,7 +78,9 @@ public partial class InfoWindow : Window
         Loaded += async (_, _) =>
         {
             if (GeneralList.Items.Count > 0) GeneralList.SelectedIndex = 0;
-            if (!describeNow && !_askNow) FocusFirstField();
+            // Ask About Photo goes straight to the question box when it's already known that Windows can answer (after the
+            // first time in a run); otherwise focus starts here, as usual, until that's known.
+            if (!describeNow && !(_askNow && FollowUpQuestionsChecked.IsCompleted)) FocusFirstField();
             var aiChecked = CheckAIAsync();
             Asking = _askNow ? StartAskingAsync(aiChecked) : Task.CompletedTask;
             await Task.WhenAll(LoadDetailsAsync(), aiChecked, LookUpPlaceAsync(), Asking);
@@ -351,7 +353,7 @@ public partial class InfoWindow : Window
     /// <summary>Done once Get Info knows whether to offer questions, for tests to wait on.</summary>
     internal Task FollowUpQuestionsChecked { get; }
     private bool _questionsOffered;
-    private readonly bool _askNow;
+    private bool _askNow;
     /// <summary>Ask About Photo's start (focus to the box, describing first if need be), for tests to wait on.</summary>
     internal Task Asking { get; private set; } = Task.CompletedTask;
 
@@ -406,21 +408,39 @@ public partial class InfoWindow : Window
     /// as usual.</summary>
     private async Task StartAskingAsync(Task aiChecked)
     {
+        var waited = !FollowUpQuestionsChecked.IsCompleted;
+        var focusedFirst = Keyboard.FocusedElement;
         await FollowUpQuestionsChecked;
         if (_closing.IsCancellationRequested) return;
+        // Someone who has moved on while it was checking (into the details, say) keeps their place.
+        var stillWhereItStarted = !waited || Keyboard.FocusedElement == focusedFirst || Keyboard.FocusedElement is Window or null;
         if (!_questionsOffered)
         {
-            FocusFirstField();
+            if (!waited) FocusFirstField();
             Announcer.Announce(NoQuestionsHere);
             return;
         }
-        AskPanel.BringIntoView();
-        QuestionBox.Focus();
+        void FocusQuestion()
+        {
+            AskPanel.BringIntoView();
+            QuestionBox.Focus();
+        }
+        if (stillWhereItStarted) FocusQuestion();
         if (_conversationAbout.Length > 0) return;
+        // Nothing to ask about yet: describe first, if Windows can.
         await aiChecked;
         if (_closing.IsCancellationRequested) return;
-        if (_readiness is { Usable: true }) await DescribeAsync();
-        else Announcer.Announce(AIStatus.Text.Length > 0 ? AIStatus.Text : "This photo has no description to ask about.");
+        if (_readiness is not { Usable: true })
+        {
+            // No describing here, so the box could never be used: Get Info as usual, saying why.
+            var wasInBox = QuestionBox.IsKeyboardFocusWithin;
+            _askNow = false;
+            ShowAskPanel();
+            if (wasInBox) FocusFirstField();
+            Announcer.Announce((AIStatus.Text.Length > 0 ? AIStatus.Text + " " : "") + "There's no description to ask about.");
+            return;
+        }
+        await DescribeAsync();
     }
 
     internal const string NoQuestionsHere =

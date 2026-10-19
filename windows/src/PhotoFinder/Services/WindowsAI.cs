@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -55,8 +55,13 @@ public sealed class WindowsAI : IDisposable
 
     /// <summary>How long a request may take. A photo usually takes 5 to 15 seconds, the first after a start a little
     /// more. It was 3 minutes, but Windows' model can hang on a particular photo and never answer (Kelly's PC, 19 Oct):
-    /// each start then sat silent on that photo for 3 minutes. Settable for tests.</summary>
-    internal static TimeSpan DescribeTimeout { get; set; } = TimeSpan.FromSeconds(60);
+    /// each start then sat silent on that photo for 3 minutes.</summary>
+    private static readonly TimeSpan DescribeTimeout = TimeSpan.FromSeconds(60);
+    /// <summary>The first request a newly started helper answers also loads Windows' model (or Phi Silica), which can take
+    /// a while just after Windows starts or updates, so it gets longer.</summary>
+    private static readonly TimeSpan FirstRequestTimeout = TimeSpan.FromMinutes(2);
+    /// <summary>Whether the helper running now has answered a request yet.</summary>
+    private bool _serverAnswered;
     private static readonly TimeSpan CheckTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PrepareTimeout = TimeSpan.FromMinutes(15);
 
@@ -248,7 +253,7 @@ public sealed class WindowsAI : IDisposable
             {
                 return await describe(jpeg);
             }
-            // One smaller try after a timeout, not every size: each costs a minute of waiting.
+            // Never two timeouts in a row: each is a minute's wait. (An internal error between them resets this.)
             catch (DescriptionException ex) when (ex.Code == "internal_error" || (ex.Code == "timeout" && last?.Code != "timeout"))
             {
                 last = ex;
@@ -290,7 +295,7 @@ public sealed class WindowsAI : IDisposable
             string? line;
             var started = Stopwatch.StartNew();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            timeout.CancelAfter(DescribeTimeout);
+            timeout.CancelAfter(_serverAnswered ? DescribeTimeout : FirstRequestTimeout);
             try
             {
                 await server.StandardInput.WriteAsync(build(id) + "\n");
@@ -315,6 +320,7 @@ public sealed class WindowsAI : IDisposable
                 StopServer();
                 throw new DescriptionException("internal_error", $"The {AppInfo.HelperName} stopped unexpectedly.");
             }
+            _serverAnswered = true;
             try
             {
                 return (ParseResponse(line, id), started.Elapsed);
@@ -360,6 +366,7 @@ public sealed class WindowsAI : IDisposable
     {
         if (_server is { HasExited: false }) return _server;
         _server?.Dispose();
+        _serverAnswered = false;
         _server = Process.Start(StartInfo("--serve")) ?? throw new DescriptionException("not_installed", NotInstalledMessage);
         // Its stderr is only progress notes ("getting the model ready"); read it so it never fills up and blocks.
         _server.ErrorDataReceived += (_, _) => { };

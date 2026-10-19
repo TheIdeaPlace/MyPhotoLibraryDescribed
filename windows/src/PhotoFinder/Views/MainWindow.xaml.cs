@@ -171,7 +171,9 @@ public partial class MainWindow : Window
         Bind(AppCommands.OpenSelected, () => _model.Open(), HasSelection);
         Bind(AppCommands.Preview, ShowPreview, HasFiles);
         Bind(AppCommands.GetInfo, () => ShowInfo(), HasFiles);
-        Bind(AppCommands.AskAboutPhoto, () => ShowInfo(ask: true), HasFiles);
+        // Only where follow-up questions are on at all; the menu item goes with it.
+        if (AppInfo.FollowUpQuestions) Bind(AppCommands.AskAboutPhoto, () => ShowInfo(ask: true), HasFiles);
+        else AskAboutPhotoItem.Visibility = Visibility.Collapsed;
         // Available on any row, so the shortcut on a folder or video says why it can't, rather than nothing.
         Bind(AppCommands.DescribePhoto, () => DescribePhoto(again: false), () => _model.FocusedRow is not null);
         Bind(AppCommands.Redescribe, () => DescribePhoto(again: true), () => _model.FocusedRow is not null);
@@ -1268,7 +1270,13 @@ public partial class MainWindow : Window
         DescriptionPanel.SaveIfChanged();
         var kindBefore = _model.Settings.DescriptionKind;
         var row = _model.SelectedRows.FirstOrDefault(r => r.Item is not null);
-        if (row?.Item is null) { System.Media.SystemSounds.Beep.Play(); return; }
+        if (row?.Item is null)
+        {
+            // On a folder: Ask About Photo says why, as Describe Photo does; Get Info beeps, as it always has.
+            if (ask) Services.Announcer.Announce("Choose a photo to ask about.");
+            else System.Media.SystemSounds.Beep.Play();
+            return;
+        }
         if (ask && row.Item.IsVideo)
         {
             Services.Announcer.Announce("Questions are about photos, not videos.");

@@ -234,7 +234,21 @@ public sealed class WindowTests : IDisposable
             await plain.FollowUpQuestionsChecked;
             Assert.True(await WaitFor(() => announced.Contains(InfoWindow.NoQuestionsHere)));
             Assert.Equal(Visibility.Collapsed, plain.AskPanel.Visibility);
-            Assert.False(plain.QuestionBox.IsKeyboardFocused);
+            Assert.True(await WaitFor(() => plain.GeneralList.IsKeyboardFocusWithin));
+            plain.Close();
+
+            // Asking with no description to ask about says so, and nothing is sent.
+            InfoWindow.PhiSilicaOffered = _ => Task.FromResult(true);
+            var asked = 0;
+            InfoWindow.AskQuestion = (_, _, _, _, _) => { asked++; return Task.FromResult("No."); };
+            var empty = new InfoWindow(RowFor(_lib.AddJpeg("empty.jpg")), new Settings { DescriptionKind = "accessible" }, () => { }, describeNow: false, store)
+                { ShowActivated = false };
+            opened.Add(empty);
+            empty.Show();
+            empty.QuestionBox.Text = "What's in it?";
+            await empty.AskAsync();
+            Assert.Contains("There's no description to ask about yet. Describe the photo first.", announced);
+            Assert.Equal(0, asked);
         }
         finally
         {

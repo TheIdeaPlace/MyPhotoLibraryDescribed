@@ -595,6 +595,49 @@ public sealed class BackgroundDescriberTests : IDisposable
         }
     }
 
+    private static async Task<bool> WaitFor(Func<bool> done, TimeSpan? within = null)
+    {
+        var until = DateTime.UtcNow + (within ?? TimeSpan.FromSeconds(10));
+        while (!done())
+        {
+            if (DateTime.UtcNow > until) return false;
+            await Task.Delay(50);
+        }
+        return true;
+    }
+
+    [WpfFact]
+    public async Task AfterATimeout_ItPausesAndSaysSo_AndStopEndsThePauseQuietly()
+    {
+        _lib.AddJpeg("hangs.jpg");
+        _lib.AddJpeg("next.jpg");
+        MakeNewest("hangs");
+        var pause = BackgroundDescriber.AfterTimeoutPause;
+        BackgroundDescriber.AfterTimeoutPause = TimeSpan.FromSeconds(30);
+        Task<string> Describe(MediaItem item) => item.Name == "hangs.jpg"
+            ? throw new DescriptionException("timeout", "Windows took too long. Try again.")
+            : Task.FromResult("Fine");
+        try
+        {
+            var (model, background, _) = await StartAsync(enabled: false, describe: Describe);
+            using (model) using (background)
+            {
+                background.Enabled = true;
+                Assert.True(await WaitFor(() => model.BackgroundProgress == "Windows got stuck on hangs.jpg; going on in a moment"));
+                Assert.DoesNotContain("next.jpg", _described);
+                background.Stop();
+                // Stop ends the pause at once: nothing more is described, and nothing says it's going on.
+                Assert.True(await WaitFor(() => !background.IsRunning, TimeSpan.FromSeconds(5)));
+                Assert.Null(model.BackgroundProgress);
+                Assert.DoesNotContain("next.jpg", _described);
+            }
+        }
+        finally
+        {
+            BackgroundDescriber.AfterTimeoutPause = pause;
+        }
+    }
+
     [WpfFact]
     public async Task Timeouts_WithNothingDescribedAfter_AreTriedAgainAtTheNextStart()
     {

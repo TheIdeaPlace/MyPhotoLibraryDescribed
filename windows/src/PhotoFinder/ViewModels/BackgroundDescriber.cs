@@ -111,6 +111,7 @@ public sealed class BackgroundDescriber : IDisposable
         var left = _front.Count + _queue.Count;
         // Failures not yet shown to be the photos' own aren't kept once the run ends early, however it was stopped.
         _pending.Clear();
+        _pendingTimeouts.Clear();
         _front.Clear();
         _queue.Clear();
         _queued.Clear();
@@ -331,6 +332,13 @@ public sealed class BackgroundDescriber : IDisposable
     /// skipped once it's fixed.</summary>
     private readonly HashSet<string> _remembered = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _pending = [];
+    /// <summary>Photos that timed out, kept for later starts only once a later photo is described quickly: a slow spell
+    /// (the NPU busy with something else) times photos out too, and those shouldn't be skipped for good.</summary>
+    private readonly List<string> _pendingTimeouts = [];
+
+    /// <summary>A description this quick shows Windows was answering normally, so the photos that timed out before it
+    /// were the photos' own trouble.</summary>
+    internal static TimeSpan QuickAnswer { get; set; } = TimeSpan.FromSeconds(20);
 
     /// <summary>The photo by path, size and modified time (UTC, so a daylight saving change doesn't lose them all), and the
     /// description type: one the filter declined as Detailed may be fine as Brief.</summary>
@@ -383,6 +391,7 @@ public sealed class BackgroundDescriber : IDisposable
     {
         _failed.Clear();
         _pending.Clear();
+        _pendingTimeouts.Clear();
         if (_remembered.Count == 0) return;
         _remembered.Clear();
         SaveFailures();
@@ -522,11 +531,18 @@ public sealed class BackgroundDescriber : IDisposable
                     var (text, took) = await _describe(item, kind, _closing.Token);
                     if (text.Length > 0) _store.PutUnlessEdited(item, kind, text, took);
                     failedInARow = 0;
-                    // Describing works, so the failures before this one were the photos' own: kept for later starts.
-                    if (_pending.Count > 0)
+                    // Describing works, so the failures before this one were the photos' own: kept for later starts. Timeouts
+                    // only when this one was quick, so Windows wasn't just slow for a while.
+                    var quick = took is not { } time || time < QuickAnswer;
+                    if (_pending.Count > 0 || (quick && _pendingTimeouts.Count > 0))
                     {
                         _remembered.UnionWith(_pending);
                         _pending.Clear();
+                        if (quick)
+                        {
+                            _remembered.UnionWith(_pendingTimeouts);
+                            _pendingTimeouts.Clear();
+                        }
                         SaveFailures();
                     }
                 }
@@ -547,13 +563,22 @@ public sealed class BackgroundDescriber : IDisposable
                         SaveFailures();
                     }
                     // The helper stopping partway says nothing about the photo: skipped this session only.
+                    else if (IsTimeout(ex)) _pendingTimeouts.Add(key);
                     else if (!IsPassing(ex)) _pending.Add(key);
                     Log.Write("background", $"Couldn't describe {item.Name}: {(ex is DescriptionException d ? $"{d.Code}: " : ex.GetType().Name + ": ")}{ex.Message}");
-                    if (IsTimeout(ex) && !(run == _run && failedInARow + 1 >= FailuresInARow))
+                    // A pause before the next photo, only while this run goes on: not after Stop or turning it off, not
+                    // with nothing left, and not when this failure ends the run.
+                    if (IsTimeout(ex) && run == _run && failedInARow + 1 < FailuresInARow && _front.Count + _queue.Count > 0)
                     {
                         _model.BackgroundProgress = $"Windows got stuck on {item.Name}; going on in a moment";
-                        try { await Task.Delay(AfterTimeoutPause, _closing.Token); }
-                        catch (OperationCanceledException) { return; }
+                        var pause = System.Diagnostics.Stopwatch.StartNew();
+                        while (pause.Elapsed < AfterTimeoutPause && run == _run && _front.Count + _queue.Count > 0)
+                        {
+                            try { await Task.Delay(TimeSpan.FromMilliseconds(250), _closing.Token); }
+                            catch (OperationCanceledException) { return; }
+                        }
+                        // Stopped meanwhile: Stop has already said so and cleared the progress.
+                        if (run == _run) ShowProgress();
                     }
                     if (run == _run && !IsAboutThePhoto(ex) && ++failedInARow >= FailuresInARow)
                     {
