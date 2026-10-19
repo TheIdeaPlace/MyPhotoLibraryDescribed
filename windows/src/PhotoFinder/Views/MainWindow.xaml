@@ -104,6 +104,7 @@
                 <v:AppMenuItem Command="v:AppCommands.CheckSystem" />
                 <v:AppMenuItem Command="v:AppCommands.CheckAIDescription" />
                 <v:AppMenuItem Command="v:AppCommands.OpenLogFolder" />
+                <v:AppMenuItem Command="v:AppCommands.OpenDescriptionsFolder" />
                 <Separator />
                 <v:AppMenuItem Command="v:AppCommands.UserGuide" />
                 <v:AppMenuItem Command="v:AppCommands.PrivacyPolicy" />

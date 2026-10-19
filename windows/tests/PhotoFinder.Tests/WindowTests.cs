@@ -774,10 +774,13 @@ public sealed class WindowTests : IDisposable
             Assert.Equal("brief", Settings.Load(_lib.PathOf(@"data\Settings.json")).DescriptionKind);
 
             Assert.Contains(items, m => m.Command == AppCommands.DescribePhoto);
+            // Ask About Photo sits under Redescribe (#233).
+            var photo = window.MainMenu.Items.OfType<MenuItem>().Single(m => (string)m.Header == "_Photo").Items.OfType<MenuItem>().ToList();
+            Assert.Equal(photo.FindIndex(m => m.Command == AppCommands.Redescribe) + 1, photo.FindIndex(m => m.Command == AppCommands.AskAboutPhoto));
 
-            // The Help menu in the order both apps use (#33).
+            // The Help menu in the order both apps use (#33); Open Descriptions Folder is Windows' so far (#236).
             var help = window.MainMenu.Items.OfType<MenuItem>().Last();
-            Assert.Equal([AppCommands.CheckForUpdates, AppCommands.ReportBug, AppCommands.CheckSystem, AppCommands.CheckAIDescription, AppCommands.OpenLogFolder, null, AppCommands.UserGuide, AppCommands.PrivacyPolicy, null, AppCommands.About],
+            Assert.Equal([AppCommands.CheckForUpdates, AppCommands.ReportBug, AppCommands.CheckSystem, AppCommands.CheckAIDescription, AppCommands.OpenLogFolder, AppCommands.OpenDescriptionsFolder, null, AppCommands.UserGuide, AppCommands.PrivacyPolicy, null, AppCommands.About],
                 help.Items.Cast<object>().Select(i => (i as MenuItem)?.Command));
             Assert.Equal($"_About {AppInfo.Name}", AppCommands.About.Text);
 

@@ -201,18 +201,8 @@ public partial class MainWindow : Window
         Bind(AppCommands.ToggleFavorite, () => { if (CanChangePhotos() && (_model.IsWriting || ConfirmBulkWrite("Toggle Favorite"))) _model.Fire(_model.ToggleFavoriteAsync()); }, HasFiles);
         Bind(AppCommands.EditCaption, () => EditCaption(), HasFiles);
         Bind(AppCommands.ReadStatusBar, ReadStatusBar);
-        Bind(AppCommands.OpenLogFolder, () =>
-        {
-            try
-            {
-                Directory.CreateDirectory(Services.Log.Folder);
-                OpenUrl(Services.AppPaths.ForExplorer(Services.Log.Folder));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
-            {
-                ShowError($"File Explorer couldn't open the log folder. It's at {Services.AppPaths.ForExplorer(Services.Log.Folder)}.");
-            }
-        });
+        Bind(AppCommands.OpenLogFolder, () => OpenAppFolder(Services.Log.Folder, "log folder"));
+        Bind(AppCommands.OpenDescriptionsFolder, () => OpenAppFolder(Services.AppPaths.DataFolder, "descriptions folder"));
         Bind(AppCommands.GoToStatusBar, FocusStatusBar);
         Bind(AppCommands.UseDescriptionAsCaption, () => _model.Fire(UseDescriptionAsCaptionAsync(_model.SelectedRows)), HasFiles);
         Bind(AppCommands.About, ShowAbout);
@@ -1262,6 +1252,21 @@ public partial class MainWindow : Window
             replacing = _model.Descriptions.Get(item, kind);
         }
         return AutoDescriber.DescribeNowAsync(row, stillOn, again, replacing);
+    }
+
+    /// <summary>One of the app's own folders in File Explorer, at the place Explorer can see it (a packaged app's data is
+    /// kept in its package's folder).</summary>
+    private void OpenAppFolder(string folder, string what)
+    {
+        try
+        {
+            Directory.CreateDirectory(folder);
+            OpenUrl(Services.AppPaths.ForExplorer(folder));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            ShowError($"File Explorer couldn't open the {what}. It's at {Services.AppPaths.ForExplorer(folder)}.");
+        }
     }
 
     /// <param name="ask">Ask About Photo (#233): Get Info opens with focus in the follow-up question box.</param>

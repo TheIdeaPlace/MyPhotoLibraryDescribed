@@ -86,6 +86,9 @@ public static class AppCommands
     public static readonly RoutedUICommand CheckAIDescription = Make("Check AI _Description…", nameof(CheckAIDescription));
     /// <summary>The diagnostic log's folder, in File Explorer, for attaching to a bug report.</summary>
     public static readonly RoutedUICommand OpenLogFolder = Make("Open _Log Folder", nameof(OpenLogFolder));
+    /// <summary>The folder with the descriptions, settings and the rest the app keeps (Kelly, 19 Oct), in File Explorer.
+    /// The access key is e: D is Check AI Description's.</summary>
+    public static readonly RoutedUICommand OpenDescriptionsFolder = Make("Open Descriptions Fold_er", nameof(OpenDescriptionsFolder));
     /// <summary>The user guide and privacy policy, on GitHub, as on the Mac (#105).</summary>
     public static readonly RoutedUICommand UserGuide = Make($"{AppInfo.Name} User _Guide", nameof(UserGuide));
     public static readonly RoutedUICommand PrivacyPolicy = Make("_Privacy Policy", nameof(PrivacyPolicy));

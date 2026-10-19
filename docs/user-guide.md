@@ -159,6 +159,7 @@ On Windows there's no Settings window. Save Descriptions in Photos and Look Up P
 - **Check System…** checks that your computer can describe photos, and says what to do if it can't.
 - **Check AI Description…** describes a sample photo that comes with the app (a red mug on a table beside a sign reading OPEN), to show describing works end to end. It saves nothing.
 - **Open Log Folder** shows the diagnostic log: one file a day, kept two weeks, of what went wrong. It stays on your computer unless you attach it to a bug report; it names files and folders, so look at it first.
+- **Open Descriptions Folder** (Windows) shows the folder where the app keeps what it makes: the descriptions (Descriptions.json), your settings, the photo details it has read, and the logs. The descriptions go into your photo files too only if you turn on Save Descriptions in Photos. On the Mac it's ~/Library/Application Support/My Photo Library Described.
 - **User Guide** opens this guide, and **Privacy Policy** opens the privacy policy, on GitHub.
 
 **About My Photo Library Described** (in the app menu on the Mac, and at the end of the Help menu on Windows) has the version, with links to the source code, this guide and the privacy policy.
