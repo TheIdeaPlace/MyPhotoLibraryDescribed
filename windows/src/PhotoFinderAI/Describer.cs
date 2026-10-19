@@ -145,6 +145,9 @@ public sealed class Describer : IDisposable
             (result.ExtendedError is { } e ? $": {e.Message.Trim()} (0x{e.HResult:X8})." : ". It may still be downloading; try again in a few minutes."));
     }
 
+    /// <summary>An InternalError sooner than this is a generator that has stopped working, not a picture it can't do.</summary>
+    private static readonly TimeSpan InstantFailure = TimeSpan.FromSeconds(1.5);
+
     /// <summary>Describes one picture. Returns the description, or throws
     /// <see cref="ProtocolException"/> with the code to answer with. Anything else it throws is
     /// unexpected; the caller should then <see cref="Reset"/>.</summary>
@@ -190,12 +193,14 @@ public sealed class Describer : IDisposable
                 "diagram" => ImageDescriptionKind.DiagramDescription,
                 _ => ImageDescriptionKind.AccessibleDescription,
             };
+            var asked = System.Diagnostics.Stopwatch.StartNew();
             var result = await _generator.DescribeAsync(image, kind, new ContentFilterOptions());
-            if (result.Status == ImageDescriptionResultStatus.InternalError)
+            if (result.Status == ImageDescriptionResultStatus.InternalError && asked.Elapsed < InstantFailure)
             {
-                // After a few descriptions, the same generator starts answering InternalError at once for pictures a new
-                // one describes fine (Kelly's PC, 19 Oct: 2 of 8 in one helper, all 8 in fresh ones). So one more try
-                // with a new generator before giving up.
+                // After a few descriptions, the same generator can start answering InternalError at once for pictures a
+                // new one describes fine (Kelly's PC, 19 Oct: 2 of 8 in one helper, all 8 in fresh ones). So one more
+                // try with a new generator. Only for an instant failure: one that took a while is about the picture
+                // (a new generator rescued 7 of 89 of those), and the app tries it smaller instead.
                 Console.Error.WriteLine("InternalError; trying once more with a new image description model");
                 Reset();
                 _generator = await ImageDescriptionGenerator.CreateAsync();
