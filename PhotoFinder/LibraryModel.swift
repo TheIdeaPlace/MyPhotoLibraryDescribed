@@ -2714,8 +2714,8 @@ final class LibraryModel {
         }
     }
 
-    /// Help > Open Descriptions Folder (#236): the folder with the descriptions, settings, logs and the rest the app
-    /// keeps, in Finder, as on Windows.
+    /// Help > Open Descriptions Folder (#236): the folder with the descriptions, logs and the rest the app keeps
+    /// (settings are in macOS's defaults), in Finder, as on Windows.
     func openDescriptionsFolder() {
         try? FileManager.default.createDirectory(at: AppInfo.dataFolder, withIntermediateDirectories: true)
         if !NSWorkspace.shared.open(AppInfo.dataFolder) {

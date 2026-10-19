@@ -248,6 +248,7 @@ struct AppleIntelligenceSection: View {
     @State private var conversation: ImageConversation?
     @State private var question = ""
     @State private var askStarted = false
+    @State private var askFocused = false
     @FocusState private var questionFocused: Bool
 
     var body: some View {
@@ -270,9 +271,8 @@ struct AppleIntelligenceSection: View {
             LibraryModel.postAnnouncement("Questions about photos need Apple Intelligence. \(reason)", queued: true)
             return
         }
+        // The field takes focus itself when it's shown (below).
         if conversation == nil { start() }
-        // After the field is shown.
-        Task { questionFocused = true }
     }
 
     @ViewBuilder private var content: some View {
@@ -312,15 +312,25 @@ struct AppleIntelligenceSection: View {
                     start(replacingEdit: agreed)
                 }
             }
-            if let conversation, !conversation.exchanges.isEmpty || (askNow && conversation.isWorking) {
+            let described = !(conversation?.exchanges.isEmpty ?? true)
+            // For Ask About Photo the field stays while describing and if describing fails, as on Windows, so focus
+            // isn't lost; Describe Image beside it tries again.
+            if let conversation, described || askNow {
                 HStack {
                     TextField("Ask a follow-up question", text: $question)
                         .focused($questionFocused)
                         .onSubmit(ask)
+                        .onAppear {
+                            // Once, when the field is on screen: focus set before then is dropped.
+                            guard askNow, !askFocused else { return }
+                            askFocused = true
+                            DispatchQueue.main.async { questionFocused = true }
+                        }
                     Button("Ask", action: ask)
-                        .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty || conversation.isWorking)
+                        .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty || conversation.isWorking || !described)
                 }
-            } else if !(conversation?.isWorking ?? false) {
+            }
+            if !described, !(conversation?.isWorking ?? false) {
                 Button("Describe Image") { start() }
                     .disabled(imageData == nil)
             }
@@ -359,6 +369,7 @@ struct AppleIntelligenceSection: View {
                 cache.remember(text, forKey: key, provenance: provenance)
             }
         }) else {
+            if askNow { LibraryModel.postAnnouncement("This photo couldn't be read, so there's nothing to ask about.", queued: true) }
             return
         }
         self.conversation = conversation
@@ -367,8 +378,8 @@ struct AppleIntelligenceSection: View {
 
     private func ask() {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        // A question typed while the photo is still being described stays in the field until it can be asked.
-        guard !text.isEmpty, let conversation, !conversation.isWorking else { return }
+        // A question typed before there's a description to ask about stays in the field until it can be asked.
+        guard !text.isEmpty, let conversation, !conversation.isWorking, !conversation.exchanges.isEmpty else { return }
         question = ""
         Task { await conversation.ask(text) }
     }

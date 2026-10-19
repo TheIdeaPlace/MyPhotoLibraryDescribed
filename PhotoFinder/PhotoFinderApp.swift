@@ -193,7 +193,7 @@ struct PhotoCommands: Commands {
             }
             // The diagnostic log (#103), as on Windows.
             Button("Open Log Folder") { model.openLogFolder() }
-            // The descriptions, settings and logs (#236), as on Windows.
+            // The descriptions and logs (#236), as on Windows.
             Button("Open Descriptions Folder") { model.openDescriptionsFolder() }
             Divider()
             Button("\(AppInfo.name) User Guide") { NSWorkspace.shared.open(AppInfo.userGuideURL) }
