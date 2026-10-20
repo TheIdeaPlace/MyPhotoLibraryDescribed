@@ -27,8 +27,11 @@ struct InfoView: View {
 
     /// Everything about the photo, in one list (Kelly, 19 Oct): one Tab stop, then Up and Down Arrow.
     private var fields: [InfoField] {
-        general + (loadingDetails ? [InfoField(label: "Details", value: "Reading…")] : details)
+        general + (loadingDetails ? [Self.readingRow] : details.isEmpty ? [Self.noDetailsRow] : details)
     }
+    // Made once: a new row (and id) on every redraw would keep the list re-selecting it while details load.
+    private static let readingRow = InfoField(label: "Details", value: "Reading…")
+    private static let noDetailsRow = InfoField(label: "Details", value: "No more details available")
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

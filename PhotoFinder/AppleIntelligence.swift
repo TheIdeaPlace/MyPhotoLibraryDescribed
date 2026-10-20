@@ -142,9 +142,13 @@ final class ImageConversation {
         // A follow-up in a conversation that's going sends only text, so it's asked again as it was.
         let followUp = session != nil && question != nil
         do {
-            return try await request(question: question, image: image)
+            // Not counted as a failure yet: only how the last try ends is.
+            return try await request(question: question, image: image, countsFailure: false)
         } catch {
-            guard Self.worthRetrying(error), !Task.isCancelled else { throw error }
+            guard Self.worthRetrying(error), !Task.isCancelled else {
+                if question == nil, !(error is CancellationError), !Task.isCancelled { PhotoDescriber.countFailure(error) }
+                throw error
+            }
             DiagnosticLog.write(question == nil ? "describe" : "ask",
                                 "Trying again\(followUp ? "" : " smaller") after \(Self.failureCode(for: error))")
             try await Task.sleep(for: .seconds(2))
@@ -157,7 +161,8 @@ final class ImageConversation {
         }
     }
 
-    private func request(question: String?, image: CGImage) async throws -> (String, DescriptionProvenance?) {
+    private func request(question: String?, image: CGImage,
+                         countsFailure: Bool = true) async throws -> (String, DescriptionProvenance?) {
         if let session, let question {
             return (try await session.respond(to: question).content, nil)
         }
@@ -173,7 +178,7 @@ final class ImageConversation {
         // A first description is counted for Check System; a question about a saved one isn't a description.
         if question == nil {
             let start = ContinuousClock.now
-            let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image)
+            let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image, countsFailure: countsFailure)
             return (answer, .appleIntelligence(prompt: prompt, seconds: PhotoDescriber.seconds(since: start)))
         }
         let answer = try await session.respond {
@@ -259,8 +264,9 @@ enum PhotoDescriber {
     /// Asks the model to describe the image, and counts the outcome for Check System (#94): how long it took, or why it
     /// failed. One photo, counted once; giving up (moving on, closing a window) isn't a failure.
     /// `countsBusy` false leaves a rate limit out of the failures: background describing waits and tries again.
+    /// `countsFailure` false leaves any failure out, for Get Info's first try, which is tried again (#237).
     static func respond(_ session: LanguageModelSession, prompt: String, image: CGImage,
-                        countsBusy: Bool = true) async throws -> String {
+                        countsBusy: Bool = true, countsFailure: Bool = true) async throws -> String {
         let start = ContinuousClock.now
         do {
             let answer = try await session.respond {
@@ -270,13 +276,18 @@ enum PhotoDescriber {
             DescribeStats.session.described(seconds: seconds(since: start))
             return answer
         } catch {
-            if !(error is CancellationError), !Task.isCancelled, countsBusy || !isRateLimited(error) {
-                DiagnosticLog.write("describe", "Apple Intelligence failed: \(ImageConversation.failureCode(for: error)): \(ImageConversation.message(for: error))")
-                DescribeStats.session.failed(code: ImageConversation.failureCode(for: error),
-                                             message: ImageConversation.message(for: error))
+            if countsFailure, !(error is CancellationError), !Task.isCancelled, countsBusy || !isRateLimited(error) {
+                countFailure(error)
             }
             throw error
         }
+    }
+
+    /// Logged, and counted for Check System's recent failures.
+    static func countFailure(_ error: Error) {
+        DiagnosticLog.write("describe", "Apple Intelligence failed: \(ImageConversation.failureCode(for: error)): \(ImageConversation.message(for: error))")
+        DescribeStats.session.failed(code: ImageConversation.failureCode(for: error),
+                                     message: ImageConversation.message(for: error))
     }
 
     static func isRateLimited(_ error: Error) -> Bool {
@@ -348,7 +359,7 @@ struct AppleIntelligenceSection: View {
                     Text("Answers").font(.subheadline.bold()).accessibilityHidden(true)
                     ReadOnlyText(text: answers.map { "You asked: \($0.question ?? "")\nAnswer: \($0.answer)" }
                                     .joined(separator: "\n\n"),
-                                 label: "Answers")
+                                 label: "Answers", scrollsToEnd: true)
                         .frame(height: 140)
                 }
                 if conversation.isWorking {

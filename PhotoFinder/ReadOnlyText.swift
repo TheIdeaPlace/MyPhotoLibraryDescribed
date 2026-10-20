@@ -7,9 +7,13 @@ import SwiftUI
 struct ReadOnlyText: NSViewRepresentable {
     let text: String
     let label: String
+    /// Answers grow at the end: the newest is kept in view.
+    var scrollsToEnd = false
 
     func makeNSView(context: Context) -> NSScrollView {
-        let textView = TabbingTextView()
+        let textView = TabbingTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 100))
+        textView.minSize = .zero
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
@@ -33,7 +37,10 @@ struct ReadOnlyText: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let textView = scroll.documentView as? NSTextView else { return }
-        if textView.string != text { textView.string = text }
+        if textView.string != text {
+            textView.string = text
+            if scrollsToEnd { textView.scrollToEndOfDocument(nil) }
+        }
         textView.setAccessibilityLabel(label)
     }
 }
