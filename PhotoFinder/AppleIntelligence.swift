@@ -24,7 +24,11 @@ final class ImageConversation {
     var errorMessage: String?
 
     private let image: CGImage
+    /// For trying once more at a smaller size.
+    private let imageData: Data
     private var session: LanguageModelSession?
+    /// Get Info describing or answering, so background describing waits rather than competing for the model.
+    private(set) static var inProgress = 0
     /// A description saved earlier (by Describe Image or background describing), shown without asking again.
     private let saved: String?
 
@@ -46,6 +50,7 @@ final class ImageConversation {
           onDescribed: @escaping (String, DescriptionProvenance) -> Void = { _, _ in }) {
         guard let image = Self.makeImage(from: imageData) else { return nil }
         self.image = image
+        self.imageData = imageData
         self.saved = saved
         self.onDescribed = onDescribed
         if let saved { exchanges = [Exchange(question: nil, answer: saved)] }
@@ -109,47 +114,100 @@ final class ImageConversation {
     private func run(question: String?) async {
         guard !isWorking else { return }
         isWorking = true
+        Self.inProgress += 1
         errorMessage = nil
-        defer { isWorking = false }
+        defer {
+            isWorking = false
+            Self.inProgress -= 1
+        }
         do {
-            let answer: String
-            var provenance: DescriptionProvenance?
-            if let session, let question {
-                answer = try await session.respond(to: question).content
-            } else {
-                let session = LanguageModelSession(instructions: Self.instructions)
-                self.session = session
-                let image = self.image
-                // A question about a saved description starts a new conversation that knows what was said.
-                let prompt: String
-                if let question, let saved {
-                    prompt = "Earlier you described this photo like this: \(saved)\n\nNow answer this question about it: \(question)"
-                } else {
-                    prompt = question ?? Self.describePrompt
-                }
-                // A first description is counted for Check System; a question about a saved one isn't a description.
-                if question == nil {
-                    let start = ContinuousClock.now
-                    answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image)
-                    provenance = .appleIntelligence(prompt: prompt, seconds: PhotoDescriber.seconds(since: start))
-                } else {
-                    answer = try await session.respond {
-                        prompt
-                        Attachment(image)
-                    }.content
-                }
-            }
+            let (answer, provenance) = try await attempt(question: question)
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             exchanges.append(Exchange(question: question, answer: trimmed))
             if let provenance { onDescribed(trimmed, provenance) }
             AccessibilityNotification.Announcement(trimmed).post()
         } catch {
-            errorMessage = Self.message(for: error)
+            if question != nil, !(error is CancellationError) {
+                DiagnosticLog.write("ask", "Apple Intelligence couldn't answer a question: \(Self.failureCode(for: error)): \(error.localizedDescription)")
+            }
+            errorMessage = Self.message(for: error, asking: question != nil)
             AccessibilityNotification.Announcement(errorMessage ?? "").post()
         }
     }
 
-    static func message(for error: Error) -> String {
+    /// One request, and for a failure that isn't about the photo or the question, one more a moment later, with the
+    /// photo at 1536 pixels: Apple Intelligence may have been busy (background describing), and Windows' model fails
+    /// on some large iPhone photos (#234).
+    private func attempt(question: String?) async throws -> (String, DescriptionProvenance?) {
+        // A follow-up in a conversation that's going sends only text, so it's asked again as it was.
+        let followUp = session != nil && question != nil
+        do {
+            // Not counted as a failure yet: only how the last try ends is.
+            return try await request(question: question, image: image, countsFailure: false)
+        } catch {
+            guard Self.worthRetrying(error), !Task.isCancelled else {
+                if question == nil, !(error is CancellationError), !Task.isCancelled { PhotoDescriber.countFailure(error) }
+                throw error
+            }
+            DiagnosticLog.write(question == nil ? "describe" : "ask",
+                                "Trying again\(followUp ? "" : " smaller") after \(Self.failureCode(for: error))")
+            try await Task.sleep(for: .seconds(2))
+            if followUp { return try await request(question: question, image: image) }
+            session = nil
+            let smaller = await Task.detached(priority: .userInitiated) { [imageData] in
+                Self.makeImage(from: imageData, maxPixelSize: 1536)
+            }.value
+            return try await request(question: question, image: smaller ?? image)
+        }
+    }
+
+    private func request(question: String?, image: CGImage,
+                         countsFailure: Bool = true) async throws -> (String, DescriptionProvenance?) {
+        if let session, let question {
+            return (try await session.respond(to: question).content, nil)
+        }
+        let session = LanguageModelSession(instructions: Self.instructions)
+        self.session = session
+        // A question about a saved description starts a new conversation that knows what was said.
+        let prompt: String
+        if let question, let saved {
+            prompt = "Earlier you described this photo like this: \(saved)\n\nNow answer this question about it: \(question)"
+        } else {
+            prompt = question ?? Self.describePrompt
+        }
+        // A first description is counted for Check System; a question about a saved one isn't a description.
+        if question == nil {
+            let start = ContinuousClock.now
+            let answer = try await PhotoDescriber.respond(session, prompt: prompt, image: image, countsFailure: countsFailure)
+            return (answer, .appleIntelligence(prompt: prompt, seconds: PhotoDescriber.seconds(since: start)))
+        }
+        let answer = try await session.respond {
+            prompt
+            Attachment(image)
+        }.content
+        return (answer, nil)
+    }
+
+    /// Not a refusal, a conversation that's too long or an unsupported language, which asking again won't change.
+    static func worthRetrying(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let error = error as? LanguageModelSession.GenerationError {
+            switch error {
+            case .guardrailViolation, .refusal, .exceededContextWindowSize, .unsupportedLanguageOrLocale: return false
+            default: return true
+            }
+        }
+        if let error = error as? LanguageModelError {
+            switch error {
+            case .guardrailViolation, .refusal, .contextSizeExceeded, .unsupportedLanguageOrLocale: return false
+            default: return true
+            }
+        }
+        return true
+    }
+
+    /// `asking`: a follow-up question, rather than describing.
+    static func message(for error: Error, asking: Bool = false) -> String {
         let declined = "Apple Intelligence declined to describe this image."
         let tooLong = "This conversation is too long for Apple Intelligence. Close Get Info and open it again to start over."
         let language = "Apple Intelligence doesn't support your current language for this."
@@ -168,17 +226,20 @@ final class ImageConversation {
             default: break
             }
         }
+        // Help > Open Log Folder has the details; the error's own text (a framework's domain and number) means nothing
+        // read aloud.
+        if asking { return "Apple Intelligence couldn't answer that. Try asking again in a moment." }
         return "Apple Intelligence couldn't describe this image: \(error.localizedDescription)"
     }
 
     /// Decodes the photo at a sensible size, already rotated upright. The model resizes internally,
     /// so a full-resolution decode would only cost memory.
-    nonisolated static func makeImage(from data: Data) -> CGImage? {
+    nonisolated static func makeImage(from data: Data, maxPixelSize: Int = 2048) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 2048,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
         ]
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
@@ -203,8 +264,9 @@ enum PhotoDescriber {
     /// Asks the model to describe the image, and counts the outcome for Check System (#94): how long it took, or why it
     /// failed. One photo, counted once; giving up (moving on, closing a window) isn't a failure.
     /// `countsBusy` false leaves a rate limit out of the failures: background describing waits and tries again.
+    /// `countsFailure` false leaves any failure out, for Get Info's first try, which is tried again (#237).
     static func respond(_ session: LanguageModelSession, prompt: String, image: CGImage,
-                        countsBusy: Bool = true) async throws -> String {
+                        countsBusy: Bool = true, countsFailure: Bool = true) async throws -> String {
         let start = ContinuousClock.now
         do {
             let answer = try await session.respond {
@@ -214,13 +276,18 @@ enum PhotoDescriber {
             DescribeStats.session.described(seconds: seconds(since: start))
             return answer
         } catch {
-            if !(error is CancellationError), !Task.isCancelled, countsBusy || !isRateLimited(error) {
-                DiagnosticLog.write("describe", "Apple Intelligence failed: \(ImageConversation.failureCode(for: error)): \(ImageConversation.message(for: error))")
-                DescribeStats.session.failed(code: ImageConversation.failureCode(for: error),
-                                             message: ImageConversation.message(for: error))
+            if countsFailure, !(error is CancellationError), !Task.isCancelled, countsBusy || !isRateLimited(error) {
+                countFailure(error)
             }
             throw error
         }
+    }
+
+    /// Logged, and counted for Check System's recent failures.
+    static func countFailure(_ error: Error) {
+        DiagnosticLog.write("describe", "Apple Intelligence failed: \(ImageConversation.failureCode(for: error)): \(ImageConversation.message(for: error))")
+        DescribeStats.session.failed(code: ImageConversation.failureCode(for: error),
+                                     message: ImageConversation.message(for: error))
     }
 
     static func isRateLimited(_ error: Error) -> Bool {
@@ -241,14 +308,38 @@ struct AppleIntelligenceSection: View {
     let imageData: Data?
     /// The key the photo's description is saved under: a Photos identifier, or a file's key (#36).
     let descriptionKey: String
+    /// Ask About Photo (#235): focus goes to the question field, and a photo with no description yet is described
+    /// first, with focus already in the field, so the description is heard and the question can follow.
+    let askNow: Bool
     @Environment(LibraryModel.self) private var model
     @State private var conversation: ImageConversation?
     @State private var question = ""
+    @State private var askStarted = false
+    @State private var askFocused = false
+    @FocusState private var questionFocused: Bool
 
     var body: some View {
         content
-            .onAppear(perform: showSaved)
-            .onChange(of: imageData) { showSaved() }
+            .onAppear(perform: appeared)
+            .onChange(of: imageData) { appeared() }
+    }
+
+    private func appeared() {
+        showSaved()
+        startAsking()
+    }
+
+    /// Once the photo's data is in, for Ask About Photo. Where Apple Intelligence can't answer, Get Info is as usual
+    /// and says why, as on Windows.
+    private func startAsking() {
+        guard askNow, !askStarted, imageData != nil else { return }
+        askStarted = true
+        if let reason = ImageConversation.unavailableReason {
+            LibraryModel.postAnnouncement("Questions about photos need Apple Intelligence. \(reason)", queued: true)
+            return
+        }
+        // The field takes focus itself when it's shown (below).
+        if conversation == nil { start() }
     }
 
     @ViewBuilder private var content: some View {
@@ -257,11 +348,19 @@ struct AppleIntelligenceSection: View {
                 .foregroundStyle(.secondary)
         } else {
             if let conversation {
-                ForEach(conversation.exchanges) { exchange in
-                    if let asked = exchange.question {
-                        answerRow(label: "You asked", text: asked)
-                    }
-                    answerRow(label: exchange.question == nil ? "Description" : "Answer", text: exchange.answer)
+                // In read-only boxes, as on Windows: one Tab stop each, read by VoiceOver, Tab moves on.
+                if let description = conversation.exchanges.first(where: { $0.question == nil }) {
+                    Text("Description").font(.subheadline.bold()).accessibilityHidden(true)
+                    ReadOnlyText(text: description.answer, label: "Description")
+                        .frame(height: 140)
+                }
+                let answers = conversation.exchanges.filter { $0.question != nil }
+                if !answers.isEmpty {
+                    Text("Answers").font(.subheadline.bold()).accessibilityHidden(true)
+                    ReadOnlyText(text: answers.map { "You asked: \($0.question ?? "")\nAnswer: \($0.answer)" }
+                                    .joined(separator: "\n\n"),
+                                 label: "Answers", scrollsToEnd: true)
+                        .frame(height: 140)
                 }
                 if conversation.isWorking {
                     ProgressView("Asking Apple Intelligence…")
@@ -288,18 +387,27 @@ struct AppleIntelligenceSection: View {
                     start(replacingEdit: agreed)
                 }
             }
-            if conversation?.exchanges.isEmpty ?? true {
-                if !(conversation?.isWorking ?? false) {
-                    Button("Describe Image") { start() }
-                        .disabled(imageData == nil)
-                }
-            } else if let conversation {
+            let described = !(conversation?.exchanges.isEmpty ?? true)
+            // For Ask About Photo the field stays while describing and if describing fails, as on Windows, so focus
+            // isn't lost; Describe Image beside it tries again.
+            if let conversation, described || askNow {
                 HStack {
                     TextField("Ask a follow-up question", text: $question)
+                        .focused($questionFocused)
                         .onSubmit(ask)
+                        .onAppear {
+                            // Once, when the field is on screen: focus set before then is dropped.
+                            guard askNow, !askFocused else { return }
+                            askFocused = true
+                            DispatchQueue.main.async { questionFocused = true }
+                        }
                     Button("Ask", action: ask)
-                        .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty || conversation.isWorking)
+                        .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty || conversation.isWorking || !described)
                 }
+            }
+            if !described, !(conversation?.isWorking ?? false) {
+                Button("Describe Image") { start() }
+                    .disabled(imageData == nil)
             }
             Text("Describes the photo with Apple Intelligence on this Mac. The photo isn't sent anywhere.")
                 .font(.caption)
@@ -313,18 +421,6 @@ struct AppleIntelligenceSection: View {
         conversation = ImageConversation(imageData: imageData, saved: saved)
     }
 
-    private func answerRow(label: String, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.subheadline.bold())
-            Text(text)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-    }
-
     /// `replacingEdit` is the correction the person agreed Redescribe may replace; any other correction is kept.
     private func start(replacingEdit: String? = nil) {
         guard let imageData else { return }
@@ -336,6 +432,7 @@ struct AppleIntelligenceSection: View {
                 cache.remember(text, forKey: key, provenance: provenance)
             }
         }) else {
+            if askNow { LibraryModel.postAnnouncement("This photo couldn't be read, so there's nothing to ask about.", queued: true) }
             return
         }
         self.conversation = conversation
@@ -344,7 +441,8 @@ struct AppleIntelligenceSection: View {
 
     private func ask() {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let conversation else { return }
+        // A question typed before there's a description to ask about stays in the field until it can be asked.
+        guard !text.isEmpty, let conversation, !conversation.isWorking, !conversation.exchanges.isEmpty else { return }
         question = ""
         Task { await conversation.ask(text) }
     }

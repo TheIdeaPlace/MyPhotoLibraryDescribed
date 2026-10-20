@@ -61,7 +61,7 @@ While you step through photos one at a time, My Photo Library Described quietly 
 
 - **Describe Photo** (Command-D / Ctrl+D) describes the photo you're on and reads it, whether or not automatic descriptions are on.
 - **Redescribe** (Command-R / Ctrl+R) describes it afresh and replaces the saved description.
-- **Ask About Photo** (Windows, Ctrl+K) opens Get Info with your cursor in the follow-up question box, so you can ask about the photo you're on straight away. A photo with no description yet is described first. On the Mac, follow-up questions are in Get Info.
+- **Ask About Photo** (Command-K / Ctrl+K) opens Get Info with your cursor in the follow-up question box, so you can ask about the photo you're on straight away. A photo with no description yet is described first. Where your computer can't answer questions, Get Info opens as usual and says why.
 - **Describe in the background:** Photo > Describe Photos in the Background describes photos that haven't been described yet behind the scenes, so their descriptions are ready when you get to them. It's off until you turn it on. If several photos in a row can't be described, it stops and says why. Photos it declines or can't read, and photos that fail while others are being described, are skipped until they're edited or the app is updated, so the same few can't stop it every time; Describe Photo still describes them when you ask. Photo > Stop Background Describing stops it for now.
 
 How photos are described: on the Mac, Settings has the prompt Apple Intelligence is given (leave it empty for the standard one). On Windows, Photo > Description Type chooses Accessible, Detailed, Brief or Diagram.
@@ -128,7 +128,7 @@ OK keeps both parts' choices and Cancel leaves them. The sheet opens on the part
 
 **Get Info** (Command-I / Ctrl+I) lists everything known about a photo: its dates, size, camera settings, caption, keywords, rating, coordinates, and its saved description. Escape closes it.
 
-- **Mac:** Redescribe describes the photo afresh (it's Describe Image when there's no description yet). You can then ask Apple Intelligence follow-up questions about the photo. Find Objects and Text lists what's in the photo and reads any text in it.
+- **Mac:** the details are one list, **Information**: Tab to it, then Up and Down Arrow, and Command-C copies the value you're on. The **Description** follows, in a box you can read but not change. Redescribe describes the photo afresh (it's Describe Image when there's no description yet). Type a follow-up question in **Ask a follow-up question** and press Return or **Ask**; Apple Intelligence looks at the photo again to answer, and the answer is read out and added to **Answers**. Find Objects and Text lists what's in the photo and reads any text in it, in its own box. Tab moves through all of these in order, wherever VoiceOver has been reading.
 - **Windows:** Describe Image describes the photo, in the Description Type you choose there; once a description of that type is saved, the button is Redescribe. Use as Caption makes that description the caption. Read Text in Image reads any text in the photo. On a Copilot+ PC, once there's a description, type a question in **Follow-up question** (Alt+Q) and press Enter or **Ask** (Alt+A). Windows' text model, Phi Silica, answers on the PC from the description and any text read from the photo, not by looking at the photo again, so it says when the description doesn't tell. The answer is read out and added to **Answers** (Alt+W), and the box clears for your next question.
 
 ## Place names
@@ -159,7 +159,7 @@ On Windows there's no Settings window. Save Descriptions in Photos and Look Up P
 - **Check System…** checks that your computer can describe photos, and says what to do if it can't.
 - **Check AI Description…** describes a sample photo that comes with the app (a red mug on a table beside a sign reading OPEN), to show describing works end to end. It saves nothing.
 - **Open Log Folder** shows the diagnostic log: one file a day, kept two weeks, of what went wrong. It stays on your computer unless you attach it to a bug report; it names files and folders, so look at it first.
-- **Open Descriptions Folder** (Windows) shows the folder where the app keeps what it makes: the descriptions (Descriptions.json), your settings, the photo details it has read, and the logs. The descriptions go into your photo files too only if you turn on Save Descriptions in Photos. On the Mac it's ~/Library/Application Support/My Photo Library Described.
+- **Open Descriptions Folder** shows the folder where the app keeps what it makes: the descriptions (Descriptions.json) and the logs, and on Windows your settings and the photo details it has read too. The descriptions go into your photo files too only if you turn on Save Descriptions in Photos. On the Mac it's ~/Library/Application Support/My Photo Library Described.
 - **User Guide** opens this guide, and **Privacy Policy** opens the privacy policy, on GitHub.
 
 **About My Photo Library Described** (in the app menu on the Mac, and at the end of the Help menu on Windows) has the version, with links to the source code, this guide and the privacy policy.
@@ -175,7 +175,7 @@ On Windows there's no Settings window. Save Descriptions in Photos and Look Up P
 | Describe Photo | Command-D | Ctrl+D |
 | Go to the description, and back to the list or gallery | Shift-Command-D | Ctrl+Shift+D |
 | Redescribe | Command-R | Ctrl+R |
-| Ask About Photo | In Get Info | Ctrl+K |
+| Ask About Photo | Command-K | Ctrl+K |
 | Turn automatic descriptions on or off | Photo menu | Ctrl+Shift+U |
 | Export | Command-E | Ctrl+E |
 | Toggle Favorite | Shift-Command-F | Ctrl+Shift+F |

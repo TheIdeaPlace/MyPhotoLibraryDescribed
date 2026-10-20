@@ -14,7 +14,9 @@ extension View {
                         .keyboardShortcut(.cancelAction)
                 }
             }
-            // Out of sight and out of VoiceOver's way: only the keys matter.
+            // Out of sight and out of VoiceOver's way: only the keys matter. Not Tab stops either: with keyboard
+            // navigation on, Tab landed on them as two silent stops after Done (Kelly, 19 Oct).
+            .focusable(false)
             .opacity(0)
             .frame(width: 0, height: 0)
             .accessibilityHidden(true)

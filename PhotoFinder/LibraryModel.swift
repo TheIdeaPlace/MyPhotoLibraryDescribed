@@ -27,6 +27,8 @@ struct InfoTarget: Identifiable {
     let id: String
     let source: Source
     let name: String
+    /// Photo > Ask About Photo (#235): Get Info opens with focus in the follow-up question field.
+    var askNow = false
 
     /// The key its description is saved under.
     var descriptionKey: String {
@@ -1605,21 +1607,33 @@ final class LibraryModel {
         }
     }
 
-    func showInfo(_ ids: Set<String>? = nil) {
+    /// `askNow`: Ask About Photo (#235), which opens Get Info with focus in the follow-up question field.
+    func showInfo(_ ids: Set<String>? = nil, askNow: Bool = false) {
         let ids = showing(ids)
         guard let row = rows.first(where: { ids.contains($0.id) && !$0.isContainer }) else {
-            NSSound.beep()
+            // On a folder: Ask About Photo says why, as on Windows; Get Info beeps, as it always has.
+            if askNow { announce("Choose a photo to ask about.") } else { NSSound.beep() }
+            return
+        }
+        if askNow, !isPhoto(row.id) {
+            announce("Questions are about photos, not videos.")
             return
         }
         if let asset = assetsByID[row.id] {
-            infoTarget = InfoTarget(id: row.id, source: .asset(asset), name: row.name)
+            infoTarget = InfoTarget(id: row.id, source: .asset(asset), name: row.name, askNow: askNow)
         } else if let file = filesByID[row.id] {
             // The metadata the list read, if it has; opened before then, Get Info reads it itself (#47), so the row's
             // stand-ins (the file's creation date, no dimensions or caption) aren't shown as the file's.
-            infoTarget = InfoTarget(id: row.id, source: .file(file, fileMetadata[file.descriptionKey]), name: row.name)
+            infoTarget = InfoTarget(id: row.id, source: .file(file, fileMetadata[file.descriptionKey]), name: row.name,
+                                    askNow: askNow)
         } else {
             NSSound.beep()
         }
+    }
+
+    /// Photo > Ask About Photo (Command-K, #235): follow-up questions about the photo you're on, as Windows' Ctrl+K.
+    func askAboutPhoto() {
+        showInfo(askNow: true)
     }
 
     private func exportTemporary(_ assets: [PHAsset]) async throws -> [URL] {
@@ -2265,8 +2279,9 @@ final class LibraryModel {
         // A photo whose folder was taken out of the library meanwhile isn't described.
         describer.isForegroundBusy = { [weak self] in
             guard let self else { return false }
+            // Get Info describing or answering a question too, so its question isn't turned away (#237).
             return self.autoDescriber.describingID != nil || self.autoDescriber.aheadID != nil
-                || self.describingIDs.keys.contains { self.focusedRow?.id == $0 }
+                || self.describingIDs.keys.contains { self.focusedRow?.id == $0 } || ImageConversation.inProgress > 0
         }
         describer.isWanted = { [weak self] path in
             guard let self else { return false }
@@ -2697,6 +2712,15 @@ final class LibraryModel {
         try? FileManager.default.createDirectory(at: DiagnosticLog.folder, withIntermediateDirectories: true)
         if !NSWorkspace.shared.open(DiagnosticLog.folder) {
             errorMessage = "The log folder couldn't be opened. It's in your Library folder, under Application Support/\(AppInfo.dataFolderName)/Logs."
+        }
+    }
+
+    /// Help > Open Descriptions Folder (#236): the folder with the descriptions, logs and the rest the app keeps
+    /// (settings are in macOS's defaults), in Finder, as on Windows.
+    func openDescriptionsFolder() {
+        try? FileManager.default.createDirectory(at: AppInfo.dataFolder, withIntermediateDirectories: true)
+        if !NSWorkspace.shared.open(AppInfo.dataFolder) {
+            errorMessage = "The descriptions folder couldn't be opened. It's in your Library folder, under Application Support/\(AppInfo.dataFolderName)."
         }
     }
 

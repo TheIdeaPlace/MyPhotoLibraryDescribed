@@ -22,82 +22,108 @@ struct InfoView: View {
     @State private var contents: ImageContents?
     @State private var describing = false
     @State private var describeError: String?
+    @State private var selectedField: InfoField.ID?
+    @FocusState private var listFocused: Bool
+
+    /// Everything about the photo, in one list (Kelly, 19 Oct): one Tab stop, then Up and Down Arrow.
+    private var fields: [InfoField] {
+        general + (loadingDetails ? [Self.readingRow] : details.isEmpty ? [Self.noDetailsRow] : details)
+    }
+    // Made once: a new row (and id) on every redraw would keep the list re-selecting it while details load.
+    private static let readingRow = InfoField(label: "Details", value: "Reading…")
+    private static let noDetailsRow = InfoField(label: "Details", value: "No more details available")
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(target.name)
                 .font(.title2.bold())
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding([.horizontal, .top])
                 .accessibilityAddTraits(.isHeader)
-            Form {
-                Section("General") { fields(general) }
-                Section("Details") {
-                    if loadingDetails {
-                        ProgressView("Reading details…")
-                    } else if details.isEmpty {
-                        Text("No additional details available.").foregroundStyle(.secondary)
-                    } else {
-                        fields(details)
+            fieldList
+            if target.isImage {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Image Contents")
+                            .font(.headline)
+                            .accessibilityAddTraits(.isHeader)
+                        contentsSection
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if target.isImage {
-                    Section("Image Contents") { contentsSection }
-                }
+            } else {
+                Spacer(minLength: 0)
             }
-            .formStyle(.grouped)
             Divider()
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
-            .padding()
         }
-        .frame(minWidth: 460, idealWidth: 520, minHeight: 420, idealHeight: 620)
+        .padding()
+        .frame(minWidth: 460, idealWidth: 520, minHeight: 420, idealHeight: 640)
         .closesWithKeyboard { dismiss() }
         .task { await load() }
+        .onAppear {
+            // Ask About Photo starts in the question field instead.
+            if !target.askNow { listFocused = true }
+        }
     }
 
-    @ViewBuilder private func fields(_ items: [InfoField]) -> some View {
-        ForEach(items) { field in
-            LabeledContent(field.label) {
+    /// As Windows' General and Details lists: each row is read as "Label: value", and Command-C copies the value.
+    private var fieldList: some View {
+        List(fields, selection: $selectedField) { field in
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(field.label)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 120, alignment: .leading)
                 Text(field.value)
-                    .textSelection(.enabled)
-                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(field.label): \(field.value)")
+        }
+        .accessibilityLabel("Information")
+        .focused($listFocused)
+        .frame(minHeight: 160, idealHeight: 220)
+        .onCopyCommand {
+            guard let field = fields.first(where: { $0.id == selectedField }) else { return [] }
+            AccessibilityNotification.Announcement("Copied \(field.label)").post()
+            return [NSItemProvider(object: field.value as NSString)]
+        }
+        .onChange(of: fields.first?.id) {
+            if selectedField == nil || !fields.contains(where: { $0.id == selectedField }) { selectedField = fields.first?.id }
         }
     }
 
     @ViewBuilder private var contentsSection: some View {
 #if !PF_SDK26  // macOS 27 SDK only; Mac CI defines PF_SDK26 while its Xcode is older
         if #available(macOS 27, *) {
-            AppleIntelligenceSection(imageData: imageData, descriptionKey: target.descriptionKey)
+            AppleIntelligenceSection(imageData: imageData, descriptionKey: target.descriptionKey,
+                                     askNow: target.askNow)
         }
 #endif
         if let contents {
-            LabeledContent("Detected") {
-                Text(contents.labels.isEmpty ? "Nothing recognized" : contents.labels.joined(separator: ", "))
-                    .textSelection(.enabled)
-                    .multilineTextAlignment(.trailing)
-            }
-            LabeledContent("Text in Image") {
-                Text(contents.text.isEmpty ? "No text found" : contents.text.joined(separator: "\n"))
-                    .textSelection(.enabled)
-                    .multilineTextAlignment(.trailing)
-            }
+            ReadOnlyText(text: Self.found(contents), label: "Objects and text")
+                .frame(height: 100)
         } else if describing {
             ProgressView("Finding objects and text…")
         } else {
             Button("Find Objects and Text") { Task { await describe() } }
                 .disabled(imageData == nil)
-            Text("Lists objects and scenes, and reads any text in the photo, using on-device Vision.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
+        Text("Lists objects and scenes, and reads any text in the photo, using on-device Vision.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
         if let describeError {
             Text(describeError).foregroundStyle(.red)
         }
+    }
+
+    static func found(_ contents: ImageContents) -> String {
+        let detected = contents.labels.isEmpty ? "Nothing recognized" : contents.labels.joined(separator: ", ")
+        let text = contents.text.isEmpty ? "No text found" : contents.text.joined(separator: "\n")
+        return "Detected: \(detected)\n\nText in image: \(text)"
     }
 
     private func load() async {
@@ -312,7 +338,13 @@ struct ImageContents: Sendable {
 enum ImageDescriber {
     static func describe(_ data: Data) async throws -> ImageContents {
         try await Task.detached(priority: .userInitiated) {
-            let handler = VNImageRequestHandler(data: data, options: [:])
+            // At 2048 pixels, upright, as for descriptions: on a full-size original it took far too long (Kelly,
+            // 19 Oct).
+            let handler = if let image = scaled(data) {
+                VNImageRequestHandler(cgImage: image, options: [:])
+            } else {
+                VNImageRequestHandler(data: data, options: [:])
+            }
             let classify = VNClassifyImageRequest()
             let recognize = VNRecognizeTextRequest()
             recognize.recognitionLevel = .accurate
@@ -327,5 +359,15 @@ enum ImageDescriber {
             let lines = (recognize.results ?? []).compactMap { $0.topCandidates(1).first?.string }
             return ImageContents(labels: Array(labels), text: lines)
         }.value
+    }
+
+    nonisolated static func scaled(_ data: Data, maxPixelSize: Int = 2048) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 }
