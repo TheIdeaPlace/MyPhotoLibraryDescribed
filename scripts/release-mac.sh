@@ -61,14 +61,16 @@ osascript -e 'tell application "Finder" to get name of startup disk' >/dev/null 
   exit 1
 }
 
-# Report a Bug's relay key (#33), which isn't in the repo: from the environment, or the signing kit's file (the PC
-# keeps the same key as appkit-relay-photofinder.key, so that name is read too). Without it the release still builds,
-# and its Report a Bug opens the GitHub page instead. Never echoed.
+# Report a Bug's relay key (#33), which isn't in the repo: from the environment, or the signing kit's file. The kit's
+# name for it is appkit-relay-photofinder.key, the name the app kit's add-app.py stores in the kit vault and
+# `sync-secrets.py pull-kit` restores (and the Windows build reads), so it's read first; after a key rotation it's the
+# one that's current. The older Mac-only name, appkit-relay-key-photofinder, is read only if that's missing. Without
+# either the release still builds, and its Report a Bug opens the GitHub page instead. Never echoed.
 RELAY_KEY=${APPKIT_RELAY_KEY:-}
-for f in "$KIT/appkit-relay-key-photofinder" "$KIT/appkit-relay-photofinder.key"; do
+for f in "$KIT/appkit-relay-photofinder.key" "$KIT/appkit-relay-key-photofinder"; do
   if [ -z "$RELAY_KEY" ] && [ -f "$f" ]; then RELAY_KEY=$(tr -d ' \r\n' < "$f"); fi
 done
-[ -n "$RELAY_KEY" ] || echo "Warning: no relay key (APPKIT_RELAY_KEY or $KIT/appkit-relay-key-photofinder), so Report a Bug will open the GitHub page instead of filing reports."
+[ -n "$RELAY_KEY" ] || echo "Warning: no relay key (APPKIT_RELAY_KEY or $KIT/appkit-relay-photofinder.key), so Report a Bug will open the GitHub page instead of filing reports."
 
 echo "Building $NAME $VERSION"
 rm -rf "$OUT" && mkdir -p "$OUT"
