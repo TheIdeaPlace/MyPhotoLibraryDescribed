@@ -20,15 +20,26 @@ enum GalleryItem: String, CaseIterable, Sendable {
     }
 }
 
-/// What the gallery says when you move to a photo: the chosen items, in order. Description is one of them (#247): with
-/// it chosen, a photo's saved description is read in its place, straight away, so it can come before the position.
-/// A photo not described yet is read without it, and Describe Photos Automatically says the description once it's
-/// ready. Without Description chosen, the description follows the labels after the usual pause, as before.
+/// What the gallery says when you move to a photo: the chosen items, in order. Description is one of them (#247): a
+/// photo's saved description is read in its place, straight away, so it can come before or after the position. A
+/// photo not described yet is read without it, and Describe Photos Automatically says the description once it's
+/// ready. Without Description chosen, the gallery doesn't read descriptions at all (the Description panel still shows
+/// them).
 enum GalleryLabels {
-    /// Position only: "12 of 400", then the description (Kelly, 13 Oct).
-    static let defaultOrder: [GalleryItem] = [.position]
+    /// Position, then the description: "12 of 400, A dog on a beach" (Kelly, 13 Oct; Description a label, 21 Nov, #247).
+    static let defaultOrder: [GalleryItem] = [.position, .description]
 
     static let defaultsKey = "galleryLabels"
+    /// Set once a saved choice has been brought up to Description being a label (#247).
+    static let versionKey = "galleryLabelsVersion"
+    static let version = 2
+
+    /// A choice saved before Description was a label (#247). The description was always read then, after the labels,
+    /// so it's added at the end: what's heard stays the same, and it can now be moved or removed.
+    static func migrate(_ ids: [String], from version: Int) -> [String] {
+        guard version < Self.version, !ids.contains(GalleryItem.description.rawValue) else { return ids }
+        return ids + [GalleryItem.description.rawValue]
+    }
 
     /// A usable choice: known items only, each once, falling back to the default when nothing usable is left.
     static func clean(_ ids: [String]?) -> [GalleryItem] {

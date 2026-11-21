@@ -154,7 +154,8 @@ final class LibraryModel {
             if columnOrder.contains("location") != oldValue.contains("location") { placeNamesShownChanged() }
         }
     }
-    /// What the gallery says, in order, when you move to a photo (View > Labels > Gallery, #38). Position by default.
+    /// What the gallery says, in order, when you move to a photo (View > Labels > Gallery, #38). Position and
+    /// Description by default (#247).
     var galleryLabels: [GalleryItem] = GalleryLabels.defaultOrder {
         didSet {
             defaults.set(galleryLabels.map(\.rawValue), forKey: GalleryLabels.defaultsKey)
@@ -315,8 +316,10 @@ final class LibraryModel {
             columnOrder = migrated
         }
         if let saved = defaults.stringArray(forKey: GalleryLabels.defaultsKey) {
-            galleryLabels = GalleryLabels.clean(saved)
+            galleryLabels = GalleryLabels.clean(
+                GalleryLabels.migrate(saved, from: defaults.integer(forKey: GalleryLabels.versionKey)))
         }
+        defaults.set(GalleryLabels.version, forKey: GalleryLabels.versionKey)
         // Descriptions are saved a couple of seconds after each change; don't lose one made just before quitting.
         let cache = descriptions
         terminationObserver = NotificationCenter.default.addObserver(
@@ -503,10 +506,11 @@ final class LibraryModel {
             return self.autoDescribeCandidate == id
         }
         describer.speak = { [weak self] text in self?.announce(text, queued: true) }
-        describer.alreadySaid = { [weak self] id in
-            // Read just now with the gallery's labels (#247), and you're still in the gallery.
-            guard let self else { return false }
-            return self.viewMode == .gallery && self.descriptionReadOnMove == id
+        describer.readsAloud = { [weak self] id in
+            // In the gallery, View > Labels decides (#247): not when Description isn't chosen, nor when moving to the
+            // photo read it already.
+            guard let self, self.viewMode == .gallery else { return true }
+            return self.galleryLabels.contains(.description) && self.descriptionReadOnMove != id
         }
         describer.nextPhoto = { [weak self] id, step in self?.photoAhead(of: id, step: step) }
         describer.describeAhead = { [weak self] id in

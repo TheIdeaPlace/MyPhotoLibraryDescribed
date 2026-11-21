@@ -118,7 +118,7 @@ struct OrderListText {
         previewTitle: "Preview of the selected photo's line")
 
     static let gallery = OrderListText(
-        explanation: "Choose what's read, and in what order, when you move to a photo in the gallery. The description follows after a pause when Describe Photos Automatically is on.",
+        explanation: "Choose what's read, and in what order, when you move to a photo in the gallery. A photo not described yet is read without its description, which follows once it's ready.",
         availableTitle: "Available labels",
         shownTitle: "Shown labels, in the order they're read",
         everyShown: "Every label is shown.",

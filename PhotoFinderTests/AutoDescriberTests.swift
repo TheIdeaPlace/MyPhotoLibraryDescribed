@@ -97,7 +97,7 @@ final class AutoDescriberTests: XCTestCase {
         savedText["a"] = "Saved"
         savedText["b"] = "Also saved"
         let describer = make()
-        describer.alreadySaid = { $0 == "a" }
+        describer.readsAloud = { $0 != "a" }
         move(describer, to: "a")
         await describer.whenIdle()
         XCTAssertEqual(spoken, [])
@@ -107,12 +107,14 @@ final class AutoDescriberTests: XCTestCase {
         XCTAssertEqual(described, [])
     }
 
-    func testAPhotoNotDescribedYetIsStillDescribedAndSpokenWithTheGalleryLabel() async {
+    func testWithoutTheDescriptionLabelPhotosAreDescribedButNotSpoken() async {
         let describer = make()
-        describer.alreadySaid = { _ in false }
+        describer.readsAloud = { _ in false }
         move(describer, to: "a")
         await describer.whenIdle()
-        XCTAssertEqual(spoken, ["Description of a"])
+        XCTAssertEqual(described, ["a"])
+        XCTAssertEqual(savedText["a"], "Description of a")
+        XCTAssertEqual(spoken, [])
     }
 
     func testTheSameSelectionSetAgainIsNotMoving() async {
