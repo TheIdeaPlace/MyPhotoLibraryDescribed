@@ -38,7 +38,8 @@ struct LabelsSheet: View {
         let rows = model.visibleRows
         let index = rows.firstIndex { $0.id == sample.id } ?? 0
         return GalleryLabels.text(for: sample, position: (index + 1, max(rows.count, 1)),
-                                  items: GalleryLabels.clean(gallery.shown))
+                                  items: GalleryLabels.clean(gallery.shown),
+                                  description: model.savedDescription(for: sample.id))
     }
 
     var body: some View {

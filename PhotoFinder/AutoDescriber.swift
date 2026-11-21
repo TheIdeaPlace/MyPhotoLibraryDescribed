@@ -27,6 +27,9 @@ final class AutoDescriber {
     var isStillOn: (String) -> Bool = { _ in false }
     /// Speaks, queued behind other speech.
     var speak: (String) -> Void = { _ in }
+    /// Whether moving to the photo already read its saved description (the gallery's Description label, #247), so
+    /// it isn't said again after the pause.
+    var alreadySaid: (String) -> Bool = { _ in false }
     /// The next photo after `id`, `step` rows on (1 forward, -1 back), worth describing ahead: not described yet, not
     /// a video or folder. Nil when there's none near.
     var nextPhoto: (_ id: String, _ step: Int) -> String? = { _, _ in nil }
@@ -113,7 +116,7 @@ final class AutoDescriber {
     private func settled(on id: String) {
         guard isEnabled, isStillOn(id) else { return }
         if let text = saved(id) {
-            say(text, about: id)
+            if alreadySaid(id) { spokenID = id } else { say(text, about: id) }
             lookAhead(from: id)
             return
         }

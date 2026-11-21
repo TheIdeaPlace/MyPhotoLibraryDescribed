@@ -503,6 +503,11 @@ final class LibraryModel {
             return self.autoDescribeCandidate == id
         }
         describer.speak = { [weak self] text in self?.announce(text, queued: true) }
+        describer.alreadySaid = { [weak self] id in
+            // Read just now with the gallery's labels (#247), and you're still in the gallery.
+            guard let self else { return false }
+            return self.viewMode == .gallery && self.descriptionReadOnMove == id
+        }
         describer.nextPhoto = { [weak self] id, step in self?.photoAhead(of: id, step: step) }
         describer.describeAhead = { [weak self] id in
             // Not downloaded from iCloud, and not saved if Redescribe took the photo meanwhile.
@@ -2927,16 +2932,30 @@ final class LibraryModel {
     }
 
     private func select(at index: Int, in rows: [FileRow]) {
-        selection = [rows[index].id]
+        let row = rows[index]
+        // Read with the labels below, so Describe Photos Automatically mustn't say it again after the pause (#247).
+        descriptionReadOnMove = viewMode == .gallery && galleryReadsDescription(of: row.id) ? row.id : nil
+        selection = [row.id]
         cacheNeighbors(of: index, in: rows)
         // The gallery says what View > Labels > Gallery chooses (#38); the list keeps its name and position.
-        announce(viewMode == .gallery ? galleryText(for: rows[index], at: index, of: rows.count)
-                                      : "\(rows[index].name), \(index + 1) of \(rows.count)")
+        announce(viewMode == .gallery ? galleryText(for: row, at: index, of: rows.count)
+                                      : "\(row.name), \(index + 1) of \(rows.count)")
     }
 
-    /// The photo as the gallery reads it, from the items chosen in View > Labels > Gallery.
+    /// The photo whose saved description the last move in the gallery read, as one of its labels (#247).
+    @ObservationIgnored private var descriptionReadOnMove: String?
+
+    /// Whether the gallery reads this photo's description among its labels: Description is chosen and it has one.
+    private func galleryReadsDescription(of id: String) -> Bool {
+        galleryLabels.contains(.description) && savedDescription(for: id) != nil
+    }
+
+    /// The photo as the gallery reads it, from the items chosen in View > Labels > Gallery: with Description chosen,
+    /// its saved description in its place (#247).
     func galleryText(for row: FileRow, at index: Int, of count: Int) -> String {
-        GalleryLabels.text(for: row, position: (index + 1, count), items: galleryLabels)
+        let description = galleryLabels.contains(.description) ? savedDescription(for: row.id) : nil
+        return GalleryLabels.text(for: row, position: (index + 1, count), items: galleryLabels,
+                                  description: description)
     }
 
     /// Starts loading the images on either side so moving through the gallery feels instant. Only in the gallery:

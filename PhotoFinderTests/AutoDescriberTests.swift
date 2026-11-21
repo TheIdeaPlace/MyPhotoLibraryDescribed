@@ -92,6 +92,29 @@ final class AutoDescriberTests: XCTestCase {
         XCTAssertEqual(described, [])
     }
 
+    func testADescriptionAlreadyReadWithTheGalleryLabelsIsNotSpokenAgain() async {
+        // #247: the gallery's Description label read it on moving, so after the pause there's nothing to add.
+        savedText["a"] = "Saved"
+        savedText["b"] = "Also saved"
+        let describer = make()
+        describer.alreadySaid = { $0 == "a" }
+        move(describer, to: "a")
+        await describer.whenIdle()
+        XCTAssertEqual(spoken, [])
+        move(describer, to: "b")
+        await describer.whenIdle()
+        XCTAssertEqual(spoken, ["Also saved"])
+        XCTAssertEqual(described, [])
+    }
+
+    func testAPhotoNotDescribedYetIsStillDescribedAndSpokenWithTheGalleryLabel() async {
+        let describer = make()
+        describer.alreadySaid = { _ in false }
+        move(describer, to: "a")
+        await describer.whenIdle()
+        XCTAssertEqual(spoken, ["Description of a"])
+    }
+
     func testTheSameSelectionSetAgainIsNotMoving() async {
         savedText["a"] = "Saved"
         let describer = make()

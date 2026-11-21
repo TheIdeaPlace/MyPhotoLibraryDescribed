@@ -38,6 +38,24 @@ final class GalleryLabelsTests: XCTestCase {
         XCTAssertEqual(GalleryLabels.text(for: photo, position: (3, 9), items: [.caption, .keywords]), "IMG_1234.HEIC")
     }
 
+    func testTheDescriptionIsReadInItsPlace() {
+        // #247: description first, then the position; a sentence's full stop isn't followed by a comma.
+        let photo = row()
+        XCTAssertEqual(GalleryLabels.text(for: photo, position: (12, 400), items: [.description, .position],
+                                          description: "A dog on a beach at sunset."),
+                       "A dog on a beach at sunset. 12 of 400")
+        XCTAssertEqual(GalleryLabels.text(for: photo, position: (12, 400), items: [.position, .description, .name],
+                                          description: "  A dog on a beach  \n"),
+                       "12 of 400, A dog on a beach, IMG_1234.HEIC")
+    }
+
+    func testAPhotoNotDescribedYetIsReadWithoutTheDescription() {
+        let photo = row()
+        XCTAssertEqual(GalleryLabels.text(for: photo, position: (12, 400), items: [.description, .position]), "12 of 400")
+        XCTAssertEqual(GalleryLabels.text(for: photo, position: (12, 400), items: [.description]), "IMG_1234.HEIC")
+        XCTAssertEqual(GalleryLabels.clean(["description", "position"]), [.description, .position])
+    }
+
     func testCleanDropsUnknownAndRepeatedItems() {
         XCTAssertEqual(GalleryLabels.clean(["name", "nonsense", "position", "name"]), [.name, .position])
         XCTAssertEqual(GalleryLabels.clean([]), [.position])
