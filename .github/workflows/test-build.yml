@@ -1,0 +1,68 @@
+name: Test build
+
+# A signed Windows test build of any commit, for Kelly to try before a change is merged (#247): push a tag
+# `vtest-<issue>-<n>` on the commit. The installer is signed exactly as a release's is (the signing environment takes
+# v* tags), but it's only kept as this run's artifact: no release is made or changed, so nobody's updates are touched.
+# Install the .msixbundle itself (the Windows App Runtime is already there with any installed copy). Its
+# .appinstaller points at releases/latest, so once installed it updates with the next release as usual.
+on:
+  push:
+    tags: ['vtest-*']
+
+permissions:
+  contents: read
+
+jobs:
+  windows-test:
+    name: Windows installer (signed test build)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    environment: azure-signing
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The installer's fourth version number counts commits, so a test build installs over the release.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet restore PhotoFinder.sln
+
+      - name: Get the Artifact Signing add-on
+        run: |
+          nuget install Microsoft.ArtifactSigning.Client -Version 1.0.146 -OutputDirectory "$env:RUNNER_TEMP\signing" -ExcludeVersion -NonInteractive
+          $dlib = Get-ChildItem "$env:RUNNER_TEMP\signing" -Recurse -Filter Azure.CodeSigning.Dlib.dll | Where-Object { $_.Directory.Name -eq 'x64' } | Select-Object -First 1
+          if (-not $dlib) { throw "The Artifact Signing add-on wasn't in the NuGet package." }
+          "ARTIFACT_SIGNING_DLIB=$($dlib.FullName)" >> $env:GITHUB_ENV
+
+      # Last before signing, as in release.yml: GitHub's token behind this sign-in lasts only minutes.
+      - name: Sign in to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Get the signing service's token
+        run: az account get-access-token --resource https://codesigning.azure.net --query expiresOn -o tsv
+
+      - name: Build and sign the installer
+        env:
+          APPKIT_RELAY_KEY: ${{ secrets.APPKIT_RELAY_KEY }}
+          PHI_SILICA_TOKEN: ${{ secrets.PHI_SILICA_TOKEN }}
+        run: |
+          .\scripts\build-msix.ps1 -Sign -Flat -BaseUri "https://github.com/${{ github.repository }}/releases/latest/download" -Destination "$env:RUNNER_TEMP\test"
+          Get-ChildItem "$env:RUNNER_TEMP\test" | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-test-build
+          path: ${{ runner.temp }}/test
+          retention-days: 14

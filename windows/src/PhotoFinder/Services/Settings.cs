@@ -12,8 +12,11 @@ public sealed class Settings
     /// <summary>The columns shown, in the order they're shown and read, by id. Null until chosen.</summary>
     public List<string>? ColumnOrder { get; set; }
     /// <summary>View > Labels > Gallery (#38): what the gallery says when you move to a photo, in order. Null means the
-    /// default, Position only.</summary>
+    /// default, Position and Description (#247).</summary>
     public List<string>? GalleryLabels { get; set; }
+    /// <summary>Which version of the gallery labels GalleryLabels was saved by: 2 once Description is a label (#247).
+    /// Missing from older settings, which read as 0.</summary>
+    public int GalleryLabelsVersion { get; set; } = Models.GalleryLabels.Version;
 
     /// <summary>Columns turned on or off from their defaults, from before columns could be reordered. Read once
     /// to carry the choice over; ColumnOrder replaces it.</summary>
@@ -81,7 +84,12 @@ public sealed class Settings
         {
             if (File.Exists(path))
             {
-                var settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path)) ?? new Settings();
+                var json = File.ReadAllText(path);
+                var settings = JsonSerializer.Deserialize<Settings>(json) ?? new Settings();
+                // Older settings don't have the version at all: they're from before Description was a label (#247).
+                if (!json.Contains($"\"{nameof(GalleryLabelsVersion)}\"", StringComparison.Ordinal)) settings.GalleryLabelsVersion = 0;
+                settings.GalleryLabels = Models.GalleryLabels.Migrate(settings.GalleryLabels, settings.GalleryLabelsVersion);
+                settings.GalleryLabelsVersion = Models.GalleryLabels.Version;
                 if (settings.CaptionPolicy != CaptionPolicy.Never)
                 {
                     settings.SaveDescriptionsInPhotos = true;

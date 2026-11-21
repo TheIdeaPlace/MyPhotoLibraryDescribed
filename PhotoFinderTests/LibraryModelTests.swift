@@ -8,6 +8,51 @@ import XCTest
 final class LibraryModelTests: XCTestCase {
     // MARK: - Redescribe and describing automatically
 
+    // MARK: - The gallery's Description label (#247)
+
+    @MainActor
+    func testTheGalleryReadsASavedDescriptionInItsPlaceAndOnlyOnce() async throws {
+        let library = try await makeLibrary(settings: ["viewMode": "gallery",
+                                                       GalleryLabels.defaultsKey: ["description", "position"]])
+        let model = library.model
+        model.isInFront = { true }
+        library.remember("A cat on a step.", for: "c.jpg")
+        library.remember("A dog.", for: "a.jpg")
+        model.selection = [library.id("a.jpg")]
+        await model.autoDescriber.whenIdle()
+        library.said.removeAll()
+
+        model.moveSelection(by: 2)
+        XCTAssertEqual(library.said.map(\.text), ["A cat on a step. 4 of 4"])
+        await model.autoDescriber.whenIdle()
+        XCTAssertEqual(library.said.map(\.text), ["A cat on a step. 4 of 4"], "not said again after the pause")
+    }
+
+    @MainActor
+    func testWithoutTheDescriptionLabelTheGalleryDoesntReadDescriptions() async throws {
+        let library = try await makeLibrary(settings: ["viewMode": "gallery", GalleryLabels.defaultsKey: ["position"],
+                                                       GalleryLabels.versionKey: GalleryLabels.version])
+        let model = library.model
+        XCTAssertEqual(model.galleryLabels, [.position], "removed since Description became a label: stays removed")
+        model.isInFront = { true }
+        library.remember("A cat on a step.", for: "c.jpg")
+        library.remember("A dog.", for: "a.jpg")
+        model.selection = [library.id("a.jpg")]
+        await model.autoDescriber.whenIdle()
+        library.said.removeAll()
+
+        model.moveSelection(by: 2)
+        await model.autoDescriber.whenIdle()
+        XCTAssertEqual(library.said.map(\.text), ["4 of 4"])
+    }
+
+    @MainActor
+    func testGalleryLabelsSavedBeforeDescriptionWasALabelGetItAtTheEnd() async throws {
+        let library = try await makeLibrary(settings: [GalleryLabels.defaultsKey: ["name", "position"]])
+        XCTAssertEqual(library.model.galleryLabels, [.name, .position, .description])
+        XCTAssertEqual(library.defaults.integer(forKey: GalleryLabels.versionKey), GalleryLabels.version)
+    }
+
     @MainActor
     func testAutomaticDescribingLeavesAPhotoAloneWhileItsRedescribed() async throws {
         let library = try await makeLibrary()

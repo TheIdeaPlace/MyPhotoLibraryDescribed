@@ -96,6 +96,10 @@ public sealed class AutoDescriber : IDisposable
     /// Set by the window; descriptions aren't made or spoken while it's false.</summary>
     public Func<bool> CanSpeak { get; set; } = () => true;
 
+    /// <summary>Whether to say this photo's description (by path): in the gallery, only when View > Labels has
+    /// Description and moving there didn't read it already (#247). Set by the window.</summary>
+    public Func<string, bool> ReadsAloud { get; set; } = _ => true;
+
     /// <summary>Whether it's a good time to describe ahead: not on energy saver. Set by the app.</summary>
     public Func<bool> MayDescribeAhead { get; set; } = () => true;
 
@@ -459,7 +463,8 @@ public sealed class AutoDescriber : IDisposable
         row.Description = text;
         // Not when more than one row is selected now.
         if (_target != path || CurrentPath() != path || !CanSpeak()) return false;
-        Announcer.AnnounceAfter(text, "PhotoFinderDescription");
+        // Already read with the gallery's labels, or the gallery isn't reading descriptions: counted as said.
+        if (ReadsAloud(path)) Announcer.AnnounceAfter(text, "PhotoFinderDescription");
         _spokenPath = path;
         return true;
     }

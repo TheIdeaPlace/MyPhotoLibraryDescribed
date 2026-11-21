@@ -235,6 +235,7 @@ public partial class MainWindow : Window
             // Descriptions are for the photo you're on: the list or gallery has focus, and this window is in front
             // (not the sidebar, search, Get Info or a message).
             AutoDescriber.CanSpeak = () => IsActive && (FileList.IsKeyboardFocusWithin || GalleryImage.IsKeyboardFocusWithin);
+            AutoDescriber.ReadsAloud = _model.ReadsDescriptionAloud;
             FileList.GotKeyboardFocus += (_, _) => AutoDescriber.Refocused();
             GalleryImage.GotKeyboardFocus += (_, _) => AutoDescriber.Refocused();
         };
@@ -322,7 +323,8 @@ public partial class MainWindow : Window
         var galleryBefore = _model.GalleryLabelOrder.ToList();
         var returnTo = Keyboard.FocusedElement as IInputElement;
         var number = sample is null ? 1 : _model.Rows.IndexOf(sample) + 1;
-        var dialog = new LabelsDialog(before, galleryBefore, sample, number, _model.Rows.Count, galleryFirst: _model.ViewMode == ViewMode.Gallery)
+        var dialog = new LabelsDialog(before, galleryBefore, sample, number, _model.Rows.Count, galleryFirst: _model.ViewMode == ViewMode.Gallery,
+            sampleDescription: sample is null ? null : _model.SavedDescription(sample))
             { Owner = this };
         // The new order first, then focus back: the focused row reading in its new order is the confirmation,
         // rather than the old order, a name change and an announcement all at once.

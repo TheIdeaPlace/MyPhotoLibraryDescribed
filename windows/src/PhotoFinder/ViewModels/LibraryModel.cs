@@ -1169,8 +1169,27 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
         var next = current < 0 ? 0 : current + delta;
         if (next < 0 || next >= Rows.Count) { Beep(); return; }
         SelectionRequested?.Invoke([Rows[next].Id], false);
-        Announcer.Announce(MoveText(next));
+        AnnounceMove(next);
     }
+
+    /// <summary>Says the photo moved to, noting when the gallery's labels read its saved description (#247), so
+    /// automatic describing doesn't say it again after the pause.</summary>
+    private void AnnounceMove(int index)
+    {
+        var row = Rows[index];
+        _descriptionReadOnMove = ViewMode == ViewMode.Gallery && GalleryLabelOrder.Contains(Models.GalleryLabels.Description)
+            && SavedDescription(row) is not null ? row.Item?.Path : null;
+        Announcer.Announce(MoveText(index));
+    }
+
+    /// <summary>The photo whose saved description the last move in the gallery read, as one of its labels (#247).</summary>
+    private string? _descriptionReadOnMove;
+
+    /// <summary>Whether automatic describing says this photo's description: in the gallery, only when View > Labels has
+    /// Description and moving there didn't read it already (#247). It's still described and saved either way.</summary>
+    public bool ReadsDescriptionAloud(string path) => ViewMode != ViewMode.Gallery
+        || (GalleryLabelOrder.Contains(Models.GalleryLabels.Description)
+            && !string.Equals(_descriptionReadOnMove, path, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>View > Labels > Gallery (#38): what the gallery says when you move to a photo, in order.</summary>
     public IReadOnlyList<string> GalleryLabelOrder => Models.GalleryLabels.Clean(_settings.GalleryLabels);
@@ -1184,9 +1203,13 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>The photo at <paramref name="index"/> as moving to it says it: the gallery's labels in the gallery
     /// ("12 of 400" by default), and "name, n of N" in the list.</summary>
-    public string MoveText(int index) => ViewMode == ViewMode.Gallery
-        ? Models.GalleryLabels.Text(Rows[index], index + 1, Rows.Count, GalleryLabelOrder)
-        : $"{Rows[index].Name}, {index + 1} of {Rows.Count}";
+    public string MoveText(int index)
+    {
+        if (ViewMode != ViewMode.Gallery) return $"{Rows[index].Name}, {index + 1} of {Rows.Count}";
+        var labels = GalleryLabelOrder;
+        var description = labels.Contains(Models.GalleryLabels.Description) ? SavedDescription(Rows[index]) : null;
+        return Models.GalleryLabels.Text(Rows[index], index + 1, Rows.Count, labels, description);
+    }
 
     /// <summary>How much of the library is described (#119): its photos (not videos), and how many have a saved description
     /// of the Description Type in use. Null while the library is still loading. In memory, so quick even for a large
@@ -1216,7 +1239,7 @@ public sealed class LibraryModel : INotifyPropertyChanged, IDisposable
             return;
         }
         SelectionRequested?.Invoke([Rows[index].Id], false);
-        if (announce) Announcer.Announce(MoveText(index));
+        if (announce) AnnounceMove(index);
     }
 
     // MARK: Helpers
