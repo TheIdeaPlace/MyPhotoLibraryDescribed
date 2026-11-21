@@ -13,7 +13,8 @@ name: Release
 # Windows installer is built unsigned, with no signing access at all, to check the release build.
 on:
   push:
-    tags: ['v*']
+    # Not test builds (test-build.yml), which share the v prefix only because the signing environment needs it.
+    tags: ['v*', '!vtest-*']
   pull_request:
     paths: ['.github/workflows/release.yml', 'windows/scripts/**']
 
