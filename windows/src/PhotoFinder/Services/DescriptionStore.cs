@@ -133,6 +133,8 @@ public sealed class DescriptionStore
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         // Descriptions in any language are written as they read, not escaped: the file is the app's own, never in a page.
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        // Indented, so someone who opens the file from Open Descriptions Folder can read it line by line (Kelly, 22 Nov).
+        WriteIndented = true,
     };
 
     /// <summary>The file couldn't be read and couldn't be moved aside either: it's never written over, so nothing in it is

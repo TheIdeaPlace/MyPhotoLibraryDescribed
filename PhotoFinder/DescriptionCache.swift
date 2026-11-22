@@ -114,6 +114,27 @@ final class DescriptionCache: @unchecked Sendable {
     private struct File: Codable {
         var version: Int
         var descriptions: [String: DescriptionRecord]
+
+        private enum CodingKeys: String, CodingKey { case version, descriptions }
+
+        /// A photo's key, for writing the photos in order.
+        private struct PhotoKey: CodingKey {
+            var stringValue: String
+            var intValue: Int? { nil }
+            init(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { nil }
+        }
+
+        /// Version first, then the photos sorted by key so they don't change places on every save. Each record keeps
+        /// its own field order, text first, so someone reading the file hears the description before its details.
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(version, forKey: .version)
+            var photos = container.nestedContainer(keyedBy: PhotoKey.self, forKey: .descriptions)
+            for key in descriptions.keys.sorted() {
+                try photos.encode(descriptions[key], forKey: PhotoKey(stringValue: key))
+            }
+        }
     }
 
     init(fileURL: URL = DescriptionCache.defaultURL) {
@@ -269,6 +290,15 @@ final class DescriptionCache: @unchecked Sendable {
         writes.sync { write() }
     }
 
+    /// Indented, so someone who opens the file from Open Descriptions Folder can read it line by line (Kelly, 22 Nov).
+    /// A "/" in a description isn't written as "\/". The photos are put in order by File itself, not `.sortedKeys`,
+    /// which would also put each record's text after all its details.
+    static func encoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+        return encoder
+    }
+
     /// On `writes` only.
     private func write() {
         lock.lock()
@@ -276,7 +306,7 @@ final class DescriptionCache: @unchecked Sendable {
         let snapshot = entries
         lock.unlock()
         guard mayWrite,
-              let data = try? JSONEncoder().encode(File(version: Self.fileVersion, descriptions: snapshot)) else { return }
+              let data = try? Self.encoder().encode(File(version: Self.fileVersion, descriptions: snapshot)) else { return }
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: fileURL, options: .atomic)
     }
