@@ -71,6 +71,30 @@ public sealed class DescriptionProvenanceTests : IDisposable
     }
 
     [Fact]
+    public void TheFile_IsWrittenIndented_SoItReadsLineByLine()
+    {
+        var store = new DescriptionStore(File_);
+        store.Put(Item, "accessible", "A cat on a mat, black/white.", took: TimeSpan.FromSeconds(1));
+        store.Save();
+
+        var text = File.ReadAllText(File_);
+        Assert.StartsWith("{" + Environment.NewLine + "  \"version\": 2,", text);
+        Assert.Contains("\n  \"descriptions\": {", text);
+        Assert.Contains("\n    \"" + KeyOf(Item, "accessible").Replace(@"\", @"\\") + "\": {", text);
+        Assert.Contains("black/white", text);
+        Assert.Equal("A cat on a mat, black/white.", new DescriptionStore(File_).Record(Item, "accessible")!.Text);
+    }
+
+    [Fact]
+    public void AFileWrittenOnOneLineBefore_IsStillRead()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(File_)!);
+        var key = KeyOf(Item, "accessible").Replace(@"\", @"\\");
+        File.WriteAllText(File_, "{\"version\":2,\"descriptions\":{\"" + key + "\":{\"text\":\"A dog.\",\"source\":\"windows-ai\"}}}");
+        Assert.Equal("A dog.", new DescriptionStore(File_).Record(Item, "accessible")!.Text);
+    }
+
+    [Fact]
     public void ACorrection_KeepsHowItWasDescribed_AndTheAIsFirstText_ThroughLaterCorrections()
     {
         var store = new DescriptionStore(File_);

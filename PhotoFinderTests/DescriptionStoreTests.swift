@@ -81,7 +81,37 @@ final class DescriptionStoreTests: XCTestCase {
         XCTAssertEqual(try savedDescriptions(in: folder), ["photo": "Two"])
     }
 
+    func testAFileWrittenOnOneLineBeforeIsStillRead() throws {
+        let folder = makeFolder()
+        try write(#"{"version":2,"descriptions":{"photo":{"text":"A dog.","source":"apple-intelligence"}}}"#,
+                  to: descriptionsURL(in: folder))
+        XCTAssertEqual(DescriptionCache(fileURL: descriptionsURL(in: folder)).description(forKey: "photo"), "A dog.")
+    }
+
     // MARK: - Saving
+
+    func testTheFileIsWrittenIndentedWithThePhotosInOrderAndEachTextFirst() throws {
+        let folder = makeFolder()
+        let cache = DescriptionCache(fileURL: descriptionsURL(in: folder))
+        cache.remember("A cat on a mat, black/white.", forKey: "b-photo")
+        cache.remember("A dog.", forKey: "a-photo")
+        cache.save()
+        let text = try String(contentsOf: descriptionsURL(in: folder), encoding: .utf8)
+        // One detail per line, indented, the version first.
+        XCTAssertTrue(text.hasPrefix("{\n  \"version\" : 2,\n  \"descriptions\" : {\n    \"a-photo\" : {\n      \"text\" : \"A dog.\""),
+                      text)
+        // The photos sorted by key, so they stay in place from one save to the next.
+        let a = try XCTUnwrap(text.range(of: "\"a-photo\"")), b = try XCTUnwrap(text.range(of: "\"b-photo\""))
+        XCTAssertLessThan(a.lowerBound, b.lowerBound)
+        // Each record's text before its details, as DescriptionRecord declares them.
+        let catText = try XCTUnwrap(text.range(of: "\"text\" : \"A cat")), catCreated = try XCTUnwrap(text.range(of: "\"created\"", range: catText.upperBound..<text.endIndex))
+        XCTAssertLessThan(catText.lowerBound, catCreated.lowerBound)
+        XCTAssertTrue(text.contains("black/white"), "a slash isn't escaped: \(text)")
+        // Read back by a new store, as the next launch would.
+        let again = DescriptionCache(fileURL: descriptionsURL(in: folder))
+        XCTAssertEqual(again.description(forKey: "b-photo"), "A cat on a mat, black/white.")
+        XCTAssertEqual(again.description(forKey: "a-photo"), "A dog.")
+    }
 
     func testSavingMakesTheFolderAndMarksTheCorrectionsInTheirRecords() throws {
         let folder = makeFolder().appendingPathComponent("Not There Yet", isDirectory: true)
